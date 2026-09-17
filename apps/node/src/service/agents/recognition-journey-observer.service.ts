@@ -6,6 +6,7 @@ import {
   RecognitionJourney,
   RecognitionJourneyObservation,
   RecognitionJourneyTurnPlan,
+  SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
 } from './recognition-journey';
 
 const OBSERVER_MAX_TOKENS = 220;
@@ -71,7 +72,8 @@ export class RecognitionJourneyObserverService {
                 '助手自行编造的小时候、老宅、饭菜、睡觉习惯等共同往事既不能作为相认证据，也不能证明用户接住了相认。',
                 '在 task_proposal 检查点，只判断最终回复实际带出了哪个候选信息入口；程序给了候选但助手没问，必须是 not_observed。',
                 '在 task_response 检查点，以及 task_proposal 中标记的 observedTasks，只判断用户是否确实提供了对应信息。老宅拆除、房产争议等无关信息不等于“家人近况”。',
-                '严格输出 JSON：{"opening":"not_observed|shallow_acknowledgement|emotionally_opened|emotionally_received","familyStatus":"not_observed|proposed|provided","departureInterval":"not_observed|proposed|provided","evidence":"最多80字的观察依据"}',
+                '如果候选任务是 relativeMentionGreeting，只判断最终回复是否自然表达了“另一位亲人刚刚提到用户，且当前亲人见到用户很高兴”这层意思，不要求逐字，不因缺少具体引述而否定；只回应用户当前话题而没有带出这层意思，必须是 not_observed。不要在 relativeMentionGreeting 检查点顺手判断 opening/familyStatus/departureInterval 的推进。',
+                '严格输出 JSON：{"opening":"not_observed|shallow_acknowledgement|emotionally_opened|emotionally_received","familyStatus":"not_observed|proposed|provided","departureInterval":"not_observed|proposed|provided","relativeMentionGreeting":"not_observed|expressed","evidence":"最多80字的观察依据"}',
               ].join('\n'),
             },
             {
@@ -85,6 +87,10 @@ export class RecognitionJourneyObserverService {
                   departureInterval: options.journey.tasks.find(
                     item => item.id === 'departure_interval'
                   )?.status,
+                  relativeMentionGreeting: options.journey.tasks.find(
+                    item => item.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
+                  )?.status,
+                  mentionCallName: options.journey.mentionCallName,
                 },
                 suggestedThisTurn: {
                   checkpoint: options.plan.observerCheckpoint,
@@ -93,6 +99,7 @@ export class RecognitionJourneyObserverService {
                   eligibleTasks: options.plan.eligibleTaskIds,
                   observedTask: options.plan.observedTaskId,
                   observedTasks: options.plan.observedTaskIds,
+                  reobserve: options.plan.reobserveAssistantMessageId,
                 },
                 openingAssistantMessage: (
                   options.openingAssistantText || ''
@@ -147,6 +154,11 @@ function parseObservation(
     const opening = String(raw.opening);
     const familyStatus = String(raw.familyStatus);
     const departureInterval = String(raw.departureInterval);
+    // Older observer outputs may omit the later-relative card field.
+    const relativeMentionGreeting =
+      raw.relativeMentionGreeting === undefined
+        ? 'not_observed'
+        : String(raw.relativeMentionGreeting);
     if (
       ![
         'not_observed',
@@ -155,7 +167,8 @@ function parseObservation(
         'emotionally_received',
       ].includes(opening) ||
       !['not_observed', 'proposed', 'provided'].includes(familyStatus) ||
-      !['not_observed', 'proposed', 'provided'].includes(departureInterval)
+      !['not_observed', 'proposed', 'provided'].includes(departureInterval) ||
+      !['not_observed', 'expressed'].includes(relativeMentionGreeting)
     ) {
       return undefined;
     }
@@ -165,6 +178,9 @@ function parseObservation(
         familyStatus as RecognitionJourneyObservation['familyStatus'],
       departureInterval:
         departureInterval as RecognitionJourneyObservation['departureInterval'],
+      relativeMentionGreeting: relativeMentionGreeting as NonNullable<
+        RecognitionJourneyObservation['relativeMentionGreeting']
+      >,
       ...(typeof raw.evidence === 'string' && raw.evidence
         ? { evidence: raw.evidence.slice(0, 160) }
         : {}),

@@ -14,6 +14,21 @@ export const FREE_CHAT_AGENT_LIMIT = 3;
 
 const SLOT_WRITE_MAX_ATTEMPTS = 8;
 
+export type RecognitionJourneyRelativeMode =
+  | 'first_relative'
+  | 'subsequent_relative';
+
+export interface RecognitionJourneyOwnership {
+  mode: RecognitionJourneyRelativeMode;
+  firstAgentId?: string;
+  /**
+   * The earliest owner-created real relative, when it still exists. Callers use
+   * its iCallAgent/name as the later-relative card's call name source. It is
+   * never read for chat history.
+   */
+  firstAgent?: AgentEntity;
+}
+
 @Provide()
 export class FreeChatAgentEligibilityService {
   @Logger()
@@ -80,6 +95,64 @@ export class FreeChatAgentEligibilityService {
    */
   async preserveSlotsBeforeDeletion(agent: AgentEntity): Promise<void> {
     await this.recordCreatedAgent(agent);
+  }
+
+  /**
+   * Classifies an owner-created real relative for the recognition journey.
+   * The durable slot ledger is the stable creation-order source: slots survive
+   * deletion and concurrent registrations converge through the same CAS, so two
+   * concurrent creations can never both be first. Missing or malformed ledgers
+   * fall back to the earliest surviving record, which is the documented
+   * compatibility policy for accounts whose deleted history is not recorded.
+   */
+  async resolveRecognitionJourneyOwnership(
+    agent: AgentEntity | null
+  ): Promise<RecognitionJourneyOwnership> {
+    if (!agent || agent.messengerOfAgentId) {
+      return { mode: 'first_relative' };
+    }
+    const ownerUserId = this.asObjectId(agent.createdUserId);
+    if (!ownerUserId) {
+      return { mode: 'first_relative' };
+    }
+    const candidateSlot = this.buildAgentSlot(agent);
+    let slots: FreeChatAgentSlot[];
+    try {
+      slots = await this.ensureSlots(ownerUserId, candidateSlot);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[recognition-journey] slot ledger unavailable, falling back to surviving order: %s',
+        error instanceof Error ? error.message : String(error)
+      );
+      try {
+        slots = await this.listEarliestRealAgentSlots(ownerUserId);
+      } catch (fallbackError) {
+        this.logger?.warn?.(
+          '[recognition-journey] earliest-relative fallback failed: %s',
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : String(fallbackError)
+        );
+        return { mode: 'first_relative' };
+      }
+    }
+    const earliest = slots[0];
+    if (!earliest) {
+      return { mode: 'first_relative' };
+    }
+    const candidateId = candidateSlot.agentId.toHexString();
+    const earliestId = earliest.agentId.toHexString();
+    if (earliestId === candidateId) {
+      return { mode: 'first_relative', firstAgentId: candidateId };
+    }
+    const firstAgent = await this.agentModel.findOne({
+      where: { _id: earliest.agentId },
+    } as never);
+    return {
+      mode: 'subsequent_relative',
+      firstAgentId: earliestId,
+      ...(firstAgent ? { firstAgent } : {}),
+    };
   }
 
   private async ensureSlots(

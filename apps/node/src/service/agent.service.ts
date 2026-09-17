@@ -56,6 +56,7 @@ import { FreeChatAgentEligibilityService } from './agents/free-chat-agent-eligib
 import { DepartureDurationService } from './agents/departure-duration.service';
 import {
   buildInitialRecognitionJourney,
+  RecognitionJourneyMode,
   serializeRecognitionJourney,
 } from './agents/recognition-journey';
 
@@ -964,13 +965,19 @@ export class AgentService {
       options
     );
     const openingMessage = openingMessages[0];
+    const ownership = await this.resolveOwnerRecognitionJourneyOwnership({
+      agent,
+      userId,
+      shared: options.usePersonalCallName === false,
+    });
     try {
       await this.createInitialRecognitionJourneyState(
         savedConversation,
         agent,
         userId,
         now,
-        this.stringifyObjectId(openingMessage.id)
+        this.stringifyObjectId(openingMessage.id),
+        ownership
       );
     } catch (error) {
       // The visible opening is already durable. The first user turn can
@@ -985,12 +992,64 @@ export class AgentService {
     return savedConversation;
   }
 
+  /**
+   * Only owner-created relatives can use the later-relative mode; shared
+   * conversations and different accounts must not borrow the owner's account
+   * classification or call name. Classification failures keep the released
+   * first-relative behavior so creation is never blocked.
+   */
+  private async resolveOwnerRecognitionJourneyOwnership(options: {
+    agent: AgentEntity;
+    userId: MongoObjectId;
+    shared: boolean;
+  }): Promise<{
+    mode: RecognitionJourneyMode;
+    mentionCallName?: string;
+  }> {
+    if (
+      options.shared ||
+      !this.sameObjectId(options.agent.createdUserId, options.userId)
+    ) {
+      return { mode: 'first_relative' };
+    }
+    const service = this.freeChatAgentEligibilityService;
+    if (!service?.resolveRecognitionJourneyOwnership) {
+      return { mode: 'first_relative' };
+    }
+    try {
+      const ownership = await service.resolveRecognitionJourneyOwnership(
+        options.agent
+      );
+      if (ownership.mode === 'first_relative') {
+        return { mode: 'first_relative' };
+      }
+      const firstRelative = ownership.firstAgent;
+      const rawCallName =
+        firstRelative?.iCallAgent?.trim() || firstRelative?.name?.trim() || '';
+      return {
+        mode: 'subsequent_relative',
+        ...(rawCallName ? { mentionCallName: rawCallName } : {}),
+      };
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent] recognition journey mode resolution skipped, agentId=%s reason=%s',
+        this.stringifyObjectId(options.agent.id),
+        error instanceof Error ? error.message : String(error)
+      );
+      return { mode: 'first_relative' };
+    }
+  }
+
   private async createInitialRecognitionJourneyState(
     conversation: ConversationEntity,
     agent: AgentEntity,
     userId: MongoObjectId,
     now: Date,
-    openingAssistantMessageId: string
+    openingAssistantMessageId: string,
+    ownership: {
+      mode: RecognitionJourneyMode;
+      mentionCallName?: string;
+    } = { mode: 'first_relative' }
   ): Promise<void> {
     const message = new MessageEntity();
     message.conversationId = conversation.id;
@@ -1003,6 +1062,8 @@ export class AgentService {
         hasKnownDepartureDate: Boolean(agent.deathDate),
         now,
         openingAssistantMessageId,
+        mode: ownership.mode,
+        mentionCallName: ownership.mentionCallName,
       })
     );
     message.status = MessageStatus.sent;

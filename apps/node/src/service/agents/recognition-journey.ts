@@ -5,12 +5,32 @@ const V2_RECOGNITION_JOURNEY_MESSAGE_PREFIX = '__TZL_RECOGNITION_JOURNEY_V2__:';
 const LEGACY_RECOGNITION_JOURNEY_MESSAGE_PREFIX =
   '__TZL_RECOGNITION_JOURNEY_V1__:';
 
-export type RecognitionTaskId = 'departure_interval' | 'family_status';
+export type RecognitionTaskId =
+  | 'departure_interval'
+  | 'family_status'
+  | 'relative_mention_greeting';
 export type RecognitionTaskStatus =
   | 'pending'
   | 'proposed'
   | 'completed'
-  | 'skipped';
+  | 'skipped'
+  | 'expired';
+
+/**
+ * first_relative keeps the released welcome + opening + departure_interval +
+ * family_status journey. subsequent_relative keeps the same welcome but never
+ * runs the released milestones; it only exposes the bounded
+ * relative_mention_greeting card during user turns 3-5.
+ */
+export type RecognitionJourneyMode = 'first_relative' | 'subsequent_relative';
+
+export const SUBSEQUENT_RELATIVE_GREETING_TASK_ID: RecognitionTaskId =
+  'relative_mention_greeting';
+export const SUBSEQUENT_RELATIVE_GREETING_MIN_USER_TURN = 3;
+export const SUBSEQUENT_RELATIVE_GREETING_MAX_USER_TURN = 5;
+// The greeting card is injected at most on turns 3, 4 and 5. Its judgement
+// reuses the existing observer call, so the whole window is bounded.
+export const SUBSEQUENT_RELATIVE_GREETING_MAX_OBSERVER_CALLS = 4;
 export type RecognitionOpeningStatus =
   | 'pending'
   | 'opening_attempted'
@@ -61,6 +81,7 @@ export interface RecognitionTaskState {
   proposedAt?: Date;
   proposedAssistantMessageId?: string;
   completedAt?: Date;
+  expiredAt?: Date;
   answerMessageId?: string;
   lastProposedUserTurn?: number;
   proposalCount?: number;
@@ -68,14 +89,18 @@ export interface RecognitionTaskState {
   lastSuggestedUserTurn?: number;
   observerUnavailableCount?: number;
   lastObserverUnavailableUserTurn?: number;
+  reobservationCount?: number;
   observationEvidence?: string;
 }
 
 export interface RecognitionJourney {
   version: typeof RECOGNITION_JOURNEY_VERSION;
+  mode: RecognitionJourneyMode;
   stage: 'pending' | 'active' | 'settled';
   opening: RecognitionOpeningState;
   tasks: RecognitionTaskState[];
+  /** Formatted call name of the user's first relative, if it is known. */
+  mentionCallName?: string;
   lastJourneyActionUserTurn?: number;
   taskSuggestionAttemptCount?: number;
   lastTaskSuggestionAttemptUserTurn?: number;
@@ -97,6 +122,11 @@ export interface RecognitionJourneyTurnPlan {
   currentUserText?: string;
   currentUserMessageId?: string;
   userTurnNumber?: number;
+  mode?: RecognitionJourneyMode;
+  // Set when a later-relative greeting delivery could not be judged yet. The
+  // turn re-observes that already persisted assistant message instead of
+  // injecting the card again.
+  reobserveAssistantMessageId?: string;
 }
 
 export interface RecognitionJourneyObservation {
@@ -107,6 +137,12 @@ export interface RecognitionJourneyObservation {
     | 'emotionally_received';
   familyStatus: 'not_observed' | 'proposed' | 'provided';
   departureInterval: 'not_observed' | 'proposed' | 'provided';
+  /**
+   * Later-relative card only: whether the final assistant reply naturally
+   * expressed that another relative mentioned the user and that the current
+   * relative is glad the user came. Optional for released callers.
+   */
+  relativeMentionGreeting?: 'not_observed' | 'expressed';
   evidence?: string;
 }
 
@@ -125,6 +161,14 @@ const OPENING_ANGLES: RecognitionOpeningAngle[] = [
 ];
 const RECOGNITION_TASK_EXPLICIT_DEFER_PATTERN =
   /(?:先别问(?:了)?|别问了|不要(?:再)?问|别再问|我不想回答|(?:这个|这事|这件事)我?不想说|别提这个|不要提这个|先听我说(?:完)?|听我说完)/u;
+// Narrower than the released defer pattern: the later-relative card is a soft,
+// optional expression, so only an explicit refusal to discuss that relation or
+// topic permanently skips it. A generic "let me finish" must not kill it.
+const SUBSEQUENT_RELATIVE_GREETING_REFUSAL_PATTERN =
+  /(?:(?:别|不要|不用|不想|不愿|别再|不用再)(?:再)?(?:提|说|聊|讲)(?:他|她|这个|这|这些|那|那个|这事|这件事)?|(?:我)?(?:不|没)(?:想|兴趣|心情)(?:聊|说|提)(?:他|她|这个|这|那)?|(?:他|她)的事(?:先|别|不要)(?:别|不)?(?:提|说|聊))/u;
+const RELATIVE_KINSHIP_CALL_NAME_PATTERN =
+  /(?:爸|妈|父|母|爷|奶|姥|婆|公|哥|姐|弟|妹|叔|婶|姨|舅|姑|伯|侄|甥|孙|媳|婿|宝贝|老公|老婆|爱人|丈夫|妻子|儿子|女儿)/u;
+const RELATIVE_CALL_NAME_MAX_LENGTH = 12;
 
 /**
  * Verifies only the observable delivery of the selected milestone. It does not
@@ -160,12 +204,24 @@ export function buildInitialRecognitionJourney(
     hasKnownDepartureDate?: boolean;
     now?: Date;
     openingAssistantMessageId?: string;
+    mode?: RecognitionJourneyMode;
+    /** Raw first-relative call name; formatting happens here. */
+    mentionCallName?: string;
   } = {}
 ): RecognitionJourney {
   const now = options.now ?? new Date();
+  const mode = options.mode ?? 'first_relative';
+  if (mode === 'subsequent_relative') {
+    return buildInitialSubsequentRelativeJourney({
+      now,
+      openingAssistantMessageId: options.openingAssistantMessageId,
+      mentionCallName: options.mentionCallName,
+    });
+  }
   const openingDelivered = Boolean(options.openingAssistantMessageId);
   return {
     version: RECOGNITION_JOURNEY_VERSION,
+    mode: 'first_relative',
     stage: openingDelivered ? 'active' : 'pending',
     opening: {
       status: openingDelivered ? 'opening_attempted' : 'pending',
@@ -192,11 +248,117 @@ export function buildInitialRecognitionJourney(
   };
 }
 
-export function buildLegacyRecognitionJourney(
-  now = new Date()
-): RecognitionJourney {
+/**
+ * The second and later owner-created relatives keep the unchanged welcome but
+ * never run the released opening/departure/family milestones. The only task is
+ * the bounded relative_mention_greeting card, exposed on user turns 3-5.
+ */
+function buildInitialSubsequentRelativeJourney(options: {
+  now: Date;
+  openingAssistantMessageId?: string;
+  mentionCallName?: string;
+}): RecognitionJourney {
+  const now = options.now;
+  const mentionCallName = formatFirstRelativeMentionCallName(
+    options.mentionCallName
+  );
+  const greeting = buildGreetingTask(
+    mentionCallName
+      ? { status: 'pending' }
+      : {
+          status: 'skipped',
+          observationEvidence: 'no_first_relative_call_name',
+        }
+  );
+  const active = greeting.status === 'pending';
   return {
     version: RECOGNITION_JOURNEY_VERSION,
+    mode: 'subsequent_relative',
+    stage: active ? 'active' : 'settled',
+    // The released welcome is still delivered, but the reunion opening logic is
+    // intentionally considered already satisfied so it can never be replayed.
+    opening: {
+      status: 'settled_success',
+      attemptCount: 0,
+      usedAngles: [],
+      observerAttemptCount: 0,
+      receivedAt: now,
+    },
+    ...(mentionCallName ? { mentionCallName } : {}),
+    tasks: [
+      { id: 'departure_interval', status: 'skipped' },
+      { id: 'family_status', status: 'skipped' },
+      greeting,
+    ],
+    ...(active ? { startedAt: now } : { settledAt: now }),
+  };
+}
+
+function buildGreetingTask(
+  state: Pick<
+    RecognitionTaskState,
+    'status' | 'observationEvidence' | 'expiredAt'
+  >
+): RecognitionTaskState {
+  return {
+    id: SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
+    status: state.status,
+    ...(state.observationEvidence
+      ? { observationEvidence: state.observationEvidence }
+      : {}),
+    ...(state.expiredAt ? { expiredAt: state.expiredAt } : {}),
+  };
+}
+
+/**
+ * Limited display normalization for the first relative's call name. It never
+ * guesses a relation: unknown relations are returned unchanged (or skipped by
+ * the caller when empty).
+ */
+export function formatFirstRelativeMentionCallName(
+  raw: string | undefined
+): string | undefined {
+  const normalized = (raw || '')
+    .replace(/\s+/gu, '')
+    .replace(/[。，,！!？?]+$/u, '');
+  if (!normalized) return undefined;
+  if (normalized.length > RELATIVE_CALL_NAME_MAX_LENGTH) return undefined;
+  if (/你(?:我|咱)/u.test(normalized)) return undefined;
+  if (normalized.startsWith('你')) return normalized;
+  const withoutSelf = normalized.replace(/^(?:我的|我|咱们|咱)/u, '');
+  if (withoutSelf && withoutSelf !== normalized) {
+    return `你${withoutSelf}`;
+  }
+  if (RELATIVE_KINSHIP_CALL_NAME_PATTERN.test(normalized)) {
+    return `你${normalized}`;
+  }
+  return normalized;
+}
+
+export function buildLegacyRecognitionJourney(
+  now = new Date(),
+  mode: RecognitionJourneyMode = 'first_relative',
+  mentionCallName?: string
+): RecognitionJourney {
+  if (mode === 'subsequent_relative') {
+    const formatted = formatFirstRelativeMentionCallName(mentionCallName);
+    return {
+      version: RECOGNITION_JOURNEY_VERSION,
+      mode: 'subsequent_relative',
+      stage: 'settled',
+      opening: { status: 'expired', expiredAt: now },
+      ...(formatted ? { mentionCallName: formatted } : {}),
+      tasks: [
+        { id: 'departure_interval', status: 'skipped' },
+        { id: 'family_status', status: 'skipped' },
+        buildGreetingTask({ status: 'expired', expiredAt: now }),
+      ],
+      settledAt: now,
+    };
+  }
+  return {
+    version: RECOGNITION_JOURNEY_VERSION,
+    mode: 'first_relative',
     stage: 'settled',
     opening: { status: 'expired', expiredAt: now },
     tasks: [
@@ -254,11 +416,22 @@ export function planRecognitionJourneyTurn(options: {
     currentUserText: query,
     currentUserMessageId: options.currentUserMessageId,
     userTurnNumber,
+    mode: journey.mode,
   };
 
   if (journey.opening.status === 'user_received') {
     journey.opening.status = 'settled_success';
     refreshJourneyStage(journey, now);
+  }
+
+  if (journey.mode === 'subsequent_relative') {
+    return planSubsequentRelativeTurn({
+      journey,
+      basePlan,
+      query,
+      userTurnNumber,
+      now,
+    });
   }
 
   // A task already asked remains answerable after the 20-turn activation
@@ -409,6 +582,99 @@ export function planRecognitionJourneyTurn(options: {
   return { journey, plan: basePlan };
 }
 
+function planSubsequentRelativeTurn(options: {
+  journey: RecognitionJourney;
+  basePlan: RecognitionJourneyTurnPlan;
+  query: string;
+  userTurnNumber: number;
+  now: Date;
+}): { journey: RecognitionJourney; plan: RecognitionJourneyTurnPlan } {
+  const { journey, basePlan, query, userTurnNumber, now } = options;
+  const greeting = journey.tasks.find(
+    task => task.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
+  );
+  if (!greeting || isTerminalTaskStatus(greeting.status)) {
+    return { journey, plan: basePlan };
+  }
+
+  // The card only covers user turns 3-5. After the window it expires once and
+  // is never replayed, including on the >=20 turn recovery paths.
+  if (userTurnNumber > SUBSEQUENT_RELATIVE_GREETING_MAX_USER_TURN) {
+    greeting.status = 'expired';
+    greeting.expiredAt = now;
+    refreshJourneyStage(journey, now);
+    return { journey, plan: basePlan };
+  }
+  if (userTurnNumber < SUBSEQUENT_RELATIVE_GREETING_MIN_USER_TURN) {
+    return { journey, plan: basePlan };
+  }
+
+  // An explicit refusal permanently skips the card; never keep asking.
+  if (SUBSEQUENT_RELATIVE_GREETING_REFUSAL_PATTERN.test(query)) {
+    greeting.status = 'skipped';
+    greeting.lastSuggestedUserTurn = userTurnNumber;
+    greeting.observationEvidence = 'user_declined_topic';
+    refreshJourneyStage(journey, now);
+    return { journey, plan: basePlan };
+  }
+
+  // An earlier delivery could not be judged. Do not repeat the card: re-observe
+  // that already persisted reply once, then stop regardless of the result.
+  if ((greeting.observerUnavailableCount ?? 0) > 0) {
+    if (
+      greeting.proposedAssistantMessageId &&
+      (greeting.reobservationCount ?? 0) < 1
+    ) {
+      return {
+        journey,
+        plan: {
+          ...basePlan,
+          phase: 'task_response',
+          observerCheckpoint: 'task_response',
+          observedTaskId: SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
+          observedTaskIds: [SUBSEQUENT_RELATIVE_GREETING_TASK_ID],
+          reobserveAssistantMessageId: greeting.proposedAssistantMessageId,
+        },
+      };
+    }
+    expireSubsequentRelativeGreetingIfWindowClosed(
+      journey,
+      userTurnNumber,
+      now
+    );
+    return { journey, plan: basePlan };
+  }
+
+  if (greeting.status === 'pending') {
+    const mentionCallName = formatFirstRelativeMentionCallName(
+      journey.mentionCallName
+    );
+    if (!mentionCallName) {
+      greeting.status = 'skipped';
+      greeting.observationEvidence = 'no_first_relative_call_name';
+      refreshJourneyStage(journey, now);
+      return { journey, plan: basePlan };
+    }
+    return {
+      journey,
+      plan: {
+        ...basePlan,
+        phase: 'task_proposal',
+        observerCheckpoint: 'task_proposal',
+        suggestedTaskId: SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
+        eligibleTaskIds: [SUBSEQUENT_RELATIVE_GREETING_TASK_ID],
+        prompt: buildSubsequentRelativeGreetingPrompt(mentionCallName),
+      },
+    };
+  }
+
+  return { journey, plan: basePlan };
+}
+
+function isTerminalTaskStatus(status: RecognitionTaskStatus): boolean {
+  return ['completed', 'skipped', 'expired'].includes(status);
+}
+
 function shouldObserveTaskResponse(
   taskId: RecognitionTaskId,
   query: string
@@ -454,6 +720,7 @@ export function applyRecognitionJourneyDelivery(options: {
 export function applyRecognitionJourneyObserverUnavailable(options: {
   journey: RecognitionJourney;
   plan: RecognitionJourneyTurnPlan;
+  assistantMessageId?: string;
   now?: Date;
 }): RecognitionJourney {
   const now = options.now ?? new Date();
@@ -485,8 +752,37 @@ export function applyRecognitionJourneyObserverUnavailable(options: {
       task.lastSuggestedUserTurn = options.plan.userTurnNumber;
       task.observationEvidence = 'observer_unavailable';
       task.proposedAt = undefined;
+      // Keep the persisted delivery id so the next turn can re-judge the reply
+      // that was actually sent instead of repeating the same card.
+      if (
+        task.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID &&
+        options.assistantMessageId
+      ) {
+        task.proposedAssistantMessageId = options.assistantMessageId;
+      }
     }
   }
+  if (
+    options.plan.observerCheckpoint === 'task_response' &&
+    options.plan.observedTaskIds?.includes(SUBSEQUENT_RELATIVE_GREETING_TASK_ID)
+  ) {
+    const greeting = journey.tasks.find(
+      task => task.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
+    );
+    if (greeting && !isTerminalTaskStatus(greeting.status)) {
+      greeting.observerUnavailableCount =
+        (greeting.observerUnavailableCount ?? 0) + 1;
+      greeting.lastObserverUnavailableUserTurn = options.plan.userTurnNumber;
+      greeting.reobservationCount = (greeting.reobservationCount ?? 0) + 1;
+      greeting.observationEvidence = 'observer_unavailable';
+      delete greeting.proposedAssistantMessageId;
+    }
+  }
+  expireSubsequentRelativeGreetingIfWindowClosed(
+    journey,
+    options.plan.userTurnNumber,
+    now
+  );
   journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
   journey.startedAt ??= now;
   refreshJourneyStage(journey, now);
@@ -565,10 +861,92 @@ export function applyRecognitionJourneyObservation(options: {
     options,
     now
   );
+  applySubsequentRelativeGreetingObservation(journey, options, now);
   journey.startedAt ??=
     journey.opening.openingAttemptedAt || journey.opening.openedAt || undefined;
+  expireSubsequentRelativeGreetingIfWindowClosed(
+    journey,
+    options.plan.userTurnNumber,
+    now
+  );
   refreshJourneyStage(journey, now);
   return journey;
+}
+
+/**
+ * The later-relative card is complete as soon as the final visible assistant
+ * reply semantically expresses it. The model observer owns that judgement; the
+ * program only records the result and binds it to the persisted reply id.
+ */
+function applySubsequentRelativeGreetingObservation(
+  journey: RecognitionJourney,
+  options: {
+    plan: RecognitionJourneyTurnPlan;
+    observation: RecognitionJourneyObservation;
+    assistantMessageId?: string;
+  },
+  now: Date
+): void {
+  if (journey.mode !== 'subsequent_relative') return;
+  const task = journey.tasks.find(
+    item => item.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
+  );
+  if (!task || isTerminalTaskStatus(task.status)) return;
+  const checkpoint = options.plan.observerCheckpoint;
+  if (checkpoint !== 'task_proposal' && checkpoint !== 'task_response') return;
+  const observedTaskIds =
+    options.plan.observedTaskIds ||
+    (options.plan.observedTaskId ? [options.plan.observedTaskId] : []);
+  const ownsThisCheckpoint =
+    options.plan.suggestedTaskId === SUBSEQUENT_RELATIVE_GREETING_TASK_ID ||
+    observedTaskIds.includes(SUBSEQUENT_RELATIVE_GREETING_TASK_ID);
+  if (!ownsThisCheckpoint) return;
+
+  if (options.observation.relativeMentionGreeting === 'expressed') {
+    task.status = 'completed';
+    task.completedAt = now;
+    task.answerMessageId = options.assistantMessageId;
+    task.proposedAssistantMessageId = options.assistantMessageId;
+    task.observationEvidence = options.observation.evidence?.slice(0, 160);
+    journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
+    return;
+  }
+
+  if (checkpoint === 'task_proposal') {
+    task.suggestionMissCount = (task.suggestionMissCount ?? 0) + 1;
+    task.lastSuggestedUserTurn = options.plan.userTurnNumber;
+    task.observationEvidence =
+      options.observation.evidence?.slice(0, 160) ||
+      'card_prompted_but_not_expressed';
+    return;
+  }
+
+  // A re-observation that still cannot see the card resolves as not expressed.
+  task.reobservationCount = (task.reobservationCount ?? 0) + 1;
+  delete task.proposedAssistantMessageId;
+  task.observationEvidence =
+    options.observation.evidence?.slice(0, 160) ||
+    'card_reobservation_not_expressed';
+}
+
+function expireSubsequentRelativeGreetingIfWindowClosed(
+  journey: RecognitionJourney,
+  userTurnNumber: number | undefined,
+  now: Date
+): void {
+  if (journey.mode !== 'subsequent_relative') return;
+  if ((userTurnNumber ?? 0) < SUBSEQUENT_RELATIVE_GREETING_MAX_USER_TURN) {
+    return;
+  }
+  const task = journey.tasks.find(
+    item => item.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
+  );
+  if (!task || isTerminalTaskStatus(task.status)) return;
+  task.status = 'expired';
+  task.expiredAt = now;
+  task.observationEvidence =
+    task.observationEvidence || 'greeting_window_expired_unconfirmed';
+  delete task.proposedAssistantMessageId;
 }
 
 /** @deprecated Completion is semantic; keep this wrapper for old callers/tests. */
@@ -604,7 +982,7 @@ function applyTaskObservation(
   now: Date
 ): void {
   const task = journey.tasks.find(item => item.id === id);
-  if (!task || task.status === 'completed' || task.status === 'skipped') return;
+  if (!task || isTerminalTaskStatus(task.status)) return;
   const observedTaskIds =
     options.plan.observedTaskIds ||
     (options.plan.observedTaskId ? [options.plan.observedTaskId] : []);
@@ -779,6 +1157,25 @@ function describeOpeningAngle(angle: RecognitionOpeningAngle): string {
   }
 }
 
+/**
+ * The released relative_mention_greeting card for the second and later owner
+ * relatives. It only asks for a natural, optional expression; it never claims a
+ * real cross-agent message, never quotes the first relative, and never becomes
+ * a user fact.
+ */
+export function buildSubsequentRelativeGreetingPrompt(
+  mentionCallName: string
+): string {
+  const callName = formatFirstRelativeMentionCallName(mentionCallName);
+  const who = callName || '另一位亲人';
+  return [
+    '# 本轮可选的背景表达（系统内部任务，不要向用户说明这是任务）',
+    `在自然合适的时候，表达类似“刚刚${who}跟我说到你，你能来找我真是太高兴了”的意思。先回应用户当前说的话，再决定是否自然带出这层意思。`,
+    '可以调整措辞，不必逐字照念；不追问用户来完成这句话，不展开编造对方说过的具体内容，不声称两人之间已经真实互发过消息，也不要把这句话写成关于用户的事实。',
+    '用户正在表达不愿继续、明确拒绝这类话题，或本轮需要优先回应更重要的诉求时，可以不执行，不要为此追问或反复重提。',
+  ].join('\n');
+}
+
 function buildTaskSuggestionPrompt(
   taskId: RecognitionTaskId,
   includeOpeningFollowup: boolean,
@@ -820,7 +1217,12 @@ function expireUnfinishedJourney(journey: RecognitionJourney, now: Date): void {
   }
   for (const task of journey.tasks) {
     if (task.status === 'pending') {
-      task.status = 'skipped';
+      if (task.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID) {
+        task.status = 'expired';
+        task.expiredAt = now;
+      } else {
+        task.status = 'skipped';
+      }
     }
   }
   refreshJourneyStage(journey, now);
@@ -841,7 +1243,7 @@ function refreshJourneyStage(journey: RecognitionJourney, now: Date): void {
     return;
   }
   const tasksFinished = journey.tasks.every(task =>
-    ['completed', 'skipped'].includes(task.status)
+    isTerminalTaskStatus(task.status)
   );
   if (journey.opening.status === 'settled_success' && tasksFinished) {
     journey.stage = 'settled';
@@ -880,15 +1282,30 @@ function parseV3Journey(
   const tasks = raw.tasks
     .map(parseTask)
     .filter(Boolean) as RecognitionTaskState[];
+  const taskIds = new Set(tasks.map(task => task.id));
+  // Released records have no mode field; they must keep the first-relative
+  // behavior forever. A record only becomes subsequent when it says so.
+  const mode: RecognitionJourneyMode =
+    raw.mode === 'subsequent_relative'
+      ? 'subsequent_relative'
+      : 'first_relative';
   if (
-    tasks.length !== 2 ||
-    new Set(tasks.map(task => task.id)).size !== 2 ||
-    !tasks.some(task => task.id === 'departure_interval') ||
-    !tasks.some(task => task.id === 'family_status')
-  )
+    tasks.length !== taskIds.size ||
+    !taskIds.has('departure_interval') ||
+    !taskIds.has('family_status')
+  ) {
     return undefined;
+  }
+  if (
+    mode === 'first_relative'
+      ? tasks.length !== 2 || taskIds.has('relative_mention_greeting')
+      : tasks.length !== 3 || !taskIds.has('relative_mention_greeting')
+  ) {
+    return undefined;
+  }
   return {
     version: RECOGNITION_JOURNEY_VERSION,
+    mode,
     stage: ['pending', 'active', 'settled'].includes(String(raw.stage))
       ? (raw.stage as RecognitionJourney['stage'])
       : 'pending',
@@ -916,6 +1333,7 @@ function parseV3Journey(
       ...dateField(openingRaw, 'expiredAt'),
       ...stringField(openingRaw, 'observationEvidence'),
     },
+    ...stringField(raw, 'mentionCallName'),
     tasks,
     lastJourneyActionUserTurn: numberValue(raw.lastJourneyActionUserTurn),
     taskSuggestionAttemptCount: numberValue(raw.taskSuggestionAttemptCount),
@@ -968,6 +1386,7 @@ function migrateEarlierJourney(
   };
   return {
     version: RECOGNITION_JOURNEY_VERSION,
+    mode: 'first_relative',
     stage:
       status === 'pending'
         ? 'pending'
@@ -1003,10 +1422,16 @@ function migrateEarlierJourney(
 function parseTask(value: unknown): RecognitionTaskState | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const raw = value as Record<string, unknown>;
-  if (!['departure_interval', 'family_status'].includes(String(raw.id)))
+  if (
+    ![
+      'departure_interval',
+      'family_status',
+      'relative_mention_greeting',
+    ].includes(String(raw.id))
+  )
     return undefined;
   if (
-    !['pending', 'proposed', 'completed', 'skipped'].includes(
+    !['pending', 'proposed', 'completed', 'skipped', 'expired'].includes(
       String(raw.status)
     )
   )
@@ -1022,9 +1447,11 @@ function parseTask(value: unknown): RecognitionTaskState | undefined {
     lastObserverUnavailableUserTurn: numberValue(
       raw.lastObserverUnavailableUserTurn
     ),
+    reobservationCount: numberValue(raw.reobservationCount),
     ...dateField(raw, 'proposedAt'),
     ...stringField(raw, 'proposedAssistantMessageId'),
     ...dateField(raw, 'completedAt'),
+    ...dateField(raw, 'expiredAt'),
     ...stringField(raw, 'answerMessageId'),
     ...stringField(raw, 'observationEvidence'),
   };

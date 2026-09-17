@@ -187,6 +187,7 @@ import {
   parseRecognitionJourney,
   planRecognitionJourneyTurn,
   RecognitionJourney,
+  RecognitionJourneyMode,
   RecognitionJourneyTurnPlan,
   RecognitionTaskId,
   serializeRecognitionJourney,
@@ -5898,14 +5899,27 @@ export class ConversationService {
           priorReplyTurnCount > 0 && priorReplyTurnCount < 20
             ? await this.findInitialRecognitionOpeningMessage(conversation.id)
             : undefined;
+        // Recovery must preserve the account classification: a later-relative
+        // state is rebuilt from the durable creation ledger, and only the
+        // released first-relative path may fall back to the released milestones.
+        const ownership =
+          await this.resolveConversationRecognitionJourneyOwnership(
+            options.runtime
+          );
         journey =
           priorReplyTurnCount >= 20
-            ? buildLegacyRecognitionJourney()
+            ? buildLegacyRecognitionJourney(
+                new Date(),
+                ownership.mode,
+                ownership.mentionCallName
+              )
             : buildInitialRecognitionJourney({
                 hasKnownDepartureDate: Boolean(options.runtime.agent.deathDate),
                 openingAssistantMessageId: initialOpening
                   ? this.stringifyObjectId(initialOpening.id)
                   : undefined,
+                mode: ownership.mode,
+                mentionCallName: ownership.mentionCallName,
               });
         stateMessage = await this.createRecognitionJourneyStateMessage({
           runtime: options.runtime,
@@ -5944,6 +5958,51 @@ export class ConversationService {
         this.describeReplyError(error)
       );
       return undefined;
+    }
+  }
+
+  /**
+   * Resolves the later-relative classification for state recovery only. Shared
+   * conversations and different-account viewers always stay on the released
+   * behavior because the account ledger and the first relative's call name
+   * belong to the owner.
+   */
+  private async resolveConversationRecognitionJourneyOwnership(
+    runtime: ReplyRuntime
+  ): Promise<{ mode: RecognitionJourneyMode; mentionCallName?: string }> {
+    const agent = runtime.agent;
+    if (!agent) return { mode: 'first_relative' };
+    const conversation = runtime.conversation;
+    const isShared =
+      conversation.accessRole === 'shared' ||
+      (agent.createdUserId &&
+        this.stringifyObjectId(agent.createdUserId) !==
+          this.stringifyObjectId(conversation.userId));
+    if (isShared) return { mode: 'first_relative' };
+    const service = this.freeChatAgentEligibilityService;
+    if (!service?.resolveRecognitionJourneyOwnership) {
+      return { mode: 'first_relative' };
+    }
+    try {
+      const ownership = await service.resolveRecognitionJourneyOwnership(agent);
+      if (ownership.mode === 'first_relative') {
+        return { mode: 'first_relative' };
+      }
+      const rawCallName =
+        ownership.firstAgent?.iCallAgent?.trim() ||
+        ownership.firstAgent?.name?.trim() ||
+        '';
+      return {
+        mode: 'subsequent_relative',
+        ...(rawCallName ? { mentionCallName: rawCallName } : {}),
+      };
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] recognition journey ownership resolution skipped, conversationId=%s reason=%s',
+        this.stringifyObjectId(conversation.id),
+        this.describeReplyError(error)
+      );
+      return { mode: 'first_relative' };
     }
   }
 
@@ -6093,8 +6152,36 @@ export class ConversationService {
         )
         .filter(Boolean)
         .join('\n');
+      // A later-relative card whose delivery could not be judged is re-read
+      // from the persisted message instead of being said again.
+      let reobserveMessageMissing = false;
+      if (plan.reobserveAssistantMessageId) {
+        const reobserved = await this.findMessageById(
+          this.parseObjectId(plan.reobserveAssistantMessageId),
+          options.runtime.conversation.id
+        );
+        if (
+          reobserved &&
+          reobserved.role === MessageRole.assistant &&
+          reobserved.status === MessageStatus.sent &&
+          !reobserved.isArchived
+        ) {
+          assistantText = (
+            reobserved.mediaTranscript ||
+            reobserved.content ||
+            ''
+          ).trim();
+        } else {
+          reobserveMessageMissing = true;
+        }
+      }
+      const isReleasedMilestoneTask = Boolean(
+        plan.suggestedTaskId &&
+          ['departure_interval', 'family_status'].includes(plan.suggestedTaskId)
+      );
       const deterministicNoQuestion = Boolean(
         plan.observerCheckpoint === 'task_proposal' &&
+          isReleasedMilestoneTask &&
           !hasExplicitRecognitionTaskQuestion(
             assistantText,
             plan.suggestedTaskId
@@ -6107,9 +6194,12 @@ export class ConversationService {
               opening: 'not_observed' as const,
               familyStatus: 'not_observed' as const,
               departureInterval: 'not_observed' as const,
+              relativeMentionGreeting: 'not_observed' as const,
               evidence: 'final_visible_reply_contains_no_selected_question',
             },
           }
+        : reobserveMessageMissing
+        ? { status: 'unavailable' as const }
         : await this.recognitionJourneyObserverService?.observe({
             journey: deliveredJourney,
             plan,
@@ -6148,6 +6238,7 @@ export class ConversationService {
         const unavailableJourney = applyRecognitionJourneyObserverUnavailable({
           journey: deliveredJourney,
           plan,
+          assistantMessageId: this.stringifyObjectId(latestAssistantMessage.id),
           now: latestAssistantMessage.createdAt,
         });
         const deliveredState = serializeRecognitionJourney(unavailableJourney);
