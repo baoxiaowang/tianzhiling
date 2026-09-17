@@ -73,7 +73,8 @@ export class RecognitionJourneyObserverService {
                 '在 task_proposal 检查点，只判断最终回复实际带出了哪个候选信息入口；程序给了候选但助手没问，必须是 not_observed。',
                 '在 task_response 检查点，以及 task_proposal 中标记的 observedTasks，只判断用户是否确实提供了对应信息。老宅拆除、房产争议等无关信息不等于“家人近况”。',
                 '如果候选任务是 relativeMentionGreeting，只判断最终回复是否自然表达了“另一位亲人刚刚提到用户，且当前亲人见到用户很高兴”这层意思，不要求逐字，不因缺少具体引述而否定；只回应用户当前话题而没有带出这层意思，必须是 not_observed。不要在 relativeMentionGreeting 检查点顺手判断 opening/familyStatus/departureInterval 的推进。',
-                '严格输出 JSON：{"opening":"not_observed|shallow_acknowledgement|emotionally_opened|emotionally_received","familyStatus":"not_observed|proposed|provided","departureInterval":"not_observed|proposed|provided","relativeMentionGreeting":"not_observed|expressed","evidence":"最多80字的观察依据"}',
+                '同时判断 relativeMentionGreetingRefusal：仅当用户在本轮明确表示不要再提这位亲人或这类话题（例如“别再提爸爸”“不想聊他”“别跟我说他的事”）时为 refused；用户只是拒绝聊别的事情（如工作、钱）、转述别人的话、或当轮不想继续时，一律为 not_refused，不得据此永久跳过任务。',
+                '严格输出 JSON：{"opening":"not_observed|shallow_acknowledgement|emotionally_opened|emotionally_received","familyStatus":"not_observed|proposed|provided","departureInterval":"not_observed|proposed|provided","relativeMentionGreeting":"not_observed|expressed","relativeMentionGreetingRefusal":"not_refused|refused","evidence":"最多80字的观察依据"}',
               ].join('\n'),
             },
             {
@@ -154,11 +155,15 @@ function parseObservation(
     const opening = String(raw.opening);
     const familyStatus = String(raw.familyStatus);
     const departureInterval = String(raw.departureInterval);
-    // Older observer outputs may omit the later-relative card field.
+    // Older observer outputs may omit the later-relative card fields.
     const relativeMentionGreeting =
       raw.relativeMentionGreeting === undefined
         ? 'not_observed'
         : String(raw.relativeMentionGreeting);
+    const relativeMentionGreetingRefusal =
+      raw.relativeMentionGreetingRefusal === undefined
+        ? 'not_refused'
+        : String(raw.relativeMentionGreetingRefusal);
     if (
       ![
         'not_observed',
@@ -168,7 +173,8 @@ function parseObservation(
       ].includes(opening) ||
       !['not_observed', 'proposed', 'provided'].includes(familyStatus) ||
       !['not_observed', 'proposed', 'provided'].includes(departureInterval) ||
-      !['not_observed', 'expressed'].includes(relativeMentionGreeting)
+      !['not_observed', 'expressed'].includes(relativeMentionGreeting) ||
+      !['not_refused', 'refused'].includes(relativeMentionGreetingRefusal)
     ) {
       return undefined;
     }
@@ -180,6 +186,9 @@ function parseObservation(
         departureInterval as RecognitionJourneyObservation['departureInterval'],
       relativeMentionGreeting: relativeMentionGreeting as NonNullable<
         RecognitionJourneyObservation['relativeMentionGreeting']
+      >,
+      relativeMentionGreetingRefusal: relativeMentionGreetingRefusal as NonNullable<
+        RecognitionJourneyObservation['relativeMentionGreetingRefusal']
       >,
       ...(typeof raw.evidence === 'string' && raw.evidence
         ? { evidence: raw.evidence.slice(0, 160) }

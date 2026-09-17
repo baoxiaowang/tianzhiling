@@ -970,6 +970,16 @@ export class AgentService {
       userId,
       shared: options.usePersonalCallName === false,
     });
+    if (!ownership.resolved) {
+      // A temporary ledger read failure must not persist a guidance mode. The
+      // visible opening is already durable; the first user turn reconstructs the
+      // journey once classification is available again.
+      this.logger?.warn?.(
+        '[agent] recognition journey mode unresolved at creation, deferring state, conversationId=%s',
+        this.stringifyObjectId(savedConversation.id)
+      );
+      return savedConversation;
+    }
     try {
       await this.createInitialRecognitionJourneyState(
         savedConversation,
@@ -995,48 +1005,55 @@ export class AgentService {
   /**
    * Only owner-created relatives can use the later-relative mode; shared
    * conversations and different accounts must not borrow the owner's account
-   * classification or call name. Classification failures keep the released
-   * first-relative behavior so creation is never blocked.
+   * classification or call name. Shared/cross-account always keeps the released
+   * first-relative behavior. A temporary classification failure is reported as
+   * `resolved: false` so the caller defers writing guidance state instead of
+   * persisting `first_relative` from an incomplete read.
    */
   private async resolveOwnerRecognitionJourneyOwnership(options: {
     agent: AgentEntity;
     userId: MongoObjectId;
     shared: boolean;
   }): Promise<{
-    mode: RecognitionJourneyMode;
+    resolved: boolean;
+    mode?: RecognitionJourneyMode;
     mentionCallName?: string;
   }> {
     if (
       options.shared ||
       !this.sameObjectId(options.agent.createdUserId, options.userId)
     ) {
-      return { mode: 'first_relative' };
+      return { resolved: true, mode: 'first_relative' };
     }
     const service = this.freeChatAgentEligibilityService;
     if (!service?.resolveRecognitionJourneyOwnership) {
-      return { mode: 'first_relative' };
+      return { resolved: true, mode: 'first_relative' };
     }
     try {
       const ownership = await service.resolveRecognitionJourneyOwnership(
         options.agent
       );
-      if (ownership.mode === 'first_relative') {
-        return { mode: 'first_relative' };
+      if (ownership.resolution === 'temporarily_unavailable') {
+        return { resolved: false };
+      }
+      if (ownership.mode !== 'subsequent_relative') {
+        return { resolved: true, mode: 'first_relative' };
       }
       const firstRelative = ownership.firstAgent;
       const rawCallName =
         firstRelative?.iCallAgent?.trim() || firstRelative?.name?.trim() || '';
       return {
+        resolved: true,
         mode: 'subsequent_relative',
         ...(rawCallName ? { mentionCallName: rawCallName } : {}),
       };
     } catch (error) {
       this.logger?.warn?.(
-        '[agent] recognition journey mode resolution skipped, agentId=%s reason=%s',
+        '[agent] recognition journey mode resolution unresolved, agentId=%s reason=%s',
         this.stringifyObjectId(options.agent.id),
         error instanceof Error ? error.message : String(error)
       );
-      return { mode: 'first_relative' };
+      return { resolved: false };
     }
   }
 
@@ -1047,7 +1064,7 @@ export class AgentService {
     now: Date,
     openingAssistantMessageId: string,
     ownership: {
-      mode: RecognitionJourneyMode;
+      mode?: RecognitionJourneyMode;
       mentionCallName?: string;
     } = { mode: 'first_relative' }
   ): Promise<void> {

@@ -14,12 +14,45 @@ export const FREE_CHAT_AGENT_LIMIT = 3;
 
 const SLOT_WRITE_MAX_ATTEMPTS = 8;
 
+/**
+ * The release boundary for the later-relative classification. Only agents
+ * created at/after this moment may be classified as later relatives during
+ * state recovery; older records keep the released first-relative behavior even
+ * if the ledger would otherwise place them after an earlier role. The field is
+ * overridable so the boundary is testable without hard-coding behavior.
+ */
+export const SUBSEQUENT_RELATIVE_MODE_ACTIVATED_AT = new Date(
+  '2026-09-18T00:00:00.000Z'
+);
+
+/**
+ * The ledger exists but its payload/version cannot be trusted (damaged or
+ * written by an unknown policy). This is historical data loss, not a temporary
+ * read failure, so callers may fall back to the surviving creation order.
+ */
+export class FreeChatAgentLedgerMalformedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FreeChatAgentLedgerMalformedError';
+  }
+}
+
 export type RecognitionJourneyRelativeMode =
   | 'first_relative'
   | 'subsequent_relative';
 
+export type RecognitionJourneyOwnershipResolution =
+  | 'resolved'
+  | 'temporarily_unavailable';
+
 export interface RecognitionJourneyOwnership {
-  mode: RecognitionJourneyRelativeMode;
+  /**
+   * `temporarily_unavailable` means the ledger could not be read due to a
+   * timeout/query error. Callers must not persist `first_relative` (or any
+   * mode) in that case; they should keep chatting and retry later.
+   */
+  resolution: RecognitionJourneyOwnershipResolution;
+  mode?: RecognitionJourneyRelativeMode;
   firstAgentId?: string;
   /**
    * The earliest owner-created real relative, when it still exists. Callers use
@@ -27,6 +60,12 @@ export interface RecognitionJourneyOwnership {
    * never read for chat history.
    */
   firstAgent?: AgentEntity;
+  /**
+   * True when the ledger could not be trusted and the earliest surviving role
+   * was used instead. The account history may be incomplete.
+   */
+  historyUnrecoverable?: boolean;
+  reason?: string;
 }
 
 @Provide()
@@ -39,6 +78,13 @@ export class FreeChatAgentEligibilityService {
 
   @InjectEntityModel(FreeChatAgentLedgerEntity)
   ledgerModel: MongoRepository<FreeChatAgentLedgerEntity>;
+
+  /**
+   * Injectable release boundary for tests/ops. Agents created before it keep
+   * the released first-relative behavior on recovery.
+   */
+  recognitionJourneyModeActivatedAt: Date =
+    SUBSEQUENT_RELATIVE_MODE_ACTIVATED_AT;
 
   async isEligible(agent: AgentEntity | null): Promise<boolean> {
     if (!agent) {
@@ -100,32 +146,48 @@ export class FreeChatAgentEligibilityService {
   /**
    * Classifies an owner-created real relative for the recognition journey.
    * The durable slot ledger is the stable creation-order source: slots survive
-   * deletion and concurrent registrations converge through the same CAS, so two
-   * concurrent creations can never both be first. Missing or malformed ledgers
-   * fall back to the earliest surviving record, which is the documented
-   * compatibility policy for accounts whose deleted history is not recorded.
+   * deletion and concurrent registrations converge through the same CAS.
+   *
+   * Failure handling is deliberately split:
+   * - a damaged ledger means the history cannot be restored, so the earliest
+   *   surviving role is used and flagged `historyUnrecoverable` (documented
+   *   compatibility policy);
+   * - a timeout/query error is temporary and returns `temporarily_unavailable`
+   *   so callers never persist `first_relative` from an incomplete read.
    */
   async resolveRecognitionJourneyOwnership(
     agent: AgentEntity | null
   ): Promise<RecognitionJourneyOwnership> {
     if (!agent || agent.messengerOfAgentId) {
-      return { mode: 'first_relative' };
+      return { resolution: 'resolved', mode: 'first_relative' };
     }
     const ownerUserId = this.asObjectId(agent.createdUserId);
     if (!ownerUserId) {
-      return { mode: 'first_relative' };
+      return { resolution: 'resolved', mode: 'first_relative' };
     }
     const candidateSlot = this.buildAgentSlot(agent);
     let slots: FreeChatAgentSlot[];
+    let historyUnrecoverable = false;
     try {
       slots = await this.ensureSlots(ownerUserId, candidateSlot);
     } catch (error) {
+      if (!(error instanceof FreeChatAgentLedgerMalformedError)) {
+        this.logger?.warn?.(
+          '[recognition-journey] slot ledger temporarily unavailable, mode unresolved: %s',
+          error instanceof Error ? error.message : String(error)
+        );
+        return {
+          resolution: 'temporarily_unavailable',
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
       this.logger?.warn?.(
-        '[recognition-journey] slot ledger unavailable, falling back to surviving order: %s',
-        error instanceof Error ? error.message : String(error)
+        '[recognition-journey] slot ledger damaged, falling back to surviving order: %s',
+        error.message
       );
       try {
         slots = await this.listEarliestRealAgentSlots(ownerUserId);
+        historyUnrecoverable = true;
       } catch (fallbackError) {
         this.logger?.warn?.(
           '[recognition-journey] earliest-relative fallback failed: %s',
@@ -133,26 +195,61 @@ export class FreeChatAgentEligibilityService {
             ? fallbackError.message
             : String(fallbackError)
         );
-        return { mode: 'first_relative' };
+        return {
+          resolution: 'temporarily_unavailable',
+          reason:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError),
+        };
       }
     }
     const earliest = slots[0];
     if (!earliest) {
-      return { mode: 'first_relative' };
+      return {
+        resolution: 'resolved',
+        mode: 'first_relative',
+        ...(historyUnrecoverable ? { historyUnrecoverable: true } : {}),
+      };
     }
     const candidateId = candidateSlot.agentId.toHexString();
     const earliestId = earliest.agentId.toHexString();
     if (earliestId === candidateId) {
-      return { mode: 'first_relative', firstAgentId: candidateId };
+      return {
+        resolution: 'resolved',
+        mode: 'first_relative',
+        firstAgentId: candidateId,
+        ...(historyUnrecoverable ? { historyUnrecoverable: true } : {}),
+      };
+    }
+    // Older roles predate the later-relative feature; during state recovery
+    // they must keep the released behavior rather than switch to the new mode.
+    if (!this.isCreatedAfterModeActivation(agent)) {
+      return {
+        resolution: 'resolved',
+        mode: 'first_relative',
+        firstAgentId: candidateId,
+        ...(historyUnrecoverable ? { historyUnrecoverable: true } : {}),
+        reason: 'created_before_subsequent_relative_mode',
+      };
     }
     const firstAgent = await this.agentModel.findOne({
       where: { _id: earliest.agentId },
     } as never);
     return {
+      resolution: 'resolved',
       mode: 'subsequent_relative',
       firstAgentId: earliestId,
       ...(firstAgent ? { firstAgent } : {}),
+      ...(historyUnrecoverable ? { historyUnrecoverable: true } : {}),
     };
+  }
+
+  private isCreatedAfterModeActivation(agent: AgentEntity): boolean {
+    const createdAt = this.asDate(agent.createdAt);
+    const boundary = this.asDate(this.recognitionJourneyModeActivatedAt);
+    if (!createdAt || !boundary) return false;
+    return createdAt.getTime() >= boundary.getTime();
   }
 
   private async ensureSlots(
@@ -277,14 +374,18 @@ export class FreeChatAgentEligibilityService {
       ledger.policyVersion !== FREE_CHAT_AGENT_LEDGER_POLICY_VERSION ||
       !this.sameOptionalId(ledger.userId, ownerUserId)
     ) {
-      throw new Error('free-chat agent slot ledger metadata is malformed');
+      throw new FreeChatAgentLedgerMalformedError(
+        'free-chat agent slot ledger metadata is malformed'
+      );
     }
     return this.normalizeSlots(ledger.slots);
   }
 
   private normalizeSlots(value: unknown): FreeChatAgentSlot[] {
     if (!Array.isArray(value) || value.length > FREE_CHAT_AGENT_LIMIT) {
-      throw new Error('free-chat agent slot ledger is malformed');
+      throw new FreeChatAgentLedgerMalformedError(
+        'free-chat agent slot ledger is malformed'
+      );
     }
 
     const slots: FreeChatAgentSlot[] = [];
@@ -294,7 +395,9 @@ export class FreeChatAgentEligibilityService {
       const agentId = this.asObjectId(record?.agentId);
       const createdAt = this.asDate(record?.createdAt);
       if (!agentId || !createdAt || seen.has(agentId.toHexString())) {
-        throw new Error('free-chat agent slot ledger is malformed');
+        throw new FreeChatAgentLedgerMalformedError(
+          'free-chat agent slot ledger is malformed'
+        );
       }
       seen.add(agentId.toHexString());
       slots.push({ agentId, createdAt });
@@ -302,7 +405,9 @@ export class FreeChatAgentEligibilityService {
 
     const sortedSlots = this.sortSlots(slots);
     if (!this.sameSlotList(slots, sortedSlots)) {
-      throw new Error('free-chat agent slot ledger is malformed');
+      throw new FreeChatAgentLedgerMalformedError(
+        'free-chat agent slot ledger is malformed'
+      );
     }
     return slots;
   }
@@ -317,7 +422,9 @@ export class FreeChatAgentEligibilityService {
       const agentId = this.asObjectId(value?.agentId);
       const createdAt = this.asDate(value?.createdAt);
       if (!agentId || !createdAt) {
-        throw new Error('free-chat agent slot is malformed');
+        throw new FreeChatAgentLedgerMalformedError(
+          'free-chat agent slot is malformed'
+        );
       }
       const key = agentId.toHexString();
       const current = slotsById.get(key);

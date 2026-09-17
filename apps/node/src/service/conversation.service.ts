@@ -191,6 +191,7 @@ import {
   RecognitionJourneyTurnPlan,
   RecognitionTaskId,
   serializeRecognitionJourney,
+  SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
 } from './agents/recognition-journey';
 import { RecognitionJourneyObserverService } from './agents/recognition-journey-observer.service';
 import { PersonTemporalMemoryService } from './agents/person-temporal-memory.service';
@@ -5906,11 +5907,17 @@ export class ConversationService {
           await this.resolveConversationRecognitionJourneyOwnership(
             options.runtime
           );
+        // A temporary ledger failure must not be persisted as first_relative.
+        // Skip guidance for this turn and let the next turn retry.
+        if (!ownership.resolved) {
+          return undefined;
+        }
+        const mode = ownership.mode ?? 'first_relative';
         journey =
           priorReplyTurnCount >= 20
             ? buildLegacyRecognitionJourney(
                 new Date(),
-                ownership.mode,
+                mode,
                 ownership.mentionCallName
               )
             : buildInitialRecognitionJourney({
@@ -5918,13 +5925,44 @@ export class ConversationService {
                 openingAssistantMessageId: initialOpening
                   ? this.stringifyObjectId(initialOpening.id)
                   : undefined,
-                mode: ownership.mode,
+                mode,
                 mentionCallName: ownership.mentionCallName,
               });
         stateMessage = await this.createRecognitionJourneyStateMessage({
           runtime: options.runtime,
           journey,
         });
+      } else if (
+        journey.mode === 'first_relative' &&
+        journey.stage !== 'settled'
+      ) {
+        // Convergence: a concurrently created earlier role may have been
+        // persisted after this conversation classified itself as first, which
+        // would leave two durable "first" modes. Re-resolve and correct the
+        // persisted mode so exactly one first remains.
+        const ownership =
+          await this.resolveConversationRecognitionJourneyOwnership(
+            options.runtime
+          );
+        if (
+          ownership.resolved &&
+          ownership.mode === 'subsequent_relative'
+        ) {
+          journey = buildInitialRecognitionJourney({
+            mode: 'subsequent_relative',
+            mentionCallName: ownership.mentionCallName,
+            now: new Date(),
+          });
+          const correctedState = serializeRecognitionJourney(journey);
+          if (correctedState !== stateMessage.content) {
+            stateMessage = await this.saveRecognitionJourneyStateMessage({
+              conversationId: conversation.id,
+              stateMessage,
+              content: correctedState,
+              updatedAt: new Date(),
+            });
+          }
+        }
       }
 
       // Compare with persisted content so V1/V2 states are upgraded to V3 even
@@ -5969,40 +6007,50 @@ export class ConversationService {
    */
   private async resolveConversationRecognitionJourneyOwnership(
     runtime: ReplyRuntime
-  ): Promise<{ mode: RecognitionJourneyMode; mentionCallName?: string }> {
+  ): Promise<{
+    resolved: boolean;
+    mode?: RecognitionJourneyMode;
+    mentionCallName?: string;
+  }> {
     const agent = runtime.agent;
-    if (!agent) return { mode: 'first_relative' };
+    if (!agent) return { resolved: true, mode: 'first_relative' };
     const conversation = runtime.conversation;
     const isShared =
       conversation.accessRole === 'shared' ||
       (agent.createdUserId &&
         this.stringifyObjectId(agent.createdUserId) !==
           this.stringifyObjectId(conversation.userId));
-    if (isShared) return { mode: 'first_relative' };
+    if (isShared) return { resolved: true, mode: 'first_relative' };
     const service = this.freeChatAgentEligibilityService;
     if (!service?.resolveRecognitionJourneyOwnership) {
-      return { mode: 'first_relative' };
+      return { resolved: true, mode: 'first_relative' };
     }
     try {
       const ownership = await service.resolveRecognitionJourneyOwnership(agent);
-      if (ownership.mode === 'first_relative') {
-        return { mode: 'first_relative' };
+      // A timeout/query failure is temporary: leave guidance unresolved rather
+      // than persisting first_relative from an incomplete read.
+      if (ownership.resolution === 'temporarily_unavailable') {
+        return { resolved: false };
+      }
+      if (ownership.mode !== 'subsequent_relative') {
+        return { resolved: true, mode: 'first_relative' };
       }
       const rawCallName =
         ownership.firstAgent?.iCallAgent?.trim() ||
         ownership.firstAgent?.name?.trim() ||
         '';
       return {
+        resolved: true,
         mode: 'subsequent_relative',
         ...(rawCallName ? { mentionCallName: rawCallName } : {}),
       };
     } catch (error) {
       this.logger?.warn?.(
-        '[conversation] recognition journey ownership resolution skipped, conversationId=%s reason=%s',
+        '[conversation] recognition journey ownership unresolved, conversationId=%s reason=%s',
         this.stringifyObjectId(conversation.id),
         this.describeReplyError(error)
       );
-      return { mode: 'first_relative' };
+      return { resolved: false };
     }
   }
 
@@ -6071,7 +6119,7 @@ export class ConversationService {
     if (!plan || !stateMessageId || !options.assistantMessages.length) return;
 
     try {
-      const stateMessage = await this.findRecognitionJourneyStateMessageById(
+      let stateMessage = await this.findRecognitionJourneyStateMessageById(
         options.runtime.conversation.id,
         stateMessageId
       );
@@ -6085,6 +6133,50 @@ export class ConversationService {
         plan.openingSuggested &&
           options.processed.routing?.generationFailureCode
       );
+
+      // Read back the exact final visible messages before recording delivery or
+      // observing. The generation result is not evidence of persistence.
+      const persistedAssistantMessages =
+        plan.observerCheckpoint && !openingDeliveryFailed
+          ? (
+              await Promise.all(
+                options.assistantMessages.map(message =>
+                  this.findMessageById(
+                    this.parseObjectId(this.stringifyObjectId(message.id)),
+                    options.runtime.conversation.id
+                  )
+                )
+              )
+            )
+              .filter((message): message is MessageEntity =>
+                Boolean(
+                  message &&
+                    message.role === MessageRole.assistant &&
+                    message.status === MessageStatus.sent &&
+                    !message.isArchived
+                )
+              )
+              .sort(
+                (left, right) =>
+                  (left.replySegmentIndex ?? 0) -
+                    (right.replySegmentIndex ?? 0) ||
+                  left.createdAt.getTime() - right.createdAt.getTime()
+              )
+          : [];
+      if (persistedAssistantMessages.length) {
+        assistantText = persistedAssistantMessages
+          .map(message =>
+            (message.mediaTranscript || message.content || '').trim()
+          )
+          .filter(Boolean)
+          .join('\n');
+      }
+      const representativeAssistantMessage =
+        persistedAssistantMessages[0] ?? latestAssistantMessage;
+      const representativeAssistantMessageId = this.stringifyObjectId(
+        representativeAssistantMessage.id
+      );
+
       const deliveredJourney = openingDeliveryFailed
         ? journey
         : applyRecognitionJourneyDelivery({
@@ -6093,6 +6185,8 @@ export class ConversationService {
             assistantMessageId: this.stringifyObjectId(
               latestAssistantMessage.id
             ),
+            greetingDeliveryMessageId: representativeAssistantMessageId,
+            greetingReplyGroupId: representativeAssistantMessage.replyGroupId,
             now: latestAssistantMessage.createdAt,
           });
       let openingAssistantText = '';
@@ -6121,56 +6215,35 @@ export class ConversationService {
         return;
       }
 
-      // Read back the exact final visible messages before a product milestone
-      // can advance. The generation result is not evidence of persistence.
-      const persistedAssistantMessages = (
-        await Promise.all(
-          options.assistantMessages.map(message =>
-            this.findMessageById(
-              this.parseObjectId(this.stringifyObjectId(message.id)),
-              options.runtime.conversation.id
-            )
-          )
-        )
-      )
-        .filter((message): message is MessageEntity =>
-          Boolean(
-            message &&
-              message.role === MessageRole.assistant &&
-              message.status === MessageStatus.sent &&
-              !message.isArchived
-          )
-        )
-        .sort(
-          (left, right) =>
-            (left.replySegmentIndex ?? 0) - (right.replySegmentIndex ?? 0) ||
-            left.createdAt.getTime() - right.createdAt.getTime()
-        );
-      assistantText = persistedAssistantMessages
-        .map(message =>
-          (message.mediaTranscript || message.content || '').trim()
-        )
-        .filter(Boolean)
-        .join('\n');
+      // A later-relative card was actually delivered. Persist the delivery
+      // record before semantic judgement so a failed completion write still
+      // leaves a trace and the same card is never said twice.
+      const greetingDeliveryRecorded =
+        plan.observerCheckpoint === 'task_proposal' &&
+        plan.suggestedTaskId === SUBSEQUENT_RELATIVE_GREETING_TASK_ID;
+      if (greetingDeliveryRecorded) {
+        const deliveredState = serializeRecognitionJourney(deliveredJourney);
+        if (deliveredState !== stateMessage.content) {
+          stateMessage = await this.saveRecognitionJourneyStateMessage({
+            conversationId: options.runtime.conversation.id,
+            stateMessage,
+            content: deliveredState,
+            updatedAt: latestAssistantMessage.updatedAt || new Date(),
+          });
+        }
+      }
+
       // A later-relative card whose delivery could not be judged is re-read
-      // from the persisted message instead of being said again.
+      // from its complete persisted reply group instead of being said again.
       let reobserveMessageMissing = false;
       if (plan.reobserveAssistantMessageId) {
-        const reobserved = await this.findMessageById(
-          this.parseObjectId(plan.reobserveAssistantMessageId),
-          options.runtime.conversation.id
-        );
-        if (
-          reobserved &&
-          reobserved.role === MessageRole.assistant &&
-          reobserved.status === MessageStatus.sent &&
-          !reobserved.isArchived
-        ) {
-          assistantText = (
-            reobserved.mediaTranscript ||
-            reobserved.content ||
-            ''
-          ).trim();
+        const reobservedGroup = await this.loadPersistedReplyGroupText({
+          conversationId: options.runtime.conversation.id,
+          replyGroupId: plan.reobserveReplyGroupId,
+          fallbackMessageId: plan.reobserveAssistantMessageId,
+        });
+        if (reobservedGroup) {
+          assistantText = reobservedGroup;
         } else {
           reobserveMessageMissing = true;
         }
@@ -6238,7 +6311,7 @@ export class ConversationService {
         const unavailableJourney = applyRecognitionJourneyObserverUnavailable({
           journey: deliveredJourney,
           plan,
-          assistantMessageId: this.stringifyObjectId(latestAssistantMessage.id),
+          assistantMessageId: representativeAssistantMessageId,
           now: latestAssistantMessage.createdAt,
         });
         const deliveredState = serializeRecognitionJourney(unavailableJourney);
@@ -6257,7 +6330,7 @@ export class ConversationService {
         journey: deliveredJourney,
         plan,
         observation: observed.observation,
-        assistantMessageId: this.stringifyObjectId(latestAssistantMessage.id),
+        assistantMessageId: representativeAssistantMessageId,
         userMessageId: plan.currentUserMessageId,
         now: latestAssistantMessage.createdAt,
       });
@@ -12320,6 +12393,53 @@ export class ConversationService {
             : ('assistant' as const),
         content: item.content?.trim() || '',
       }));
+  }
+
+  /**
+   * Loads the complete, actually-persisted text of an assistant reply group.
+   * The later-relative re-check must judge every saved segment in its original
+   * order, not only one bubble. Returns undefined when the group cannot be
+   * confirmed (missing, archived or empty), which callers treat as "not
+   * confirmed" rather than "not expressed".
+   */
+  private async loadPersistedReplyGroupText(options: {
+    conversationId: MongoObjectId;
+    replyGroupId?: string;
+    fallbackMessageId?: string;
+  }): Promise<string | undefined> {
+    if (options.replyGroupId) {
+      const segments = await this.messageModel.find({
+        where: {
+          conversationId: options.conversationId,
+          replyGroupId: options.replyGroupId,
+          role: MessageRole.assistant,
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+        } as never,
+        order: { replySegmentIndex: 'ASC', createdAt: 'ASC' },
+      });
+      const text = segments
+        .map(message => (message.mediaTranscript || message.content || '').trim())
+        .filter(Boolean)
+        .join('\n');
+      if (text) return text;
+      return undefined;
+    }
+    if (!options.fallbackMessageId) return undefined;
+    const message = await this.findMessageById(
+      this.parseObjectId(options.fallbackMessageId),
+      options.conversationId
+    );
+    if (
+      !message ||
+      message.role !== MessageRole.assistant ||
+      message.status !== MessageStatus.sent ||
+      message.isArchived
+    ) {
+      return undefined;
+    }
+    const text = (message.mediaTranscript || message.content || '').trim();
+    return text || undefined;
   }
 
   private async findMessageById(

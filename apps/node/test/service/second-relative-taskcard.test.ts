@@ -185,6 +185,8 @@ interface ConversationHarness {
   nextObservation: Record<string, string> | undefined;
   observerUnavailable: boolean;
   observerCalls: number;
+  observerAssistantTexts: string[];
+  observerUserTexts: string[];
 }
 
 function createConversationHarness(options: {
@@ -258,10 +260,17 @@ function createConversationHarness(options: {
     nextObservation: undefined,
     observerUnavailable: false,
     observerCalls: 0,
+    observerAssistantTexts: [],
+    observerUserTexts: [],
   };
   (service as any).recognitionJourneyObserverService = {
-    observe: async () => {
+    observe: async (observedOptions: {
+      currentUserText: string;
+      assistantText: string;
+    }) => {
       harness.observerCalls += 1;
+      harness.observerAssistantTexts.push(observedOptions.assistantText);
+      harness.observerUserTexts.push(observedOptions.currentUserText);
       if (harness.observerUnavailable) return { status: 'unavailable' };
       return {
         status: 'observed',
@@ -615,8 +624,8 @@ describe('conversation service second-relative flow (persisted state)', () => {
       observerUnavailable: true,
     });
     expect(turn3.plan?.prompt).toContain('你爸爸');
-    // Unavailable is never treated as success.
-    expect(greetingOf(harness)?.status).toBe('pending');
+    // Unavailable is never treated as success; the delivery is recorded.
+    expect(greetingOf(harness)?.status).toBe('proposed');
     expect(greetingOf(harness)?.observerUnavailableCount).toBe(1);
     expect(greetingOf(harness)?.proposedAssistantMessageId).toBe(
       String(turn3.assistant.id)
@@ -633,23 +642,58 @@ describe('conversation service second-relative flow (persisted state)', () => {
       String(turn3.assistant.id)
     );
     expect(turn4.plan?.observerCheckpoint).toBe('task_response');
-    expect(greetingOf(harness)?.status).toBe('pending');
+    expect(greetingOf(harness)?.status).toBe('proposed');
     expect(greetingOf(harness)?.reobservationCount).toBe(1);
-    expect(greetingOf(harness)?.proposedAssistantMessageId).toBeUndefined();
+    // The delivery record survives so a later turn can still re-read it.
+    expect(greetingOf(harness)?.proposedAssistantMessageId).toBe(
+      String(turn3.assistant.id)
+    );
 
     const turn5 = await runTurn(harness, {
       turn: 5,
       text: '五',
       assistantText: '一直。',
+      observerUnavailable: true,
     });
     // The card was only ever injected on turn 3; the window then closes
     // unconfirmed rather than repeating the same line.
     expect(turn5.plan?.prompt).toBeUndefined();
-    expect(turn5.plan?.observerCheckpoint).toBeUndefined();
+    expect(turn5.plan?.reobserveAssistantMessageId).toBe(
+      String(turn3.assistant.id)
+    );
     expect(greetingOf(harness)?.status).toBe('expired');
+    expect(greetingOf(harness)?.observationEvidence).toBe(
+      'observer_unavailable'
+    );
   });
 
-  it('does not mark the card complete when the state write fails', async () => {
+  it('fix1: a confirmed-not-expressed proposal may be re-proposed within the window', async () => {
+    const harness = createConversationHarness({
+      mode: 'subsequent_relative',
+      mentionCallName: '我的爸爸',
+    });
+    await runTurn(harness, { turn: 1, text: '一', assistantText: '回一' });
+    await runTurn(harness, { turn: 2, text: '二', assistantText: '回二' });
+    await runTurn(harness, {
+      turn: 3,
+      text: '三',
+      assistantText: '我在。',
+      observation: DEFAULT_OBSERVATION,
+    });
+    // The observer made a definite "not expressed" judgement, so the delivery
+    // record is cleared and the pending card may be offered again.
+    expect(greetingOf(harness)?.status).toBe('pending');
+    expect(greetingOf(harness)?.proposedAssistantMessageId).toBeUndefined();
+    const turn4 = await runTurn(harness, {
+      turn: 4,
+      text: '四',
+      assistantText: '还在。',
+      observation: DEFAULT_OBSERVATION,
+    });
+    expect(turn4.plan?.prompt).toContain('你爸爸');
+  });
+
+  it('fix1: an expressed reply whose completion write fails is re-read, never re-said', async () => {
     const harness = createConversationHarness({
       mode: 'subsequent_relative',
       mentionCallName: '我的爸爸',
@@ -657,17 +701,21 @@ describe('conversation service second-relative flow (persisted state)', () => {
     await runTurn(harness, { turn: 1, text: '一', assistantText: '回一' });
     await runTurn(harness, { turn: 2, text: '二', assistantText: '回二' });
 
-    // The reply expresses the card, but persisting the journey transition fails.
+    // The reply expresses the card, but persisting the completed transition
+    // fails. The delivery record must already be durable.
     const originalSave = harness.store.save.bind(harness.store);
     let failedOnce = false;
     harness.store.save = async (doc: MessageEntity) => {
       if (
         !failedOnce &&
         typeof doc.content === 'string' &&
-        doc.content.startsWith(RECOGNITION_JOURNEY_MESSAGE_PREFIX)
+        doc.content.startsWith(RECOGNITION_JOURNEY_MESSAGE_PREFIX) &&
+        /"id":"relative_mention_greeting","status":"completed"/u.test(
+          doc.content
+        )
       ) {
         failedOnce = true;
-        throw new Error('simulated state save failure');
+        throw new Error('simulated completion state save failure');
       }
       return originalSave(doc);
     };
@@ -683,9 +731,16 @@ describe('conversation service second-relative flow (persisted state)', () => {
     harness.store.save = originalSave;
     expect(failedOnce).toBe(true);
     expect(turn3.plan?.prompt).toContain('你爸爸');
-    // The completed transition was not durable, so it must not be reported done.
-    expect(greetingOf(harness)?.status).toBe('pending');
+    // The completion transition was not durable, so it is not reported done,
+    // but the recorded delivery survives.
+    expect(greetingOf(harness)?.status).toBe('proposed');
     expect(greetingOf(harness)?.completedAt).toBeUndefined();
+    expect(greetingOf(harness)?.proposedAssistantMessageId).toBe(
+      String(turn3.assistant.id)
+    );
+    expect(greetingOf(harness)?.proposedReplyGroupId).toBe(
+      String(turn3.assistant.replyGroupId)
+    );
 
     const turn4 = await runTurn(harness, {
       turn: 4,
@@ -693,11 +748,68 @@ describe('conversation service second-relative flow (persisted state)', () => {
       assistantText: '四的回',
       observation: DEFAULT_OBSERVATION,
     });
-    // The card may still be offered instead of being falsely completed.
-    expect(turn4.plan?.prompt).toContain('你爸爸');
+    // The card must never be injected a second time: the turn re-reads the
+    // original delivery instead.
+    expect(turn4.plan?.prompt).toBeUndefined();
+    expect(finalRequestTaskLayer(turn4.plan)).not.toContain('刚刚你爸爸');
+    expect(turn4.plan?.observerCheckpoint).toBe('task_response');
+    expect(turn4.plan?.reobserveAssistantMessageId).toBe(
+      String(turn3.assistant.id)
+    );
   });
 
-  it('honours an explicit refusal and never asks again', async () => {
+  it('fix2: re-reads the whole reply group and binds completion to the original delivery', async () => {
+    const harness = createConversationHarness({
+      mode: 'subsequent_relative',
+      mentionCallName: '我的爸爸',
+    });
+    await runTurn(harness, { turn: 1, text: '一', assistantText: '回一' });
+    await runTurn(harness, { turn: 2, text: '二', assistantText: '回二' });
+
+    // Turn 3 delivers the card split into two persisted bubbles and the
+    // observer is unavailable.
+    const turn3 = await runTurn(harness, {
+      turn: 3,
+      text: '三',
+      assistantText: '刚刚你爸爸跟我说到你了，',
+      extraSegments: ['你能来找我，我真是太高兴了。'],
+      observerUnavailable: true,
+    });
+    expect(greetingOf(harness)?.proposedReplyGroupId).toBe(
+      String(turn3.assistant.replyGroupId)
+    );
+
+    // Turn 4 re-reads the original group and the observer sees both segments.
+    const turn4 = await runTurn(harness, {
+      turn: 4,
+      text: '谢谢你',
+      assistantText: '这一轮的新回复。',
+      observation: {
+        ...DEFAULT_OBSERVATION,
+        relativeMentionGreeting: 'expressed',
+      },
+    });
+    expect(turn4.plan?.reobserveAssistantMessageId).toBe(
+      String(turn3.assistant.id)
+    );
+    expect(turn4.plan?.reobserveReplyGroupId).toBe(
+      String(turn3.assistant.replyGroupId)
+    );
+    const observedText =
+      harness.observerAssistantTexts[
+        harness.observerAssistantTexts.length - 1
+      ] || '';
+    expect(observedText).toContain('刚刚你爸爸跟我说到你了，');
+    expect(observedText).toContain('你能来找我，我真是太高兴了。');
+    expect(observedText).not.toContain('这一轮的新回复。');
+    // Completion evidence is bound to turn 3's original delivery, not turn 4.
+    const greeting = greetingOf(harness);
+    expect(greeting?.status).toBe('completed');
+    expect(greeting?.answerMessageId).toBe(String(turn3.assistant.id));
+    expect(greeting?.answerMessageId).not.toBe(String(turn4.assistant.id));
+  });
+
+  it('fix3: a refusal of an unrelated topic does not skip the card', async () => {
     const harness = createConversationHarness({
       mode: 'subsequent_relative',
       mentionCallName: '我的爸爸',
@@ -706,10 +818,47 @@ describe('conversation service second-relative flow (persisted state)', () => {
     await runTurn(harness, { turn: 2, text: '二', assistantText: '回二' });
     const turn3 = await runTurn(harness, {
       turn: 3,
-      text: '别提他，我不想聊这个',
-      assistantText: '好，那先不说这个。',
+      text: '我不想聊工作',
+      assistantText: '好，那我们不说工作。',
+      observation: {
+        ...DEFAULT_OBSERVATION,
+        relativeMentionGreetingRefusal: 'not_refused',
+      },
     });
-    expect(turn3.plan?.prompt).toBeUndefined();
+    // Refusing an unrelated subject is not a refusal of this card.
+    expect(greetingOf(harness)?.status).not.toBe('skipped');
+    expect(turn3.plan?.prompt).toContain('你爸爸');
+    const turn4 = await runTurn(harness, {
+      turn: 4,
+      text: '嗯，你刚刚想说什么',
+      assistantText: '刚刚你爸爸跟我说到你，你能来找我我太高兴了。',
+      observation: {
+        ...DEFAULT_OBSERVATION,
+        relativeMentionGreeting: 'expressed',
+      },
+    });
+    // The card may still advance within the window.
+    expect(turn4.plan?.prompt).toContain('你爸爸');
+    expect(greetingOf(harness)?.status).toBe('completed');
+  });
+
+  it('fix3: an explicit refusal of this relative skips the card forever', async () => {
+    const harness = createConversationHarness({
+      mode: 'subsequent_relative',
+      mentionCallName: '我的爸爸',
+    });
+    await runTurn(harness, { turn: 1, text: '一', assistantText: '回一' });
+    await runTurn(harness, { turn: 2, text: '二', assistantText: '回二' });
+    const turn3 = await runTurn(harness, {
+      turn: 3,
+      text: '别再提爸爸了，我不想聊他',
+      assistantText: '好，那先不说这个。',
+      observation: {
+        ...DEFAULT_OBSERVATION,
+        relativeMentionGreetingRefusal: 'refused',
+      },
+    });
+    expect(turn3.plan?.prompt).toContain('你爸爸');
     expect(greetingOf(harness)?.status).toBe('skipped');
     expect(greetingOf(harness)?.observationEvidence).toBe(
       'user_declined_topic'
@@ -720,6 +869,7 @@ describe('conversation service second-relative flow (persisted state)', () => {
       assistantText: '嗯。',
     });
     expect(turn4.plan?.prompt).toBeUndefined();
+    expect(finalRequestTaskLayer(turn4.plan)).not.toContain('刚刚你爸爸');
   });
 
   it('counts only effective user turns: split bubbles, welcome and system rows do not advance it', async () => {
@@ -902,6 +1052,115 @@ describe('conversation service second-relative flow (persisted state)', () => {
     expect(owner.mode).toBe('subsequent_relative');
     expect(owner.mentionCallName).toBe('我的爸爸');
   });
+
+  it('fix4: a temporary ownership failure writes no state and recovers on a later turn', async () => {
+    const harness = createConversationHarness({
+      mode: 'subsequent_relative',
+      mentionCallName: '我的爸爸',
+    });
+    // No persisted journey state: a legacy conversation that must recover.
+    harness.store.docs = harness.store.docs.filter(
+      doc => doc.role !== MessageRole.system
+    );
+    let available = false;
+    (harness.service as any).freeChatAgentEligibilityService = {
+      resolveRecognitionJourneyOwnership: async () =>
+        available
+          ? {
+              resolution: 'resolved',
+              mode: 'subsequent_relative',
+              firstAgentId: String(FIRST_AGENT_ID),
+              firstAgent: Object.assign(new AgentEntity(), {
+                id: FIRST_AGENT_ID,
+                iCallAgent: '我的爸爸',
+                name: '爸爸',
+              }),
+            }
+          : { resolution: 'temporarily_unavailable', reason: 'timeout' },
+    };
+    const userMessage = makeMessage({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      role: MessageRole.user,
+      content: '今天有点累',
+      createdAt: new Date(BASE_TIME.getTime() + 5000),
+    });
+    const runtime = runtimeOf(harness);
+    const before = {
+      searchableText: '今天有点累',
+      userMessage,
+      messagePayload: {},
+      deferReply: false,
+    } as any;
+
+    const unresolved = await (
+      harness.service as any
+    ).prepareRecognitionJourneyTurn({
+      runtime,
+      before,
+      currentTurnMessages: [userMessage],
+    });
+    expect(unresolved).toBeUndefined();
+    // A temporary failure must not persist first_relative (or any mode).
+    expect(
+      harness.store.docs.filter(doc => doc.role === MessageRole.system)
+    ).toHaveLength(0);
+
+    available = true;
+    const recovered = await (
+      harness.service as any
+    ).prepareRecognitionJourneyTurn({
+      runtime,
+      before,
+      currentTurnMessages: [userMessage],
+    });
+    expect(recovered).toBeDefined();
+    const rebuilt = persistedJourney(harness);
+    expect(rebuilt?.mode).toBe('subsequent_relative');
+    expect(rebuilt?.mentionCallName).toBe('你爸爸');
+    expect(
+      rebuilt?.tasks.find(task => task.id === 'departure_interval')?.status
+    ).toBe('skipped');
+    expect(
+      rebuilt?.tasks.find(task => task.id === 'family_status')?.status
+    ).toBe('skipped');
+  });
+
+  it('fix5: corrects a persisted first_relative when an earlier role converges', async () => {
+    const harness = createConversationHarness({ mode: 'first_relative' });
+    // This conversation first classified itself as first while the earlier
+    // role had not yet been persisted. The ledger now converges on that role.
+    (harness.service as any).freeChatAgentEligibilityService = {
+      resolveRecognitionJourneyOwnership: async () => ({
+        resolution: 'resolved',
+        mode: 'subsequent_relative',
+        firstAgentId: String(FIRST_AGENT_ID),
+        firstAgent: Object.assign(new AgentEntity(), {
+          id: FIRST_AGENT_ID,
+          iCallAgent: '我的爸爸',
+          name: '爸爸',
+        }),
+      }),
+    };
+    expect(persistedJourney(harness)?.mode).toBe('first_relative');
+    const turn1 = await runTurn(harness, {
+      turn: 1,
+      text: '一',
+      assistantText: '回一',
+    });
+    const corrected = persistedJourney(harness);
+    // Exactly one durable "first": this conversation is demoted, so it no
+    // longer exposes the released milestones.
+    expect(corrected?.mode).toBe('subsequent_relative');
+    expect(
+      corrected?.tasks.find(task => task.id === 'departure_interval')?.status
+    ).toBe('skipped');
+    expect(
+      corrected?.tasks.find(task => task.id === 'family_status')?.status
+    ).toBe('skipped');
+    expect(turn1.plan?.prompt).toBeUndefined();
+  });
 });
 
 describe('observer reuse for the later-relative card', () => {
@@ -923,6 +1182,7 @@ describe('observer reuse for the later-relative card', () => {
                   familyStatus: 'not_observed',
                   departureInterval: 'not_observed',
                   relativeMentionGreeting: 'expressed',
+                  relativeMentionGreetingRefusal: 'refused',
                   evidence: '卡片被自然表达',
                 }),
               },
@@ -950,9 +1210,11 @@ describe('observer reuse for the later-relative card', () => {
     });
     expect(result.status).toBe('observed');
     expect(result.observation?.relativeMentionGreeting).toBe('expressed');
+    expect(result.observation?.relativeMentionGreetingRefusal).toBe('refused');
     expect(requests).toHaveLength(1);
     const systemPrompt = requests[0].messages[0].content as string;
     expect(systemPrompt).toContain('relativeMentionGreeting');
+    expect(systemPrompt).toContain('relativeMentionGreetingRefusal');
     const userPayload = JSON.parse(requests[0].messages[1].content as string);
     expect(userPayload.suggestedThisTurn.task).toBe(
       SUBSEQUENT_RELATIVE_GREETING_TASK_ID
@@ -997,6 +1259,10 @@ describe('observer reuse for the later-relative card', () => {
     });
     expect(result.status).toBe('observed');
     expect(result.observation?.relativeMentionGreeting).toBe('not_observed');
+    // The refusal field also defaults safely for older outputs.
+    expect(result.observation?.relativeMentionGreetingRefusal).toBe(
+      'not_refused'
+    );
   });
 
   it('does not observe ordinary later-relative turns without a checkpoint', async () => {
@@ -1032,7 +1298,11 @@ describe('observer reuse for the later-relative card', () => {
 });
 
 describe('stable first-relative classification from the creation ledger', () => {
-  function buildEligibility(agents: AgentEntity[], seededLedger?: unknown[]) {
+  function buildEligibility(
+    agents: AgentEntity[],
+    seededLedger?: unknown[],
+    options: { activatedAt?: Date } = {}
+  ) {
     const ledgerStore = new Map<string, any>();
     const agentModel = {
       aggregate: (pipeline: any[]) => {
@@ -1080,6 +1350,10 @@ describe('stable first-relative classification from the creation ledger', () => 
     (service as any).agentModel = agentModel;
     (service as any).ledgerModel = ledgerModel;
     (service as any).logger = { warn() {}, error() {} };
+    // Tests run as if the later-relative mode was released long ago unless a
+    // specific boundary is injected.
+    (service as any).recognitionJourneyModeActivatedAt =
+      options.activatedAt ?? new Date('2020-01-01T00:00:00.000Z');
     if (seededLedger) {
       ledgerStore.set(String(USER_ID), {
         _id: USER_ID,
@@ -1256,5 +1530,82 @@ describe('stable first-relative classification from the creation ledger', () => 
         item => item.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
       )?.proposedAssistantMessageId
     ).toBe('msg-1');
+  });
+
+  it('fix4: a temporary ledger read failure is unresolved, never first_relative', async () => {
+    const second = buildAgent(
+      new MongoObjectId('665000000000000000000016'),
+      new Date('2026-02-01T00:00:00Z')
+    );
+    const { service } = buildEligibility([second]);
+    (service as any).ledgerModel.findOne = async () => {
+      throw new Error('mongo read timeout');
+    };
+    const ownership = await service.resolveRecognitionJourneyOwnership(second);
+    expect(ownership.resolution).toBe('temporarily_unavailable');
+    expect(ownership.mode).toBeUndefined();
+  });
+
+  it('fix4: a damaged ledger keeps first_relative but records unrecoverable history', async () => {
+    const second = buildAgent(
+      new MongoObjectId('665000000000000000000017'),
+      new Date('2026-02-01T00:00:00Z')
+    );
+    const firstSlot = {
+      agentId: FIRST_AGENT_ID,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { service, ledgerStore } = buildEligibility([second], [firstSlot]);
+    const doc = ledgerStore.get(String(USER_ID));
+    doc.policyVersion = 'unknown_policy_v0';
+    const ownership = await service.resolveRecognitionJourneyOwnership(second);
+    expect(ownership.resolution).toBe('resolved');
+    expect(ownership.mode).toBe('first_relative');
+    expect(ownership.historyUnrecoverable).toBe(true);
+  });
+
+  it('fix4: a role created before the mode boundary keeps first_relative on recovery', async () => {
+    const first = buildAgent(
+      FIRST_AGENT_ID,
+      new Date('2026-01-01T00:00:00Z')
+    );
+    const second = buildAgent(
+      new MongoObjectId('665000000000000000000018'),
+      new Date('2026-02-01T00:00:00Z')
+    );
+    const { service } = buildEligibility([first, second], undefined, {
+      activatedAt: BASE_TIME,
+    });
+    const ownership = await service.resolveRecognitionJourneyOwnership(second);
+    expect(ownership.resolution).toBe('resolved');
+    expect(ownership.mode).toBe('first_relative');
+    expect(ownership.reason).toBe('created_before_subsequent_relative_mode');
+  });
+
+  it('fix5: an out-of-order persistence interleaving converges to exactly one first', async () => {
+    const second = buildAgent(
+      new MongoObjectId('665000000000000000000019'),
+      new Date('2026-02-01T00:00:00Z')
+    );
+    // The later request persists and classifies first before the earlier
+    // request's document lands.
+    const agents = [second];
+    const { service } = buildEligibility(agents);
+    const beforeConvergence =
+      await service.resolveRecognitionJourneyOwnership(second);
+    expect(beforeConvergence.mode).toBe('first_relative');
+
+    // The earlier-created role is now durable.
+    agents.push(
+      buildAgent(FIRST_AGENT_ID, new Date('2026-01-01T00:00:00Z'))
+    );
+    const [earlier, later] = await Promise.all([
+      service.resolveRecognitionJourneyOwnership(agents[1]),
+      service.resolveRecognitionJourneyOwnership(second),
+    ]);
+    const modes = [earlier.mode, later.mode].sort();
+    expect(modes).toEqual(['first_relative', 'subsequent_relative']);
+    expect(earlier.firstAgentId).toBe(String(FIRST_AGENT_ID));
+    expect(later.firstAgentId).toBe(String(FIRST_AGENT_ID));
   });
 });

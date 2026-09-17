@@ -31,6 +31,10 @@ export const SUBSEQUENT_RELATIVE_GREETING_MAX_USER_TURN = 5;
 // The greeting card is injected at most on turns 3, 4 and 5. Its judgement
 // reuses the existing observer call, so the whole window is bounded.
 export const SUBSEQUENT_RELATIVE_GREETING_MAX_OBSERVER_CALLS = 4;
+// A card that was actually delivered but not yet judged is re-read from the
+// persisted reply instead of being repeated. The re-read is bounded by the
+// remaining turns of the 3-5 window.
+export const SUBSEQUENT_RELATIVE_GREETING_MAX_REOBSERVATIONS = 2;
 export type RecognitionOpeningStatus =
   | 'pending'
   | 'opening_attempted'
@@ -80,6 +84,8 @@ export interface RecognitionTaskState {
   status: RecognitionTaskStatus;
   proposedAt?: Date;
   proposedAssistantMessageId?: string;
+  /** Reply group of the original delivery, used to re-read every saved segment. */
+  proposedReplyGroupId?: string;
   completedAt?: Date;
   expiredAt?: Date;
   answerMessageId?: string;
@@ -127,6 +133,8 @@ export interface RecognitionJourneyTurnPlan {
   // turn re-observes that already persisted assistant message instead of
   // injecting the card again.
   reobserveAssistantMessageId?: string;
+  /** Reply group of the original delivery so the whole reply can be re-read. */
+  reobserveReplyGroupId?: string;
 }
 
 export interface RecognitionJourneyObservation {
@@ -143,6 +151,13 @@ export interface RecognitionJourneyObservation {
    * relative is glad the user came. Optional for released callers.
    */
   relativeMentionGreeting?: 'not_observed' | 'expressed';
+  /**
+   * Later-relative card only: whether the current user message is an explicit
+   * refusal of this specific card topic (mentioning this relative), judged by
+   * the model with the final reply as context. Only `refused` permanently skips
+   * the card; an ordinary "not this turn" stays `not_refused`.
+   */
+  relativeMentionGreetingRefusal?: 'not_refused' | 'refused';
   evidence?: string;
 }
 
@@ -161,11 +176,10 @@ const OPENING_ANGLES: RecognitionOpeningAngle[] = [
 ];
 const RECOGNITION_TASK_EXPLICIT_DEFER_PATTERN =
   /(?:先别问(?:了)?|别问了|不要(?:再)?问|别再问|我不想回答|(?:这个|这事|这件事)我?不想说|别提这个|不要提这个|先听我说(?:完)?|听我说完)/u;
-// Narrower than the released defer pattern: the later-relative card is a soft,
-// optional expression, so only an explicit refusal to discuss that relation or
-// topic permanently skips it. A generic "let me finish" must not kill it.
-const SUBSEQUENT_RELATIVE_GREETING_REFUSAL_PATTERN =
-  /(?:(?:别|不要|不用|不想|不愿|别再|不用再)(?:再)?(?:提|说|聊|讲)(?:他|她|这个|这|这些|那|那个|这事|这件事)?|(?:我)?(?:不|没)(?:想|兴趣|心情)(?:聊|说|提)(?:他|她|这个|这|那)?|(?:他|她)的事(?:先|别|不要)(?:别|不)?(?:提|说|聊))/u;
+// Whether a refusal targets the later-relative card is a semantic judgement:
+// the observer decides it from the current user message plus the final reply.
+// A keyword regex here used to permanently skip the card for sentences such as
+// "不想聊工作" or reported speech, so no planning-time refusal pattern exists.
 const RELATIVE_KINSHIP_CALL_NAME_PATTERN =
   /(?:爸|妈|父|母|爷|奶|姥|婆|公|哥|姐|弟|妹|叔|婶|姨|舅|姑|伯|侄|甥|孙|媳|婿|宝贝|老公|老婆|爱人|丈夫|妻子|儿子|女儿)/u;
 const RELATIVE_CALL_NAME_MAX_LENGTH = 12;
@@ -428,7 +442,6 @@ export function planRecognitionJourneyTurn(options: {
     return planSubsequentRelativeTurn({
       journey,
       basePlan,
-      query,
       userTurnNumber,
       now,
     });
@@ -585,11 +598,10 @@ export function planRecognitionJourneyTurn(options: {
 function planSubsequentRelativeTurn(options: {
   journey: RecognitionJourney;
   basePlan: RecognitionJourneyTurnPlan;
-  query: string;
   userTurnNumber: number;
   now: Date;
 }): { journey: RecognitionJourney; plan: RecognitionJourneyTurnPlan } {
-  const { journey, basePlan, query, userTurnNumber, now } = options;
+  const { journey, basePlan, userTurnNumber, now } = options;
   const greeting = journey.tasks.find(
     task => task.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
   );
@@ -609,21 +621,14 @@ function planSubsequentRelativeTurn(options: {
     return { journey, plan: basePlan };
   }
 
-  // An explicit refusal permanently skips the card; never keep asking.
-  if (SUBSEQUENT_RELATIVE_GREETING_REFUSAL_PATTERN.test(query)) {
-    greeting.status = 'skipped';
-    greeting.lastSuggestedUserTurn = userTurnNumber;
-    greeting.observationEvidence = 'user_declined_topic';
-    refreshJourneyStage(journey, now);
-    return { journey, plan: basePlan };
-  }
-
-  // An earlier delivery could not be judged. Do not repeat the card: re-observe
-  // that already persisted reply once, then stop regardless of the result.
-  if ((greeting.observerUnavailableCount ?? 0) > 0) {
+  // A card that was actually delivered must never be delivered again while its
+  // judgement is unknown. Re-read the persisted reply group instead; a failed
+  // completion write can therefore not cause the same line to be repeated.
+  if (greeting.status === 'proposed') {
     if (
       greeting.proposedAssistantMessageId &&
-      (greeting.reobservationCount ?? 0) < 1
+      (greeting.reobservationCount ?? 0) <
+        SUBSEQUENT_RELATIVE_GREETING_MAX_REOBSERVATIONS
     ) {
       return {
         journey,
@@ -634,6 +639,7 @@ function planSubsequentRelativeTurn(options: {
           observedTaskId: SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
           observedTaskIds: [SUBSEQUENT_RELATIVE_GREETING_TASK_ID],
           reobserveAssistantMessageId: greeting.proposedAssistantMessageId,
+          reobserveReplyGroupId: greeting.proposedReplyGroupId,
         },
       };
     }
@@ -690,28 +696,68 @@ function shouldObserveTaskResponse(
   );
 }
 
-/** Records only an opening that was actually persisted for the user. */
+/**
+ * Records durable delivery. For the released opening it binds the persisted
+ * opening message. For the later-relative greeting it records the delivered
+ * reply group *before* semantic observation, so a later "completion write
+ * failed" still leaves a delivery trace and the card is never said twice.
+ */
 export function applyRecognitionJourneyDelivery(options: {
   journey: RecognitionJourney;
   plan: RecognitionJourneyTurnPlan;
   assistantMessageId?: string;
+  /** First persisted segment of the greeting delivery's reply group. */
+  greetingDeliveryMessageId?: string;
+  greetingReplyGroupId?: string;
   now?: Date;
 }): RecognitionJourney {
   const journey = cloneJourney(options.journey);
-  if (!options.plan.openingSuggested) return journey;
   const now = options.now ?? new Date();
-  const angle = options.plan.openingAngle;
-  journey.opening.activatedAt ??= now;
-  journey.opening.attemptCount = (journey.opening.attemptCount ?? 0) + 1;
-  journey.opening.lastAttemptUserTurn = options.plan.userTurnNumber;
-  if (angle && !(journey.opening.usedAngles ?? []).includes(angle)) {
-    journey.opening.usedAngles = [...(journey.opening.usedAngles ?? []), angle];
+  const recordsGreetingDelivery =
+    journey.mode === 'subsequent_relative' &&
+    options.plan.observerCheckpoint === 'task_proposal' &&
+    options.plan.suggestedTaskId === SUBSEQUENT_RELATIVE_GREETING_TASK_ID;
+  if (!options.plan.openingSuggested && !recordsGreetingDelivery) {
+    return journey;
   }
-  journey.opening.status = 'opening_attempted';
-  journey.opening.openingAttemptedAt = now;
-  journey.opening.openingAssistantMessageId = options.assistantMessageId;
-  journey.startedAt ??= now;
-  journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
+
+  if (options.plan.openingSuggested) {
+    const angle = options.plan.openingAngle;
+    journey.opening.activatedAt ??= now;
+    journey.opening.attemptCount = (journey.opening.attemptCount ?? 0) + 1;
+    journey.opening.lastAttemptUserTurn = options.plan.userTurnNumber;
+    if (angle && !(journey.opening.usedAngles ?? []).includes(angle)) {
+      journey.opening.usedAngles = [
+        ...(journey.opening.usedAngles ?? []),
+        angle,
+      ];
+    }
+    journey.opening.status = 'opening_attempted';
+    journey.opening.openingAttemptedAt = now;
+    journey.opening.openingAssistantMessageId = options.assistantMessageId;
+    journey.startedAt ??= now;
+    journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
+  }
+
+  if (recordsGreetingDelivery) {
+    const greeting = journey.tasks.find(
+      task => task.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID
+    );
+    if (greeting && !isTerminalTaskStatus(greeting.status)) {
+      greeting.status = 'proposed';
+      greeting.proposedAt = now;
+      greeting.lastSuggestedUserTurn = options.plan.userTurnNumber;
+      if (options.greetingDeliveryMessageId) {
+        greeting.proposedAssistantMessageId =
+          options.greetingDeliveryMessageId;
+      }
+      if (options.greetingReplyGroupId) {
+        greeting.proposedReplyGroupId = options.greetingReplyGroupId;
+      }
+      journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
+    }
+  }
+
   refreshJourneyStage(journey, now);
   return journey;
 }
@@ -751,14 +797,14 @@ export function applyRecognitionJourneyObserverUnavailable(options: {
       task.lastObserverUnavailableUserTurn = options.plan.userTurnNumber;
       task.lastSuggestedUserTurn = options.plan.userTurnNumber;
       task.observationEvidence = 'observer_unavailable';
-      task.proposedAt = undefined;
-      // Keep the persisted delivery id so the next turn can re-judge the reply
-      // that was actually sent instead of repeating the same card.
+      // Keep the persisted delivery record (message id, reply group and
+      // proposedAt) so the next turn can re-judge the reply that was actually
+      // sent instead of repeating the same card.
       if (
         task.id === SUBSEQUENT_RELATIVE_GREETING_TASK_ID &&
         options.assistantMessageId
       ) {
-        task.proposedAssistantMessageId = options.assistantMessageId;
+        task.proposedAssistantMessageId ??= options.assistantMessageId;
       }
     }
   }
@@ -775,7 +821,10 @@ export function applyRecognitionJourneyObserverUnavailable(options: {
       greeting.lastObserverUnavailableUserTurn = options.plan.userTurnNumber;
       greeting.reobservationCount = (greeting.reobservationCount ?? 0) + 1;
       greeting.observationEvidence = 'observer_unavailable';
-      delete greeting.proposedAssistantMessageId;
+      // The delivery record stays so the next window turn can re-read it again.
+      greeting.proposedAssistantMessageId ??=
+        options.plan.reobserveAssistantMessageId;
+      greeting.proposedReplyGroupId ??= options.plan.reobserveReplyGroupId;
     }
   }
   expireSubsequentRelativeGreetingIfWindowClosed(
@@ -902,31 +951,60 @@ function applySubsequentRelativeGreetingObservation(
     observedTaskIds.includes(SUBSEQUENT_RELATIVE_GREETING_TASK_ID);
   if (!ownsThisCheckpoint) return;
 
+  // A refusal is only permanent when the model says it targets this card's
+  // topic (this relative), not when the user declines an unrelated subject or
+  // simply does not want to continue right now.
+  if (options.observation.relativeMentionGreetingRefusal === 'refused') {
+    task.status = 'skipped';
+    task.lastSuggestedUserTurn = options.plan.userTurnNumber;
+    task.observationEvidence = 'user_declined_topic';
+    delete task.proposedAssistantMessageId;
+    delete task.proposedReplyGroupId;
+    journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
+    return;
+  }
+
   if (options.observation.relativeMentionGreeting === 'expressed') {
+    const deliveryMessageId =
+      checkpoint === 'task_response'
+        ? task.proposedAssistantMessageId ||
+          options.plan.reobserveAssistantMessageId ||
+          options.assistantMessageId
+        : options.assistantMessageId;
     task.status = 'completed';
     task.completedAt = now;
-    task.answerMessageId = options.assistantMessageId;
-    task.proposedAssistantMessageId = options.assistantMessageId;
+    task.answerMessageId = deliveryMessageId;
+    task.proposedAssistantMessageId = deliveryMessageId;
     task.observationEvidence = options.observation.evidence?.slice(0, 160);
     journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
     return;
   }
 
+  // The observer made a definite "not expressed" judgement. That is the only
+  // case that clears the delivery record and allows another proposal while the
+  // window is still open; an unavailable observer keeps the record and the card
+  // is never repeated.
   if (checkpoint === 'task_proposal') {
+    task.status = 'pending';
     task.suggestionMissCount = (task.suggestionMissCount ?? 0) + 1;
     task.lastSuggestedUserTurn = options.plan.userTurnNumber;
     task.observationEvidence =
       options.observation.evidence?.slice(0, 160) ||
       'card_prompted_but_not_expressed';
+    delete task.proposedAssistantMessageId;
+    delete task.proposedReplyGroupId;
     return;
   }
 
-  // A re-observation that still cannot see the card resolves as not expressed.
+  task.status = 'pending';
   task.reobservationCount = (task.reobservationCount ?? 0) + 1;
-  delete task.proposedAssistantMessageId;
+  task.suggestionMissCount = (task.suggestionMissCount ?? 0) + 1;
+  task.lastSuggestedUserTurn = options.plan.userTurnNumber;
   task.observationEvidence =
     options.observation.evidence?.slice(0, 160) ||
     'card_reobservation_not_expressed';
+  delete task.proposedAssistantMessageId;
+  delete task.proposedReplyGroupId;
 }
 
 function expireSubsequentRelativeGreetingIfWindowClosed(
@@ -947,6 +1025,7 @@ function expireSubsequentRelativeGreetingIfWindowClosed(
   task.observationEvidence =
     task.observationEvidence || 'greeting_window_expired_unconfirmed';
   delete task.proposedAssistantMessageId;
+  delete task.proposedReplyGroupId;
 }
 
 /** @deprecated Completion is semantic; keep this wrapper for old callers/tests. */
@@ -1450,6 +1529,7 @@ function parseTask(value: unknown): RecognitionTaskState | undefined {
     reobservationCount: numberValue(raw.reobservationCount),
     ...dateField(raw, 'proposedAt'),
     ...stringField(raw, 'proposedAssistantMessageId'),
+    ...stringField(raw, 'proposedReplyGroupId'),
     ...dateField(raw, 'completedAt'),
     ...dateField(raw, 'expiredAt'),
     ...stringField(raw, 'answerMessageId'),
