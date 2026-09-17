@@ -44,13 +44,19 @@ export class MemoryDecisionModelService {
   @Init()
   configureMemoryModel(): void {
     const base = this.providerConfig || {};
-    const fallback =
+    // 优先用统一的记忆模型配置（openai.memory，默认 DeepSeek flash）；
+    // 未配置时才回落到旧的 fallback / secondaryFallback 选择。
+    const memory = base.memory;
+    const legacy =
       process.env.NODE_MEMORY_PROVIDER === 'fallback'
         ? base.fallback
         : base.secondaryFallback;
-    const model = process.env.NODE_MEMORY_MODEL || fallback?.model;
-    const apiKey = process.env.NODE_MEMORY_API_KEY || fallback?.apiKey;
-    const baseURL = process.env.NODE_MEMORY_BASE_URL || fallback?.baseURL;
+    const model =
+      process.env.NODE_MEMORY_MODEL || memory?.model || legacy?.model;
+    const apiKey =
+      process.env.NODE_MEMORY_API_KEY || memory?.apiKey || legacy?.apiKey;
+    const baseURL =
+      process.env.NODE_MEMORY_BASE_URL || memory?.baseURL || legacy?.baseURL;
     this.openAIConfig = {
       enabled: !!(model && apiKey && baseURL),
       model,
@@ -91,9 +97,7 @@ export class MemoryDecisionModelService {
       attribution.providerAttempts++;
     }
     const startedAt = Date.now();
-    const label = request.memoryReview
-      ? 'review'
-      : `${request.maxTokens || 0}`;
+    const label = request.memoryReview ? 'review' : `${request.maxTokens || 0}`;
     const response = await this.client.chat.completions.create({
       messages: [
         {

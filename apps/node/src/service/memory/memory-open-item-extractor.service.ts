@@ -164,8 +164,29 @@ export class MemoryOpenItemExtractorService {
     let content = '';
     try {
       const prompt = buildOpenItemExtractionPrompt(messages);
-      const dedicated = this.resolveDedicatedProvider();
-      if (dedicated) {
+      // 记忆任务统一走记忆模型通道（DeepSeek flash）；未配置该通道时才回落到
+      // 旧的 open-item 专用模型 / 聊天模型。
+      const useMemoryModel =
+        typeof this.openAIService?.isMemoryModelEnabled === 'function' &&
+        this.openAIService.isMemoryModelEnabled();
+      const dedicated = useMemoryModel
+        ? undefined
+        : this.resolveDedicatedProvider();
+      if (useMemoryModel) {
+        const result = await this.openAIService.generateMemoryText({
+          temperature: 0,
+          topP: 0.1,
+          maxTokens: 1200,
+          systemPrompt: OPEN_ITEM_EXTRACTION_SYSTEM_PROMPT,
+          prompt,
+        });
+        content = result.content || '';
+        logMemoryCacheStats(this.logger, {
+          kind: 'open-item:memory-model',
+          model: result.response?.model,
+          usage: result.response?.usage,
+        });
+      } else if (dedicated) {
         // 判定质量决定清单质量：允许给这个任务单独配一个"听话的指令模型"。
         const completion = await dedicated.client.chat.completions.create({
           model: dedicated.model,
