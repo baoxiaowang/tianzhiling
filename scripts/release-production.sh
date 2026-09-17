@@ -669,6 +669,15 @@ git merge --ff-only "$TARGET"
 export RELEASE_VERSION="$TARGET"
 
 set_phase production-build
+# memory worker 复用 tzl_node 镜像，构建循环里会跳过它；只改 worker（例如并发）
+# 时该镜像不会被重建，标签就停在上一版，后续镜像标签校验必然失败。这里补一次
+# 共享镜像构建，只构建、不重建 tzl_node 容器。
+if service_selected tzl_memory_worker && ! service_selected tzl_node; then
+  BUILD_STARTED_AT="$(date +%s)"
+  release_event service_begin "service=tzl_node(shared-image-for-worker)"
+  docker compose --profile prod build tzl_node
+  release_event service_complete "service=tzl_node(shared-image-for-worker) elapsed_seconds=$(($(date +%s) - BUILD_STARTED_AT))"
+fi
 for service in "${SERVICES[@]}"; do
   if [[ "$service" == 'tzl_memory_worker' ]]; then continue; fi
   BUILD_STARTED_AT="$(date +%s)"
