@@ -1,4 +1,5 @@
-import { Config, Init, Provide } from '@midwayjs/core';
+import { Config, Init, Logger, Provide } from '@midwayjs/core';
+import type { ILogger } from '@midwayjs/logger';
 import OpenAI from 'openai';
 import { AsyncLocalStorage } from 'async_hooks';
 import type {
@@ -7,10 +8,14 @@ import type {
   OpenAITextRequest,
   OpenAITextResult,
 } from './openai';
+import { logMemoryCacheStats } from '../memory/memory-cache-stats';
 
 /** Separate client/configuration from visible character replies. Reuses an already configured provider. */
 @Provide()
 export class MemoryDecisionModelService {
+  @Logger()
+  logger: ILogger;
+
   @Config('openai')
   providerConfig: OpenAIServiceConfig;
 
@@ -103,6 +108,11 @@ export class MemoryDecisionModelService {
       max_tokens: request.maxTokens,
       ...({ thinking: { type: 'disabled' } } as object),
       response_format: { type: 'json_object' },
+    });
+    logMemoryCacheStats(this.logger, {
+      kind: `memory-decision:${label}`,
+      model: this.openAIConfig.model,
+      usage: response.usage,
     });
     if (process.env.MEMORY_MODEL_DEBUG === '1') {
       // 评测期定位耗时用：按调用类型打印耗时与 token，便于统计时间去向。

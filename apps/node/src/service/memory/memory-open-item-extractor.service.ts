@@ -7,6 +7,7 @@ import { MongoRepository } from 'typeorm';
 import { isFactBearingUtterance } from '../agents/memory-value';
 import { OpenAIService } from '../agents/openai';
 import { MemoryEventEngine } from './memory-event.engine';
+import { logMemoryCacheStats } from './memory-cache-stats';
 import {
   buildOpenItemExtractionPrompt,
   OPEN_ITEM_EXTRACTION_SYSTEM_PROMPT,
@@ -177,6 +178,11 @@ export class MemoryOpenItemExtractorService {
           ],
         });
         content = completion.choices?.[0]?.message?.content || '';
+        logMemoryCacheStats(this.logger, {
+          kind: 'open-item:dedicated',
+          model: dedicated.model,
+          usage: completion.usage,
+        });
       } else {
         const result = await this.openAIService.generateText({
           temperature: 0,
@@ -187,6 +193,11 @@ export class MemoryOpenItemExtractorService {
           prompt,
         });
         content = result.content || '';
+        logMemoryCacheStats(this.logger, {
+          kind: 'open-item:chat-model',
+          model: result.response?.model,
+          usage: result.response?.usage,
+        });
       }
     } catch (error) {
       this.logger?.warn?.(
