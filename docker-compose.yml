@@ -20,6 +20,10 @@ services:
   tzl_node:
     profiles: ["prod"] # 这个配置表示该服务只在运行 docker-compose --profile prod up 命令时才会启动，用于区分开发和生产环境
     container_name: tzl_node
+    # 用户端权重：cpu.shares 只在 CPU 争抢时生效。给用户端最高权重，
+    # 保证任何后台任务（记忆抽取、统计、回填）都不会把它挤到没 CPU 可用；
+    # 用户端空闲时后台仍能使用剩余核。tzl_memory_worker 对应给最低权重。
+    cpu_shares: 4096
     build:
       context: .
       dockerfile: apps/node/Dockerfile
@@ -67,6 +71,9 @@ services:
     # 2026-09-18：1.5 核实测被 cgroup 限流（15 小时内约 3.2 小时 throttled），
     # 抬到 2.5 核；未超过宿主机 4 核，其余容器均无 CPU 上限。
     cpus: "2.5"
+    # 后台最低权重：CPU 争抢时永远给 tzl_node（4096）让路，用户端空闲时才用满配额。
+    # 注意这不是上限（上限是上面的 cpus），只是争抢时的相对比例。
+    cpu_shares: 128
     env_file:
       - .env
     environment:
@@ -84,6 +91,11 @@ services:
       NODE_MILVUS_ADDRESS: standalone:19530
       NODE_RUNTIME_ROLE: memory-worker
       NODE_MEMORY_WORKER_CONCURRENCY: 3
+      # 主应用自愈重启（bootstrap 监管进程执行，只换主应用进程、不动容器）：
+      # 每 4 小时兜底重启一次，或 RSS 超过 3400MB 提前重启，至少运行 30 分钟才允许重启。
+      # 目的是不让堆涨到约 3GB 后陷入 GC 病态，把完成吞吐从 500/h 拖到 280/h。
+      NODE_MEMORY_WORKER_MAIN_RESTART_INTERVAL_MS: "14400000"
+      NODE_MEMORY_WORKER_MAIN_RESTART_RSS_MB: "3400"
       NODE_OPTIONS: ${NODE_MEMORY_WORKER_NODE_OPTIONS:---heapsnapshot-signal=SIGUSR2}
       RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     command:
