@@ -7958,6 +7958,11 @@ export class ConversationService {
     if (!this.chatTraceService) {
       return undefined;
     }
+    // 追踪关闭时直接返回，不建 trace、不在消息上挂 traceId，
+    // 回复链路也就不会进入 AsyncLocalStorage 上下文（ALS 传播是聊天端主要 CPU 开销）。
+    if (!this.chatTraceService.isTraceEnabled()) {
+      return undefined;
+    }
 
     const currentMessages = includePendingMessages
       ? await this.findPendingUserMessagesForReply({

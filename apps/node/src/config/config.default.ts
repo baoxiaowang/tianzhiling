@@ -459,6 +459,15 @@ export default {
     embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
     embeddingDimensions: readOptionalNumberFrom(['NODE_EMBEDDING_DIMENSIONS']),
   },
+  // 回复链路追踪。追踪用 AsyncLocalStorage 承载 traceId，而 ALS 会给链路里
+  // 每一个 promise 都增加 async_hooks 传播开销；实测关闭后聊天端 CPU 显著下降。
+  // 生产可用 NODE_CHAT_TRACE_ENABLED=false 关掉，排查问题再打开。
+  chatTrace: {
+    enabled: readBooleanFrom(['NODE_CHAT_TRACE_ENABLED'], true),
+    artifactSampleRate: readOptionalNumberFrom([
+      'NODE_CHAT_TRACE_ARTIFACT_SAMPLE_RATE',
+    ]),
+  },
   replyIntent: {
     enabled: readBooleanFrom(['NODE_REPLY_INTENT_ENABLED'], true),
     model: readStringFrom(['NODE_REPLY_INTENT_MODEL'], ''),

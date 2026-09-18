@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'async_hooks';
 import { ChatSpanEntity, ChatSpanStatus, ChatTraceStage } from '@tzl/entities';
 import { ChatTraceService } from '../../src/service/chat-trace.service';
 
@@ -320,4 +321,91 @@ describe('ChatTraceService', () => {
       ).toBe(true);
     }
   );
+
+  it('stays inside the AsyncLocalStorage context when tracing is enabled', async () => {
+    const { service, savedBatches } = createService();
+    service.chatTraceConfig = { enabled: true };
+    const traceId = service.createTraceId();
+
+    let observed: string | undefined;
+    let observedStage: ChatTraceStage | undefined;
+    await service.runWithTrace(traceId, async () => {
+      observed = service.getCurrentTraceId();
+      await service.withSpan(ChatTraceStage.generate, 'generate.primary', () => {
+        observedStage = service.getCurrentStage();
+        return Promise.resolve();
+      });
+    });
+
+    expect(service.isTraceEnabled()).toBe(true);
+    expect(observed).toBe(traceId);
+    expect(observedStage).toBe(ChatTraceStage.generate);
+    expect(flattenSavedBatches(savedBatches)).toHaveLength(1);
+  });
+
+  it('skips the AsyncLocalStorage context, trace writes and spans when tracing is disabled', async () => {
+    const { service, savedBatches, traceUpdates } = createService();
+    service.chatTraceConfig = { enabled: false };
+
+    expect(service.isTraceEnabled()).toBe(false);
+
+    const traceId = await service.ensureTrace({
+      conversationId: 'conversation-1',
+      userId: 'user-1',
+      agentId: 'agent-1',
+    });
+    expect(traceId).toMatch(/^[a-f0-9]{32}$/);
+    expect(traceUpdates).toHaveLength(0);
+
+    let observedTraceId: string | undefined = 'unset';
+    let observedStage: ChatTraceStage | undefined = ChatTraceStage.generate;
+    const result = await service.runWithTrace(traceId, async () => {
+      observedTraceId = service.getCurrentTraceId();
+      const nested = await service.withSpan(
+        ChatTraceStage.generate,
+        'generate.primary',
+        recorder => {
+          recorder.setResultCode('OK');
+          return Promise.resolve('ok');
+        }
+      );
+      observedStage = service.getCurrentStage();
+      return nested;
+    });
+
+    expect(result).toBe('ok');
+    expect(observedTraceId).toBeUndefined();
+    expect(observedStage).toBeUndefined();
+    expect(savedBatches).toHaveLength(0);
+    expect(traceUpdates).toHaveLength(0);
+  });
+
+  it('never constructs the AsyncLocalStorage while tracing is disabled', async () => {
+    const { service } = createService();
+    service.chatTraceConfig = { enabled: false };
+
+    await service.ensureTrace({
+      conversationId: 'conversation-1',
+      userId: 'user-1',
+      agentId: 'agent-1',
+    });
+    await service.runWithTrace('0'.repeat(32), () => Promise.resolve());
+    await service.withSpan(ChatTraceStage.generate, 'generate.primary', () =>
+      Promise.resolve()
+    );
+
+    // 关键回归：构造 AsyncLocalStorage 会让 Node 全局启用 promise init hook，
+    // 关闭追踪时必须连实例都不建，否则整进程每个 promise 都要付 async_hooks 开销。
+    expect((service as any).storageInstance).toBeUndefined();
+  });
+
+  it('constructs the AsyncLocalStorage lazily once tracing actually runs', async () => {
+    const { service } = createService();
+    service.chatTraceConfig = { enabled: true };
+    expect((service as any).storageInstance).toBeUndefined();
+
+    await service.runWithTrace(service.createTraceId(), () => Promise.resolve());
+
+    expect((service as any).storageInstance).toBeInstanceOf(AsyncLocalStorage);
+  });
 });

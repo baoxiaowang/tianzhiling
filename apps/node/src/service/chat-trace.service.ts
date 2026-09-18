@@ -119,9 +119,27 @@ export class ChatTraceService {
   spanModel: MongoRepository<ChatSpanEntity>;
 
   @Config('chatTrace')
-  chatTraceConfig?: { artifactSampleRate?: number };
+  chatTraceConfig?: { artifactSampleRate?: number; enabled?: boolean };
 
-  private readonly storage = new AsyncLocalStorage<ActiveChatTraceContext>();
+  // 只在真正需要追踪时才构造 AsyncLocalStorage：构造它会让 Node 全局启用
+  // promise init hook，此后进程里每个 promise 都要为它跑一遍 async_hooks
+  // init/propagate——即使没有任何活跃 store。实测这一项占聊天端 CPU 九成以上，
+  // 因此关闭追踪时必须连实例都不建。
+  private storageInstance?: AsyncLocalStorage<ActiveChatTraceContext>;
+
+  private getStorage(): AsyncLocalStorage<ActiveChatTraceContext> {
+    this.storageInstance ??= new AsyncLocalStorage<ActiveChatTraceContext>();
+    return this.storageInstance;
+  }
+
+  /**
+   * 追踪开关。关闭时整条回复不进入 AsyncLocalStorage 上下文：
+   * ALS 会让链路里每个 promise 都付 async_hooks 传播开销，是聊天端 CPU 的主要来源。
+   * 关闭后不再写 trace/span，也不在消息上挂 traceId。
+   */
+  isTraceEnabled(): boolean {
+    return this.chatTraceConfig?.enabled !== false;
+  }
 
   createTraceId(): string {
     return randomBytes(16).toString('hex');
@@ -132,14 +150,18 @@ export class ChatTraceService {
   }
 
   getCurrentTraceId(): string | undefined {
-    return this.storage.getStore()?.collection.traceId;
+    return this.storageInstance?.getStore()?.collection.traceId;
   }
 
   getCurrentStage(): ChatTraceStage | undefined {
-    return this.storage.getStore()?.stage;
+    return this.storageInstance?.getStore()?.stage;
   }
 
   async ensureTrace(options: EnsureChatTraceOptions): Promise<string> {
+    if (!this.isTraceEnabled()) {
+      return this.normalizeTraceId(options.traceId) || this.createTraceId();
+    }
+
     const traceId =
       this.normalizeTraceId(options.traceId) || this.createTraceId();
     const now = new Date();
@@ -201,12 +223,16 @@ export class ChatTraceService {
     task: () => Promise<T>,
     options: ChatTraceRunOptions = {}
   ): Promise<T> {
+    if (!this.isTraceEnabled()) {
+      return task();
+    }
+
     const normalizedTraceId = this.normalizeTraceId(traceId);
     if (!normalizedTraceId) {
       return task();
     }
 
-    const active = this.storage.getStore();
+    const active = this.storageInstance?.getStore();
     if (active?.collection.traceId === normalizedTraceId) {
       return task();
     }
@@ -219,6 +245,10 @@ export class ChatTraceService {
     task: () => Promise<T>,
     options: ChatTraceRunOptions = {}
   ): Promise<T> {
+    if (!this.isTraceEnabled()) {
+      return task();
+    }
+
     const normalizedTraceId = this.normalizeTraceId(traceId);
     if (!normalizedTraceId) {
       return task();
@@ -232,7 +262,7 @@ export class ChatTraceService {
     };
 
     try {
-      return await this.storage.run({ collection }, task);
+      return await this.getStorage().run({ collection }, task);
     } finally {
       await this.flushSpans(collection);
     }
@@ -244,7 +274,7 @@ export class ChatTraceService {
     task: (recorder: ChatSpanRecorder) => Promise<T> | T,
     options: ChatSpanOptions = {}
   ): Promise<T> {
-    const active = this.storage.getStore();
+    const active = this.storageInstance?.getStore();
     if (!active) {
       return task(this.createNoopRecorder());
     }
@@ -264,7 +294,7 @@ export class ChatTraceService {
     const recorder = this.createRecorder(span);
 
     try {
-      return await this.storage.run(
+      return await this.getStorage().run(
         {
           collection: active.collection,
           parentSpanId: span.spanId,
@@ -298,7 +328,7 @@ export class ChatTraceService {
     status?: ChatSpanStatus;
     attributes?: Record<string, ChatSpanAttributeValue | undefined>;
   }): void {
-    const active = this.storage.getStore();
+    const active = this.storageInstance?.getStore();
     if (!active) {
       return;
     }
@@ -325,7 +355,7 @@ export class ChatTraceService {
   }
 
   recordArtifact(options: ChatTraceArtifactOptions): void {
-    const active = this.storage.getStore();
+    const active = this.storageInstance?.getStore();
     if (!active || !this.shouldCaptureArtifacts(active.collection.traceId)) {
       return;
     }

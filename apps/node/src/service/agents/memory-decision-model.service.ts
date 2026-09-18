@@ -22,8 +22,15 @@ export class MemoryDecisionModelService {
   // Owned by this service; never assign to the framework-injected providerConfig.
   openAIConfig: OpenAIServiceConfig;
   private client: OpenAI | undefined;
-  private readonly attribution =
-    new AsyncLocalStorage<OpenAIModelCallAttribution>();
+  // 惰性构造：AsyncLocalStorage 一构造就会让 Node 全局启用 promise init hook，
+  // 而 web 进程不用这个归因上下文，不应该为它付整进程的 async_hooks 开销。
+  private attributionInstance?: AsyncLocalStorage<OpenAIModelCallAttribution>;
+
+  private getAttributionStorage(): AsyncLocalStorage<OpenAIModelCallAttribution> {
+    this.attributionInstance ??=
+      new AsyncLocalStorage<OpenAIModelCallAttribution>();
+    return this.attributionInstance;
+  }
 
   createModelCallAttribution(): OpenAIModelCallAttribution {
     return {
@@ -38,7 +45,7 @@ export class MemoryDecisionModelService {
     state: OpenAIModelCallAttribution,
     fn: () => T
   ): T {
-    return this.attribution.run(state, fn);
+    return this.getAttributionStorage().run(state, fn);
   }
 
   @Init()
@@ -91,7 +98,7 @@ export class MemoryDecisionModelService {
         maxRetries: 0,
       });
     }
-    const attribution = this.attribution.getStore();
+    const attribution = this.attributionInstance?.getStore();
     if (attribution) {
       attribution.chatCompletions++;
       attribution.providerAttempts++;

@@ -178,8 +178,16 @@ export class OpenAIService {
   private visionClient: OpenAI | null = null;
   private speechToTextClient: OpenAI | null = null;
   private embeddingClient: OpenAI | null = null;
-  private readonly modelCallAttribution =
-    new AsyncLocalStorage<OpenAIModelCallAttribution>();
+  // 同上：AsyncLocalStorage 一旦构造就会让 Node 全局启用 promise init hook，
+  // 之后进程里每个 promise 都要跑一遍 async_hooks init/propagate。
+  // web 进程从不做记忆抽取，因此这里保持惰性，不要在建服务时就构造。
+  private modelCallAttributionInstance?: AsyncLocalStorage<OpenAIModelCallAttribution>;
+
+  private getModelCallAttributionStorage(): AsyncLocalStorage<OpenAIModelCallAttribution> {
+    this.modelCallAttributionInstance ??=
+      new AsyncLocalStorage<OpenAIModelCallAttribution>();
+    return this.modelCallAttributionInstance;
+  }
 
   createModelCallAttribution(): OpenAIModelCallAttribution {
     return {
@@ -194,7 +202,7 @@ export class OpenAIService {
     attribution: OpenAIModelCallAttribution,
     task: () => Promise<T>
   ): Promise<T> {
-    return this.modelCallAttribution.run(attribution, task);
+    return this.getModelCallAttributionStorage().run(attribution, task);
   }
 
   isEnabled(): boolean {
@@ -276,7 +284,7 @@ export class OpenAIService {
     request: OpenAIChatRequest,
     options?: OpenAIRequestOptions
   ): Promise<ChatCompletion> {
-    const attribution = this.modelCallAttribution.getStore();
+    const attribution = this.modelCallAttributionInstance?.getStore();
     if (attribution) attribution.chatCompletions += 1;
     if (!request?.messages?.length) {
       throw new AppError(
@@ -601,7 +609,7 @@ export class OpenAIService {
   async createVisionChatCompletion(
     request: OpenAIChatRequest
   ): Promise<ChatCompletion> {
-    const attribution = this.modelCallAttribution.getStore();
+    const attribution = this.modelCallAttributionInstance?.getStore();
     if (attribution) attribution.visionCompletions += 1;
     if (!request?.messages?.length) {
       throw new AppError(
@@ -730,7 +738,7 @@ export class OpenAIService {
     }
     messages.push({ role: 'user', content: prompt });
 
-    const attribution = this.modelCallAttribution.getStore();
+    const attribution = this.modelCallAttributionInstance?.getStore();
     if (attribution) {
       attribution.chatCompletions += 1;
       attribution.providerAttempts += 1;
@@ -774,7 +782,7 @@ export class OpenAIService {
       );
     }
 
-    const attribution = this.modelCallAttribution.getStore();
+    const attribution = this.modelCallAttributionInstance?.getStore();
     if (attribution) attribution.embeddings += 1;
 
     const client = this.getEmbeddingClient();

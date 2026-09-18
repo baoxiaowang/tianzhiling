@@ -63,4 +63,23 @@ describe('OpenAIService memory model channel', () => {
       service.generateMemoryText({ prompt: 'x' })
     ).rejects.toThrow('memory model is not configured');
   });
+
+  it('keeps the model call attribution AsyncLocalStorage lazy', async () => {
+    const service = createService({
+      apiKey: 'k',
+      baseURL: 'https://api.deepseek.com',
+      model: 'deepseek-flash',
+    });
+
+    // 构造 AsyncLocalStorage 会让 Node 全局启用 promise init hook；web 进程不做
+    // 记忆抽取，建服务时就不该构造它，否则整进程每个 promise 都要付 async_hooks 开销。
+    expect((service as any).modelCallAttributionInstance).toBeUndefined();
+
+    const attribution = service.createModelCallAttribution();
+    await service.runWithModelCallAttribution(attribution, () =>
+      Promise.resolve()
+    );
+
+    expect((service as any).modelCallAttributionInstance).toBeDefined();
+  });
 });

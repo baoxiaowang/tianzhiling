@@ -41,6 +41,10 @@ services:
       NODE_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
       NODE_MILVUS_ADDRESS: standalone:19530
       NODE_RUNTIME_ROLE: web
+      # 回复链路追踪关闭：追踪用 AsyncLocalStorage 承载 traceId，ALS 会给链路里
+      # 每个 promise 增加 async_hooks 传播开销（实测占聊天端 CPU 一半以上）。
+      # 需要排查回复链路时把它改成 "true" 再发布一次。
+      NODE_CHAT_TRACE_ENABLED: "false"
       RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     expose:
       - "7001"
