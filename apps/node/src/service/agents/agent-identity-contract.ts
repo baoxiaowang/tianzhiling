@@ -3,6 +3,7 @@ import {
   AgentProfileFactAssertionPolicy,
   AgentProfileFactType,
   AgentSex,
+  UserRelativeFactStatus,
 } from '@tzl/entities';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
@@ -16,6 +17,7 @@ import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
 import {
   USER_EXPLICIT_ALIAS_FACT_PREFIX,
   USER_PREFERRED_NAME_FACT_KEY,
+  AGENT_PREFERRED_NAME_FACT_KEY,
   resolveAgentNameMemory,
   resolveUserNameMemory,
 } from './agent-name-memory';
@@ -78,15 +80,31 @@ export function buildAgentIdentityContract(options: {
   const agent = options.agent;
   const nameMemory = resolveAgentNameMemory(options.profileFacts);
   const globalUserIdentity = options.userIdentity;
-  const userNameMemory = resolveUserNameMemory(
-    globalUserIdentity
-      ? (options.profileFacts || []).filter(
-          fact =>
-            fact.key === USER_PREFERRED_NAME_FACT_KEY ||
-            fact.key.startsWith(USER_EXPLICIT_ALIAS_FACT_PREFIX)
-        )
-      : options.profileFacts
-  );
+  const userScopedFacts = globalUserIdentity
+    ? (options.profileFacts || []).filter(
+        fact =>
+          fact.key === USER_PREFERRED_NAME_FACT_KEY ||
+          fact.key.startsWith(USER_EXPLICIT_ALIAS_FACT_PREFIX)
+      )
+    : options.profileFacts;
+  const userNameMemory = resolveUserNameMemory(userScopedFacts);
+  // name-memory 的 normalizeName 会把“湾呐”这类以语气字结尾的昵称整词丢掉，
+  // 导致已写入的 preferred 事实读不回来。这里补一个严格前缀校验的宽松投影，
+  // 只补 preferred 值，不动别名/正式名，保证“事实是当前有效值”。
+  const agentPreferredName =
+    nameMemory.preferredName ||
+    readPreferredNameFact(
+      options.profileFacts,
+      AGENT_PREFERRED_NAME_FACT_KEY,
+      '当前用户偏好称呼当前角色为'
+    );
+  const userPreferredName =
+    userNameMemory.preferredName ||
+    readPreferredNameFact(
+      userScopedFacts,
+      USER_PREFERRED_NAME_FACT_KEY,
+      '当前用户希望当前角色称呼其为'
+    );
   const explicitRelationship = clean(agent?.iCallAgent, 24);
   const profileRelationship = clean(
     agent?.personaProfile?.demographics?.relationshipType,
@@ -107,14 +125,12 @@ export function buildAgentIdentityContract(options: {
       displayName,
       ...(realName && realName !== displayName ? { realName } : {}),
       aliases: unique(nameMemory.aliases),
-      ...(nameMemory.preferredName
-        ? { preferredName: nameMemory.preferredName }
-        : {}),
+      ...(agentPreferredName ? { preferredName: agentPreferredName } : {}),
       sex: resolveSex(agent?.sex),
     },
     user: {
       objectId: 'user',
-      addressedAs: userNameMemory.preferredName || agentCallsUser,
+      addressedAs: userPreferredName || agentCallsUser,
       ...(globalUserIdentity?.realName || userNameMemory.canonicalName
         ? {
             realName:
@@ -126,9 +142,7 @@ export function buildAgentIdentityContract(options: {
         ...(globalUserIdentity?.aliases || []),
         ...userNameMemory.aliases,
       ]),
-      ...(userNameMemory.preferredName
-        ? { preferredName: userNameMemory.preferredName }
-        : {}),
+      ...(userPreferredName ? { preferredName: userPreferredName } : {}),
     },
     relationship: {
       label: relationshipLabel,
@@ -142,10 +156,10 @@ export function buildAgentIdentityContract(options: {
     },
     addresses: {
       userCallsAgent:
-        clean(nameMemory.preferredName, 24) ||
+        clean(agentPreferredName, 24) ||
         explicitRelationship ||
         relationshipLabel,
-      agentCallsUser: userNameMemory.preferredName || agentCallsUser,
+      agentCallsUser: userPreferredName || agentCallsUser,
     },
     ...(options.knownPeople?.length
       ? { knownPeople: options.knownPeople.slice(0, 8) }
@@ -322,6 +336,12 @@ export function buildAgentIdentityPrompt(
       status: fact.status,
       occurredAt: fact.occurredAt,
       confidence: fact.confidence,
+      // 稳定历史与可能变化的状态分开表达：current/uncertain 只是“上次提到”，
+      // 不能读成长期不变的事实。
+      ...(fact.status === UserRelativeFactStatus.current ||
+      fact.status === UserRelativeFactStatus.uncertain
+        ? { recency: '上次提到' }
+        : {}),
     })),
     nameKnown: relative.nameKnown,
     nameInquiryLastAskedAt: relative.nameInquiryLastAskedAt,
@@ -337,6 +357,9 @@ export function buildAgentIdentityPrompt(
     relatives.length ? `本轮相关亲人档案：${JSON.stringify(relatives)}` : '',
     'agent 始终是正在回复的当前角色，user 始终是聊天用户；其他人物、地点和物品必须另建对象，不得互换说话者、经历或关系。',
     '称呼只用于确定关系位置，不证明用户现实、其他家人或共同过去。',
+    relatives.length
+      ? '亲人档案里 current/uncertain 的状态只是“上次提到”的近况，可能已变化，不得当作长期不变的事实；historical 才是稳定历史。未证实的称谓（例如“婆婆”是否就是“奶奶”）保留歧义，不得合并成同一个人。'
+      : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -459,6 +482,38 @@ function unique(values: Array<string | undefined>): string[] {
   return Array.from(
     new Set(values.map(value => clean(value, 24)).filter(Boolean))
   );
+}
+
+/**
+ * 宽松但不失校验地读取 preferred 事实：必须有约定前缀，去掉结尾语气字，
+ * 只接受短的中文/字母昵称。用于补 name-memory 因语气字整词丢弃的当前称呼。
+ */
+function readPreferredNameFact(
+  facts: AgentProfileFactSummary[] | undefined,
+  key: string,
+  valuePrefix: string
+): string | undefined {
+  let preferred: string | undefined;
+
+  for (const fact of facts || []) {
+    if (fact.status && fact.status !== 'active') continue;
+    if (fact.key !== key) continue;
+    const value = (fact.value || '').trim();
+    if (!value.startsWith(valuePrefix)) continue;
+    const candidate = value
+      .slice(valuePrefix.length)
+      .replace(/[啊呀呢吧嘛哈哟啦哦哎诶\s]+$/u, '')
+      .trim();
+    if (
+      candidate &&
+      candidate.length <= 16 &&
+      /^[\u4e00-\u9fa5A-Za-z·]+$/.test(candidate)
+    ) {
+      preferred = candidate;
+    }
+  }
+
+  return preferred;
 }
 
 function clean(value: unknown, maxLength: number): string {

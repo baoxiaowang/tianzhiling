@@ -204,6 +204,78 @@ const VISUAL_APPEARANCE_TRAIT_KINDS = new Set<AgentVisualAppearanceTraitKind>([
   'build',
   'distinctive',
 ]);
+/**
+ * 明确、持久的称呼要求（“以后叫我湾呐”“以后都叫你老爷子”“叫我X就行”）。
+ * 现有 extractUserNameMemory/extractAgentNameMemory 走 normalizeName，会把
+ * “湾呐”这类以语气字结尾的昵称整词丢弃（TRAILING_PARTICLE 含“呐”），导致
+ * 明确更正无法落成 relationship.preferred_* 事实。这里只补“主语明确 + 持久语气”
+ * 的槽位，第三人称（“爸爸叫我X”）因锚定开头不会命中；不是关键词语义判断，
+ * 而是补 name-memory 规则的漏网形式。
+ */
+const EXPLICIT_ADDRESS_NAME = '([\\u4e00-\\u9fa5A-Za-z·]{1,16}?)';
+const EXPLICIT_ADDRESS_TRAILING_PARTICLE = /[啊呀呢吧嘛哈哟啦哦哎诶]+$/u;
+const EXPLICIT_ADDRESS_NON_NAME = new Set([
+  '爸爸',
+  '妈妈',
+  '父亲',
+  '母亲',
+  '爷爷',
+  '奶奶',
+  '外公',
+  '外婆',
+  '姥姥',
+  '姥爷',
+  '老公',
+  '老婆',
+  '丈夫',
+  '妻子',
+  '哥哥',
+  '姐姐',
+  '弟弟',
+  '妹妹',
+  '儿子',
+  '女儿',
+  '孩子',
+  '家人',
+  '亲人',
+  '朋友',
+  '同事',
+  '大名',
+  '全名',
+  '名字',
+  '什么',
+  '怎么',
+]);
+const EXPLICIT_USER_ADDRESS_PATTERNS = [
+  new RegExp(
+    `^(?:以后|今后|从现在起|往后|之后)(?:都|一直)?(?:你|您)?(?:就|都|一直)?(?:叫我|称呼我|喊我)(?:作|做|为)?${EXPLICIT_ADDRESS_NAME}(?:就行|就好|吧|了)?$`
+  ),
+  new RegExp(
+    `^(?:请|麻烦)(?:你|您)?(?:都|就)?(?:叫我|称呼我|喊我)(?:作|做|为)?${EXPLICIT_ADDRESS_NAME}(?:就行|就好|吧|了)?$`
+  ),
+  new RegExp(
+    `^(?:你|您)(?:就|都|一直|还是)(?:叫我|称呼我|喊我)(?:作|做|为)?${EXPLICIT_ADDRESS_NAME}(?:就行|就好|吧|了)?$`
+  ),
+  new RegExp(
+    `^(?:叫我|称呼我|喊我)(?:作|做|为)?${EXPLICIT_ADDRESS_NAME}(?:就行|就好|吧)$`
+  ),
+];
+const EXPLICIT_AGENT_ADDRESS_PATTERNS = [
+  new RegExp(
+    `^(?:我)?(?:以后|今后|从现在起|往后|之后)(?:都|一直)?(?:就|都|一直)?(?:叫你|称呼你|喊你)(?:作|做|为)?${EXPLICIT_ADDRESS_NAME}(?:就行|就好|吧|了)?$`
+  ),
+];
+/**
+ * “我以前还叫你老爷子”这类过去别称：只登记别名，不写成当前默认称呼，
+ * 也不新建人物。LLM 抽取的同一 key 也用这组模式校验，避免被现有
+ * extractAgentNameMemory 的“你”前置要求拦掉。
+ */
+const HISTORICAL_AGENT_ALIAS_PATTERNS = [
+  new RegExp(
+    `^(?:我)?(?:以前|从前|原来|之前|过去)(?:还|也|一直|都)?(?:是)?(?:叫你|称呼你|喊你|管你叫)(?:作|做|为)?${EXPLICIT_ADDRESS_NAME}(?:的)?$`
+  ),
+];
+
 export const AGENT_PROFILE_MEMORY_SOURCE_CONFIG: Record<
   AgentProfileMemorySourceField,
   {
@@ -881,7 +953,7 @@ export class AgentProfileFactService {
       ? []
       : await this.extractFactsWithLLM(sourceText, options);
     const validatedLLMFacts = llmFacts.filter(fact =>
-      isValidatedNameFactForSource(fact.key, fact.value, sourceText)
+      this.isValidatedFactForSource(fact.key, fact.value, sourceText)
     );
     const ruleFactKeys = new Set(fallbackFacts.map(fact => fact.key));
 
@@ -909,6 +981,108 @@ export class AgentProfileFactService {
         };
       }
     );
+  }
+
+  /**
+   * 名称类事实的来源校验。除沿用 name-memory 校验外：
+   * - preferred_* 先看明确称呼要求（补“湾呐”这类被语气字吞掉的形式）；
+   * - agent 历史别称看“以前还叫你X”。
+   */
+  private isValidatedFactForSource(
+    key: string,
+    value: string,
+    sourceText: string
+  ): boolean {
+    if (
+      key === USER_PREFERRED_NAME_FACT_KEY ||
+      key === AGENT_PREFERRED_NAME_FACT_KEY
+    ) {
+      const subject = key === USER_PREFERRED_NAME_FACT_KEY ? 'user' : 'agent';
+      const expected = this.extractExplicitPreferredAddress(
+        sourceText,
+        subject
+      );
+      if (expected && value.includes(expected)) {
+        return true;
+      }
+      return isValidatedNameFactForSource(key, value, sourceText);
+    }
+
+    if (key.startsWith(AGENT_EXPLICIT_ALIAS_FACT_PREFIX)) {
+      const historicalAliases = this.extractHistoricalAgentAliases(sourceText);
+      if (historicalAliases.length) {
+        return historicalAliases.some(alias => value.includes(alias));
+      }
+    }
+
+    return isValidatedNameFactForSource(key, value, sourceText);
+  }
+
+  /** 只接受主语明确（你/我/请/以后…）且带持久语气的称呼要求。 */
+  private extractExplicitPreferredAddress(
+    text: string,
+    subject: 'user' | 'agent'
+  ): string | undefined {
+    const patterns =
+      subject === 'user'
+        ? EXPLICIT_USER_ADDRESS_PATTERNS
+        : EXPLICIT_AGENT_ADDRESS_PATTERNS;
+
+    for (const clause of this.splitFactClauses(text)) {
+      for (const pattern of patterns) {
+        const match = clause.match(pattern);
+        const name = this.normalizeExplicitAddressName(match?.[1]);
+        if (name) {
+          return name;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractHistoricalAgentAliases(text: string): string[] {
+    const aliases: string[] = [];
+
+    for (const clause of this.splitFactClauses(text)) {
+      for (const pattern of HISTORICAL_AGENT_ALIAS_PATTERNS) {
+        const name = this.normalizeExplicitAddressName(
+          clause.match(pattern)?.[1]
+        );
+        if (name && !aliases.includes(name)) {
+          aliases.push(name);
+        }
+      }
+    }
+
+    return aliases;
+  }
+
+  private normalizeExplicitAddressName(value?: string): string | undefined {
+    const name = (value || '')
+      .replace(EXPLICIT_ADDRESS_TRAILING_PARTICLE, '')
+      .trim();
+
+    if (
+      !name ||
+      name.length > 16 ||
+      !/^[\u4e00-\u9fa5A-Za-z·]+$/.test(name) ||
+      EXPLICIT_ADDRESS_NON_NAME.has(name) ||
+      /^(?:我|你|他|她|它|的|了|要|想|听|看|来|去|叫|上|下)/.test(name) ||
+      /(?:我|你|他|她|它|的|了|要|吗)$/.test(name)
+    ) {
+      return undefined;
+    }
+
+    return name;
+  }
+
+  private splitFactClauses(value: string): string[] {
+    return (value || '')
+      .replace(/[\r\n]+/g, '，')
+      .split(/[，,。；;！!？?]+/)
+      .map(item => item.replace(/\s+/g, '').trim())
+      .filter(Boolean);
   }
 
   private isQuestionOnly(sourceText: string): boolean {
@@ -1037,6 +1211,23 @@ export class AgentProfileFactService {
     )
       return true;
 
+    // 12. 明确、持久的称呼或表达偏好（“以后叫我X”“叫我X就行”“以后别说一大段”）
+    if (
+      /(?:以后|今后|从现在起|往后|之后)(?:都|一直)?(?:你|您)?(?:就|都|一直)?(?:叫我|称呼我|喊我|别|不要|不用|少|多说|多写|直接|简短)/.test(
+        text
+      ) ||
+      /(?:别总|别老是|不要总|不要老|别再|不用再)(?:在|把|说|讲|问|提|用|给|每)/.test(
+        text
+      ) ||
+      /(?:叫我|称呼我|喊我)[\u4e00-\u9fa5A-Za-z·]{1,12}(?:就行|就好|吧)/.test(
+        text
+      )
+    )
+      return true;
+
+    // 13. 明确描述性格（是否采用、限量与防推理由提示词约束）
+    if (/(?:性格|脾气|为人|个性|话少|话多|嘴硬|心软)/.test(text)) return true;
+
     return false;
   }
 
@@ -1063,7 +1254,7 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。籍贯：只有用户明确说当前角色是某地人（如“爷爷是山东人”“老家在山东”）才抽取，用 key=origin.hometown，值写成“当前角色的籍贯是XX省”，省级即可，不猜城市、不猜方言。用户本人的籍贯不是当前角色的事实；只是在某地住过、工作过、去旅游或待过都不等于籍贯；明确否定、转述或主体不明时禁止抽取。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。主体归属：只输出当前角色（用户正在对话的逝去亲人）本人的稳定事实。用户本人的处境（工作、收入、养育、健康、情绪）和用户其他亲属（母亲、爷奶、叔伯舅姨等）的近况，不是当前角色的事实，禁止输出。第三人称提到的人（“我妈妈”“爷爷奶奶”）默认不属于当前角色，除非用户明确表示其与当前角色同一人，或明确说是双方共同经历。时间性质：带时间的表达先判断这件事指什么；不得把时间短语（如“元旦迎新的日子”）单独作为事实输出，离开/纪念的时间锚点归时间记忆处理。表达性质：纯思念、寒暄、疑问、愿望、祈使、假设不输出；具体纪念或触发情境只有原话给出明确场景时才保留，并写清场景，不得仅凭情绪强度生成思念触发类标签。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。籍贯：只有用户明确说当前角色是某地人（如“爷爷是山东人”“老家在山东”）才抽取，用 key=origin.hometown，值写成“当前角色的籍贯是XX省”，省级即可，不猜城市、不猜方言。用户本人的籍贯不是当前角色的事实；只是在某地住过、工作过、去旅游或待过都不等于籍贯；明确否定、转述或主体不明时禁止抽取。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。主体归属：只输出当前角色（用户正在对话的逝去亲人）本人的稳定事实。用户本人的处境（工作、收入、养育、健康、情绪）和用户其他亲属（母亲、爷奶、叔伯舅姨等）的近况，不是当前角色的事实，禁止输出。第三人称提到的人（“我妈妈”“爷爷奶奶”）默认不属于当前角色，除非用户明确表示其与当前角色同一人，或明确说是双方共同经历。时间性质：带时间的表达先判断这件事指什么；不得把时间短语（如“元旦迎新的日子”）单独作为事实输出，离开/纪念的时间锚点归时间记忆处理。表达性质：纯思念、寒暄、疑问、愿望、祈使、假设不输出；具体纪念或触发情境只有原话给出明确场景时才保留，并写清场景，不得仅凭情绪强度生成思念触发类标签。称呼要求：只有用户明确、持久地要求改变称呼（“以后叫我X”“以后都叫你X”“叫我X就行”）才写 relationship.preferred_user_name（值“当前用户希望当前角色称呼其为X”）或 relationship.preferred_agent_name（值“当前用户偏好称呼当前角色为X”）；“爸爸叫我X”这类第三人称说法不是当前用户的要求，禁止写成 preferred；“我以前还叫你X”只登记别名 identity.alias.confirmed.<短哈希>，值“当前角色别名或昵称是X”，不得覆盖当前默认称呼。表达偏好：用户明确、持久地要求改变表达方式（“以后别说一大段”“别总在最后问我问题”）才写 style.preference.<维度>，维度用 verbosity/closing_question/preachy/tone/other，值“用户对表达方式的长期要求：原话”；带“今天/这次/先”的当下要求不写。性格：只在用户明确描述性格、或多次重复出现同一具体表达倾向时采用，写成“话少，常用具体事情关心人”这类具体倾向，最多 3 到 5 条，超出留候选；不从一次行为推完整人格，不从籍贯推性格。核心家人重大状态：只有用户明确说已离世、明确离婚或断联、目前独居或长期异地等会影响安慰与建议的状态才作为家人事实，并区分稳定历史与可能变化的状态（后者按“上次提到”理解）；未证实的称谓（例如“婆婆”是否就是“奶奶”）保留歧义，不得合并成同一个人。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',
@@ -1121,6 +1312,7 @@ export class AgentProfileFactService {
     this.addOccupationFacts(facts, text, confidence);
     this.addFamilyFacts(facts, text, confidence);
     this.addStyleFacts(facts, text, confidence);
+    this.addExpressionPreferenceFacts(facts, text, confidence);
     this.addMemoryAndTabooFacts(facts, text, confidence);
     this.addRejectedAssistantClaimFact(
       facts,
@@ -1295,6 +1487,54 @@ export class AgentProfileFactService {
         priority: 3,
       });
     }
+
+    // name-memory 正则漏掉的明确称呼要求（如“以后叫我湾呐”）在这里补键；
+    // 已有 preferred 时不重复写，保持唯一真值。
+    if (!nameMemory.preferredName) {
+      const explicitAgentName = this.extractExplicitPreferredAddress(
+        text,
+        'agent'
+      );
+      if (explicitAgentName) {
+        facts.push({
+          type: AgentProfileFactType.relationship,
+          key: AGENT_PREFERRED_NAME_FACT_KEY,
+          value: `当前用户偏好称呼当前角色为${explicitAgentName}`,
+          polarity: AgentProfileFactPolarity.positive,
+          confidence: nameConfidence,
+          priority: 3,
+        });
+      }
+    }
+
+    if (!userNameMemory.preferredName) {
+      const explicitUserName = this.extractExplicitPreferredAddress(
+        text,
+        'user'
+      );
+      if (explicitUserName) {
+        facts.push({
+          type: AgentProfileFactType.relationship,
+          key: USER_PREFERRED_NAME_FACT_KEY,
+          value: `当前用户希望当前角色称呼其为${explicitUserName}`,
+          polarity: AgentProfileFactPolarity.positive,
+          confidence: nameConfidence,
+          priority: 3,
+        });
+      }
+    }
+
+    // “我以前还叫你老爷子”只登记历史别称，不覆盖当前默认称呼、不新建人物。
+    for (const alias of this.extractHistoricalAgentAliases(text)) {
+      facts.push({
+        type: AgentProfileFactType.identity,
+        key: `${AGENT_EXPLICIT_ALIAS_FACT_PREFIX}${this.hashKey(alias)}`,
+        value: `当前角色别名或昵称是${alias}`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: nameConfidence,
+        priority: 2,
+      });
+    }
   }
 
   private addOccupationFacts(
@@ -1453,6 +1693,76 @@ export class AgentProfileFactService {
     }
   }
 
+  /**
+   * 表达偏好：只接“可执行、有作用范围、持久”的要求（“以后别说一大段”、
+   * “别总在最后问我问题”），落成同一作用域（当前角色）下的 style 事实；
+   * “今天先别讲道理”是一次性要求，不永久化。同一维度用同一 key，
+   * 独立维度各自成条，不合并成模糊段落。
+   */
+  private addExpressionPreferenceFacts(
+    facts: AgentProfileFactSummary[],
+    text: string,
+    confidence: AgentProfileFactConfidence
+  ): void {
+    const seenDimensions = new Set<string>();
+
+    for (const clause of this.splitFactClauses(text)) {
+      const preference = this.readDurableExpressionPreference(clause);
+      if (!preference || seenDimensions.has(preference.dimension)) {
+        continue;
+      }
+      seenDimensions.add(preference.dimension);
+      facts.push({
+        type: AgentProfileFactType.style,
+        key: `style.preference.${preference.dimension}`,
+        value: `用户对表达方式的长期要求：${preference.instruction}`,
+        polarity: AgentProfileFactPolarity.negative,
+        confidence,
+        priority: 2,
+      });
+    }
+  }
+
+  private readDurableExpressionPreference(
+    clause: string
+  ): { dimension: string; instruction: string } | undefined {
+    if (!clause || /[?？]/.test(clause)) {
+      return undefined;
+    }
+    // 当下、一次性的要求只影响本轮，不写长期偏好。
+    if (
+      /(?:今天|今晚|这会儿|这次|这回|暂时|待会|一会|先别|先不要|先不用)/.test(
+        clause
+      ) ||
+      (/现在/.test(clause) && !/从现在起/.test(clause))
+    ) {
+      return undefined;
+    }
+    // 必须有持久语气，否则普通祈使句不永久化。
+    if (
+      !/(?:以后|今后|从现在起|往后|之后|都|一直|总是|每次|别总|别老是|不要总|不要老|别再|不用再)/.test(
+        clause
+      )
+    ) {
+      return undefined;
+    }
+
+    const dimension =
+      /一大段|长篇|长段|太长|啰嗦|简短|短一点|少说|多写|太多字|这么多字|分条|别写太多|不用写太多/.test(
+        clause
+      )
+        ? 'verbosity'
+        : /问|提问|追问/.test(clause)
+        ? 'closing_question'
+        : /讲道理|说教|大道理|开导|教育我/.test(clause)
+        ? 'preachy'
+        : /煽情|客套|官方|模板|肉麻|冷淡|生硬/.test(clause)
+        ? 'tone'
+        : undefined;
+
+    return dimension ? { dimension, instruction: clause } : undefined;
+  }
+
   private addMemoryAndTabooFacts(
     facts: AgentProfileFactSummary[],
     text: string,
@@ -1477,7 +1787,12 @@ export class AgentProfileFactService {
       /(?:以后|之后)?(?:别|不要|不许)(?:再)?(?:提|说)([^，。！？!?]{2,24})/
     );
 
-    if (tabooMatch?.[1]) {
+    // “以后别说一大段”是对表达方式的要求，不是“不要提某话题”的忌讳事实。
+    const isExpressionPreference = Boolean(
+      this.readDurableExpressionPreference(text)
+    );
+
+    if (!isExpressionPreference && tabooMatch?.[1]) {
       const taboo = this.normalizeObjectText(tabooMatch[1]);
 
       if (taboo) {
