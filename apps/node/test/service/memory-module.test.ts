@@ -1165,7 +1165,7 @@ describe('模型判定结果的写入', () => {
       candidates: [
         {
           messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
-          quote: '我开始吃药了，医生说要坚持',
+          quote: '我下周去医院复查，医生说还要开始吃药',
           topicKey: '就医',
           state: 'action_committed',
           importance: 3,
@@ -1293,6 +1293,156 @@ describe('模型判定结果的写入', () => {
         },
       ],
     });
+    expect(await items.count()).toBe(2);
+  });
+
+  it('同类同主体但两件不同的事：不并（R00 探针 M1 回归）', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '爸爸明天做手术',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-10T10:00:00.000Z'),
+        },
+      ],
+    });
+    const second = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '爸爸后天去复查牙齿',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-11T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(second.created).toBe(1);
+    expect(await items.count()).toBe(2);
+  });
+
+  it('同类同主体、只有"进展词"但内容无交集：不并（v1 下等 v2 的 targetItemId 才能并）', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '我下周要去医院复查',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    const second = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '我开始吃药了，医生说要坚持',
+          topicKey: '就医',
+          state: 'action_committed',
+          importance: 3,
+          occurredAt: new Date('2026-09-09T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(second.created).toBe(1);
+    expect(await items.count()).toBe(2);
+  });
+
+  it('同类同主体且内容有交集：算同一件事的进展，并成一条', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '爸爸明天做手术',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    const second = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '爸爸手术做完了，周三还得去复查一次',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-11T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(second.updated).toBe(1);
+    expect(await items.count()).toBe(1);
+  });
+
+  it('同类同主体、只是出现"开始/结果"这类词但换了件事：不并', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '爸爸明天做手术',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    const second = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '爸爸开始上班了',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'action_committed',
+          importance: 2,
+          occurredAt: new Date('2026-09-11T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(second.created).toBe(1);
     expect(await items.count()).toBe(2);
   });
 

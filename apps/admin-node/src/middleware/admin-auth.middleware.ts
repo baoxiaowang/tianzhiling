@@ -40,10 +40,13 @@ export class AdminAuthMiddleware implements IMiddleware<Context, NextFunction> {
 
   ignore = [
     (ctx: Context): boolean => {
+      const path = this.normalizePath(ctx.path);
       return (
         ctx.method === 'OPTIONS' ||
         !ctx.path.startsWith('/admin_api/') ||
-        PUBLIC_ADMIN_API_PATHS.has(this.normalizePath(ctx.path))
+        PUBLIC_ADMIN_API_PATHS.has(path) ||
+        // 声音训练 Agent 工作台：独立入口（页面 token 鉴权 + API X-Agent-Vt-Secret 双因子）
+        path.startsWith('/admin_api/agent_vt/')
       );
     },
   ];

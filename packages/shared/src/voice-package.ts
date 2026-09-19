@@ -1,3 +1,5 @@
+import type { VoiceTimbreDialectDTO } from "./voice-timbre";
+
 export type VoicePackageStatusDTO = "active" | "disabled";
 
 export interface VoicePackageDeliverableDTO {
@@ -322,6 +324,8 @@ export interface VoiceServiceSessionDTO {
   selectedAgentId?: string;
   previewAgentId?: string;
   previewText?: string;
+  /** 训练时应用的方言；缺省或 auto 表示跟随文本 */
+  speechDialect?: VoiceTimbreDialectDTO;
   voiceAccessEligible?: boolean;
   voiceAccessSource?:
     | "voice_membership_order"
@@ -382,6 +386,8 @@ export interface RecutVoiceServiceClipDTO {
 
 export interface StartVoiceServiceTrainingDTO {
   agentId?: string;
+  /** 可选方言；缺省沿用会话已保存的方言，最终默认 auto */
+  speechDialect?: VoiceTimbreDialectDTO;
 }
 
 export interface SelectVoiceServiceAgentDTO {

@@ -72,6 +72,11 @@ export class AdminOperationsController {
     );
   }
 
+  @Get('/monthly-summary')
+  async monthlySummary(@Query() query: Record<string, string>) {
+    return this.adminOperationsService.getMonthlySummary(query?.range);
+  }
+
   @Get('/order-analytics')
   async orderAnalytics(@Query() query: Record<string, string>) {
     return this.adminOperationsService.getOrderAnalytics(query?.month);

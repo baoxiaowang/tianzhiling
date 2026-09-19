@@ -2,6 +2,8 @@ import axios from 'axios';
 import type {
   AdminChatQualityDTO,
   AdminMonthlyOrderReportDTO,
+  AdminMonthlySummaryDTO,
+  AdminMonthlySummaryRange,
   AdminOperationsDailyPointDTO,
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
@@ -58,6 +60,13 @@ export function queryUserValueReport(endMonth?: string, months = 6) {
   return axios.get<AdminUserValueReportDTO>(
     '/admin_api/operations/user-value',
     { params: { endMonth, months } }
+  );
+}
+
+export function queryMonthlySummary(range: AdminMonthlySummaryRange) {
+  return axios.get<AdminMonthlySummaryDTO>(
+    '/admin_api/operations/monthly-summary',
+    { params: { range } }
   );
 }
 

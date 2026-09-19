@@ -151,6 +151,32 @@ export interface AdminOperationsReportDTO {
   hourly: AdminOperationsHourlyPointDTO[];
 }
 
+/** 仪表盘月度统计的区间：近 6 / 12 / 24 个月，或开站至今全部月份。 */
+export type AdminMonthlySummaryRange = 6 | 12 | 24 | "all";
+
+export interface AdminMonthlySummaryPointDTO {
+  /** 北京时间月份，格式 YYYY-MM */
+  month: string;
+  newUsers: number;
+  userMessages: number;
+  /** 当月实付收入（元） */
+  paidRevenue: number;
+  /** 当月退款金额（元） */
+  refundedRevenue: number;
+  /** 当月净收入（元）= paidRevenue - refundedRevenue */
+  netRevenue: number;
+  /** 是否为当前自然月（数据不完整，读取时需注意） */
+  isCurrentMonth: boolean;
+}
+
+export interface AdminMonthlySummaryDTO {
+  generatedAt: string;
+  timezone: "Asia/Shanghai";
+  range: AdminMonthlySummaryRange;
+  /** 按月份升序（最早的在前） */
+  items: AdminMonthlySummaryPointDTO[];
+}
+
 export interface AdminUserValueCohortPointDTO {
   month: string;
   observedDays: number;

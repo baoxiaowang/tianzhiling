@@ -44,6 +44,7 @@ export class StartVoiceServiceTrainingBodyDTO
   implements StartVoiceServiceTrainingDTO
 {
   agentId?: string;
+  speechDialect?: StartVoiceServiceTrainingDTO['speechDialect'];
 }
 
 export class SelectVoiceServiceAgentBodyDTO

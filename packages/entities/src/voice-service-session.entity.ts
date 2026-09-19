@@ -342,6 +342,9 @@ export class VoiceServiceSessionEntity extends BaseEntity {
   previewText?: string;
 
   @Column()
+  speechDialect?: string;
+
+  @Column()
   voiceAccessSource?: string;
 
   @Column()

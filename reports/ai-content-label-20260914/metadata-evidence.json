@@ -1,0 +1,107 @@
+{
+  "task": "天之灵合照 AI 标识修正版发布与元数据验收",
+  "generatedAt": "2026-09-14T13:33:00Z",
+  "release": {
+    "requestedCommit": "0f0edd0438299ff4f6d1441c2e9f42fc222df3bc",
+    "releasedCommit": "96e3c8c34c45e53a9dc0537a0767012e543549b1",
+    "releasedCommitReason": "0f0edd0 的 pnpm-lock.yaml 含重复 deprecated 键，--frozen-lockfile 安装失败；新增 96e3c8c 仅删除该 2 行",
+    "branch": "20260912",
+    "previousRuntimeCommit": "a9506b7469b7fe31b6086c3635769ae56cab1e5e",
+    "nodeImageId": "sha256:bb18c6dc1b06fc559b666629573c5c60a57a54fd9348b90681f807ccfe7cda83",
+    "imageRevisionLabel": "96e3c8c34c45e53a9dc0537a0767012e543549b1",
+    "servicesUpdated": ["tzl_node", "tzl_memory_worker"],
+    "rollbackImageTags": [
+      "tzl-node-rollback:a9506b7469b7",
+      "tzl-tzl_node-rollback:a9506b7469b7",
+      "tzl-tzl_memory_worker-rollback:a9506b7469b7"
+    ],
+    "previousImageId": "sha256:1657770a561490432be0c4c8b1ed1ddf7efe15c80742c35002e27624121c5506",
+    "databaseChanged": false,
+    "weappChanged": false,
+    "adminWebChanged": false
+  },
+  "productionConfigFix": {
+    "authorization": "用户于 2026-09-14 明确授权",
+    "file": "/opt/tianzhiling/.env",
+    "backup": "/opt/tianzhiling/.env.bak.ai-label-20260914",
+    "key": "NODE_BAILIAN_IMAGE_MODEL",
+    "from": "wan2.7-image-turbo",
+    "to": "wan2.7-image-pro",
+    "reason": "原值在百炼返回 InvalidParameter: Model not exist.，导致现有生成合照无法出图",
+    "action": "仅重建 tzl_node；镜像与提交不变",
+    "verification": "生产 env 下 model=wan2.7-image-pro 被百炼接受（返回输入校验错误而非 Model not exist）"
+  },
+  "alpineVerification": {
+    "baseImage": "node:20.19-alpine (Alpine 3.23.2, x86_64)",
+    "nodeVersion": "v20.19.6",
+    "pnpm": "9.15.9 --frozen-lockfile",
+    "sharp": "0.35.4",
+    "libvips": "8.18.6",
+    "platformPackages": [
+      "@img/sharp-linuxmusl-x64@0.35.4",
+      "@img/sharp-libvips-linuxmusl-x64@1.3.3",
+      "@img/colour@1.1.0"
+    ],
+    "sharpLoadTest": "ok (encode 64x64 png)"
+  },
+  "tests": {
+    "authorScopedTotal": 33,
+    "result": "pass",
+    "suites": {
+      "ai-content-label.service.test.ts": "16 passed",
+      "bailian-image-label.test.ts": "3 passed",
+      "prompt/memorial-photo.test.ts": "1 passed",
+      "conversation.service.test.ts#generateMemorialPhoto": "13 passed, 113 skipped"
+    },
+    "unrelatedFailures": {
+      "count": 10,
+      "suite": "conversation.service.test.ts",
+      "note": "与合照改动无关的既有对话/话术用例；目标提交未修改相关代码路径"
+    }
+  },
+  "sample": {
+    "file": "generated-sample.png",
+    "sha256": "5310f709c1bce09053c5baa96d20a19fa0694c8106a751043fa69a020d913114",
+    "mimeType": "image/png",
+    "width": 1024,
+    "height": 1024,
+    "bytes": 2227695,
+    "generatorModel": "wan2.7-image-pro",
+    "generatedWithProductionConfig": true,
+    "providerRequestId": "55569572-301b-929a-9561-6215488a39d0",
+    "contentId": "tzl-memorial-55569572-301b-929a-9561-6215488a39d0",
+    "imageUrlFallbackReturned": "",
+    "visibleLabel": {
+      "glyphGroups": 4,
+      "shortEdge": 1024,
+      "requiredMinInkHeight": 52,
+      "glyphInkHeights": [54, 54, 65, 68],
+      "allGlyphsPass": true
+    },
+    "xmp": {
+      "present": true,
+      "aigcRecordCount": 1,
+      "creatorTool": "tianzhiling-ai-label/1.0",
+      "aigcJson": {
+        "AIGC": {
+          "Label": "1",
+          "ContentProducer": "武汉市天之灵智能技术有限公司",
+          "ProduceID": "tzl-memorial-55569572-301b-929a-9561-6215488a39d0",
+          "ReservedCode1": "",
+          "ContentPropagator": "武汉市天之灵智能技术有限公司",
+          "PropagateID": "tzl-memorial-55569572-301b-929a-9561-6215488a39d0",
+          "ReservedCode2": ""
+        }
+      }
+    }
+  },
+  "priorSampleBeforeConfigFix": {
+    "contentId": "tzl-memorial-3a6327ca-3729-99f6-9cdb-768f15f969bd",
+    "model": "wan2.7-image-pro",
+    "note": "在临时覆盖模型为 wan2.7-image-pro 时生成，证明标识链路本身可用"
+  },
+  "unverified": [
+    "真实手机端 聊天 → ＋ → 生成合照 的预览与保存到相册行为（用户将自行在真机执行并回传）",
+    "微信预览/保存是否保留文件 XMP（页面仅用 Taro.previewImage 调起系统预览，无自行转码；保存由微信完成）"
+  ]
+}

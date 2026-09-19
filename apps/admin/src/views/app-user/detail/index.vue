@@ -356,6 +356,43 @@
           />
         </a-tab-pane>
         <a-tab-pane key="voice" title="声音模型">
+          <a-card
+            class="agent-vt-link-card"
+            :bordered="false"
+            style="margin-bottom: 16px"
+          >
+            <template #title>
+              <div style="display: flex; align-items: center; gap: 8px">
+                <span>对话式训练入口</span>
+                <a-tag color="arcoblue" size="small">唯一链接</a-tag>
+              </div>
+            </template>
+            <div style="display: flex; gap: 8px; margin-bottom: 8px">
+              <a-input
+                :model-value="agentVtUrl"
+                placeholder="点击「生成链接」获取该账号的对话式训练入口"
+                readonly
+                allow-clear
+                @clear="agentVtUrl = ''"
+              >
+                <template #append>
+                  <a-button type="text" :disabled="!agentVtUrl" @click="copyAgentVtUrl">
+                    复制
+                  </a-button>
+                </template>
+              </a-input>
+              <a-button
+                type="primary"
+                :loading="agentVtLoading"
+                @click="loadAgentVtLink"
+              >
+                {{ agentVtUrl ? '重新获取' : '生成链接' }}
+              </a-button>
+            </div>
+            <div style="font-size: 12px; color: #86909c; line-height: 1.6">
+              通过该链接可对话式上传音频训练声音，训练完成后自动绑定到该账号的默认 AI 亲人。
+            </div>
+          </a-card>
           <voice-model-panel
             v-if="activeTab === 'voice'"
             :user-id="userId || ''"
@@ -599,6 +636,49 @@
   const userId = computed(() => {
     const { id } = route.params;
     return Array.isArray(id) ? id[0] : id;
+  });
+
+  const agentVtUrl = ref('');
+  const agentVtLoading = ref(false);
+
+  const loadAgentVtLink = async () => {
+    if (!userId.value) {
+      Message.warning('缺少用户 ID');
+      return;
+    }
+    agentVtLoading.value = true;
+    try {
+      const { data } = await axios.get(`/admin_api/agent-vt/links/${userId.value}`);
+      agentVtUrl.value = `${window.location.origin}/admin_api/agent_vt/p/${data.token}`;
+      Message.success('已生成对话式训练入口链接');
+    } catch (error) {
+      Message.error((error as Error).message || '生成训练入口链接失败');
+    } finally {
+      agentVtLoading.value = false;
+    }
+  };
+
+  const copyAgentVtUrl = async () => {
+    if (!agentVtUrl.value) return;
+    try {
+      await navigator.clipboard.writeText(agentVtUrl.value);
+      Message.success('链接已复制');
+    } catch {
+      Message.error('复制失败，请手动复制');
+    }
+  };
+
+  watch(userId, (id) => {
+    agentVtUrl.value = '';
+    if (id && activeTab.value === 'voice') {
+      loadAgentVtLink();
+    }
+  });
+
+  watch(activeTab, (tab) => {
+    if (tab === 'voice' && userId.value && !agentVtUrl.value && !agentVtLoading.value) {
+      loadAgentVtLink();
+    }
   });
 
   const fetchUserDetail = async (id?: string) => {

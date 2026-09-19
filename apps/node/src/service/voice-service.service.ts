@@ -42,6 +42,7 @@ import type {
   SubmitVoiceServiceMaterialsDTO,
   VoiceServiceSessionDTO,
 } from '@tzl/shared';
+import { resolveVoiceTimbreDialect } from '@tzl/shared';
 import { createHash, randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
@@ -970,6 +971,10 @@ export class VoiceServiceService {
     } else if (!session.previewText?.trim()) {
       session.previewAgentId = undefined;
       session.previewText = buildVoicePreviewText();
+    }
+
+    if (payload?.speechDialect !== undefined) {
+      session.speechDialect = resolveVoiceTimbreDialect(payload.speechDialect);
     }
 
     const now = new Date();
@@ -3332,6 +3337,9 @@ export class VoiceServiceService {
         ? this.stringifyObjectId(session.previewAgentId)
         : undefined,
       previewText: session.previewText,
+      speechDialect: session.speechDialect as
+        | VoiceServiceSessionDTO['speechDialect']
+        | undefined,
       voiceAccessEligible:
         access?.eligible ?? Boolean(session.voiceAccessSource),
       voiceAccessSource: (access?.source ?? session.voiceAccessSource) as

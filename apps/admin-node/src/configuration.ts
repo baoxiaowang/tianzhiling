@@ -10,6 +10,7 @@ import { join } from 'path';
 import { DefaultErrorFilter } from './filter/default.filter';
 import { NotFoundFilter } from './filter/notfound.filter';
 import { AdminAuthMiddleware } from './middleware/admin-auth.middleware';
+import { AgentVtAuthMiddleware } from './middleware/agent-vt-auth.middleware';
 import { FormatMiddleware } from './middleware/format.middleware';
 import { AdminPerformanceMiddleware } from './middleware/admin-performance.middleware';
 import { AdminDailyStatsService } from './service/admin-daily-stats.service';
@@ -45,6 +46,7 @@ export class MainConfiguration {
   async onReady() {
     this.app.useMiddleware([AdminPerformanceMiddleware]);
     this.app.useMiddleware([AdminAuthMiddleware]);
+    this.app.useMiddleware([AgentVtAuthMiddleware]);
     this.app.useMiddleware([FormatMiddleware]);
     this.app.useFilter([NotFoundFilter, DefaultErrorFilter]);
 

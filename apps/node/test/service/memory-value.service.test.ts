@@ -28,7 +28,9 @@ describe('buildFamilyStructureDecision', () => {
       {
         label: '妈妈',
         relation: '母亲',
-        evidence: [{ messageId: String(messageId), quote: '妈妈身体一时好一时坏' }],
+        evidence: [
+          { messageId: String(messageId), quote: '妈妈身体一时好一时坏' },
+        ],
       },
     ]);
     expect(decision.value).toContain('家人关系说明');
@@ -42,7 +44,9 @@ describe('buildFamilyStructureDecision', () => {
         {
           label: '妹妹',
           relation: '妹妹',
-          evidence: [{ messageId: String(messageId), quote: '妹妹今年考上大学' }],
+          evidence: [
+            { messageId: String(messageId), quote: '妹妹今年考上大学' },
+          ],
         },
       ],
       [
@@ -50,7 +54,8 @@ describe('buildFamilyStructureDecision', () => {
           id: new MongoObjectId('665000000000000000000701'),
           subjectRef: `user:${userId}`,
           key: 'family.structure',
-          value: '家人关系说明：\n- 妈妈（母亲）：用户原话“妈妈身体一时好一时坏”',
+          value:
+            '家人关系说明：\n- 妈妈（母亲）：用户原话“妈妈身体一时好一时坏”',
         },
       ]
     );

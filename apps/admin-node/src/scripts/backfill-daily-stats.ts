@@ -69,7 +69,7 @@ async function main(): Promise<void> {
       ['ADMIN_API_MONGO_PASSWORD', 'NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'],
       'qwerasdf'
     ),
-    synchronize: true,
+    synchronize: false,
     logging: false,
     entities: [
       UserEntity,

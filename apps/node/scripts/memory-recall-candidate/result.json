@@ -1,0 +1,340 @@
+{
+  "commit": "a237b35fd60179df95fa0620ebdc3ea8ce6e9fcf",
+  "scope": "production pure functions + isolated candidate；零 API/数据库调用",
+  "productionConstants": {
+    "AUTO_MEMORY_RETRIEVAL_CANDIDATES": 10,
+    "AUTO_MEMORY_INJECT_LIMIT": 1,
+    "AUTO_MEMORY_MIN_EVIDENCE_CHARACTERS": 6,
+    "selectRelevantMemoriesHardCap": 8,
+    "candidateInjectLimit": 3
+  },
+  "results": [
+    {
+      "id": "D1-monitor",
+      "note": "构造：真实开发材料 TR-03 的监考原话",
+      "currentText": "我明天监考美术",
+      "extractedKeys": "",
+      "current": {
+        "triggered": false,
+        "queryUsed": "",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "我明天监考美术",
+        "injectableIds": [
+          "o1"
+        ],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    },
+    {
+      "id": "D2-throat",
+      "note": "构造：真实开发材料 TR-05 的嗓子原话",
+      "currentText": "嗓子好多了",
+      "extractedKeys": "",
+      "current": {
+        "triggered": false,
+        "queryUsed": "",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "嗓子好多了",
+        "injectableIds": [
+          "o1"
+        ],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    },
+    {
+      "id": "D3-school",
+      "note": "构造：换一种说法的上学/回校",
+      "currentText": "我明天去上学",
+      "extractedKeys": "上学",
+      "current": {
+        "triggered": true,
+        "queryUsed": "上学",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "我明天去上学",
+        "injectableIds": [
+          "o1"
+        ],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    },
+    {
+      "id": "D4-that-thing",
+      "note": "构造：指代“那个事”",
+      "currentText": "上次那个事终于办妥了",
+      "extractedKeys": "",
+      "current": {
+        "triggered": false,
+        "queryUsed": "",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "上次那个事终于办妥了",
+        "injectableIds": [
+          "o1"
+        ],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    },
+    {
+      "id": "D5-kin-only",
+      "note": "构造：带称呼但具体出行信息被键表丢掉",
+      "currentText": "爸爸我明天坐高铁回去读书",
+      "extractedKeys": "爸 爸爸",
+      "current": {
+        "triggered": true,
+        "queryUsed": "爸 爸爸",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "爸爸我明天坐高铁回去读书",
+        "injectableIds": [
+          "o1"
+        ],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    },
+    {
+      "id": "D6-same-source-raw",
+      "note": "构造：同一来源既有抽取条又有原话，检查谁被保留",
+      "currentText": "我明天去上学",
+      "extractedKeys": "上学",
+      "current": {
+        "triggered": true,
+        "queryUsed": "上学",
+        "injectableIds": [
+          "p1",
+          "r1"
+        ],
+        "selectedIds": [
+          "p1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "我明天去上学",
+        "injectableIds": [
+          "p1",
+          "r1"
+        ],
+        "selectedIds": [
+          "r1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    },
+    {
+      "id": "D7-limit10",
+      "note": "构造：10 条候选，检查请求 10 条时的实际封顶",
+      "currentText": "我明天去上学",
+      "extractedKeys": "上学",
+      "current": {
+        "triggered": true,
+        "queryUsed": "上学",
+        "injectableIds": [],
+        "selectedIds": [
+          "r0",
+          "r1",
+          "r2",
+          "r3",
+          "r4",
+          "r5",
+          "r6",
+          "r7"
+        ],
+        "selectedCount": 8,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "我明天去上学",
+        "injectableIds": [
+          "r0",
+          "r1",
+          "r2",
+          "r3",
+          "r4",
+          "r5",
+          "r6",
+          "r7",
+          "r8",
+          "r9"
+        ],
+        "selectedIds": [
+          "r0",
+          "r1",
+          "r2",
+          "r3",
+          "r4",
+          "r5",
+          "r6",
+          "r7",
+          "r8",
+          "r9"
+        ],
+        "selectedCount": 10,
+        "projectedInjectLimit": 3
+      }
+    },
+    {
+      "id": "D8-fragment",
+      "note": "构造：纯应答碎片，应该被两边都丢掉",
+      "currentText": "我明天去上学",
+      "extractedKeys": "上学",
+      "current": {
+        "triggered": true,
+        "queryUsed": "上学",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "我明天去上学",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    },
+    {
+      "id": "D9-emotion-fact",
+      "note": "构造：情绪句里夹着事实（有没有见最后一面）",
+      "currentText": "我爸爸是什么样的人",
+      "extractedKeys": "爸 爸爸",
+      "current": {
+        "triggered": true,
+        "queryUsed": "爸 爸爸",
+        "injectableIds": [],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "injectLimit": 1
+      },
+      "candidate": {
+        "triggered": true,
+        "queryUsed": "我爸爸是什么样的人",
+        "injectableIds": [
+          "o1"
+        ],
+        "selectedIds": [
+          "o1"
+        ],
+        "selectedCount": 1,
+        "projectedInjectLimit": 1
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "name": "D1 空键导致自动入口不检索（复现）",
+      "ok": true,
+      "detail": "{\"current\":\"\",\"candidate\":\"我明天监考美术\"}"
+    },
+    {
+      "name": "D2 嗓子句空键（复现）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "D3 换说法被字面键过滤（复现）+ 候选保留",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "D4 指代句空键（复现）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "D5 只按称呼检索（复现）",
+      "ok": true,
+      "detail": "爸爸我明天坐高铁回去读书"
+    },
+    {
+      "name": "D6 同来源原话被剔除（复现）+ 候选保留原话",
+      "ok": true,
+      "detail": "{\"current\":[\"p1\"],\"candidate\":[\"r1\"]}"
+    },
+    {
+      "name": "D7 请求 10 条实际封顶 8（复现）+ 候选给到 10",
+      "ok": true,
+      "detail": "{\"current\":8,\"candidate\":10}"
+    },
+    {
+      "name": "D8 碎片两边都丢",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "D9 情绪句夹事实：生产过滤、候选保留",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "allPassed": true
+}

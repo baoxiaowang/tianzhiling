@@ -583,6 +583,45 @@ describe('OrderService payment expiration and reconciliation', () => {
     );
   });
 
+  it('拒绝为已配置虚拟支付商品的会员套餐创建普通微信支付订单', async () => {
+    const { service, auth, orderModel, wechatPayService } = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+
+    await expect(
+      service.createVipPlanOrder(auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+
+    expect(orderModel.save).not.toHaveBeenCalled();
+    expect(wechatPayService.createVipPlanPrepay).not.toHaveBeenCalled();
+  });
+
+  it('拒绝为已配置虚拟支付商品的语音套餐创建普通微信支付订单', async () => {
+    const { service, auth, orderModel } = createService(
+      {},
+      {},
+      {
+        voicePackageOverrides: {
+          virtualPaymentProductId: 'voice_standard_goods',
+        },
+      }
+    );
+
+    await expect(
+      service.createVoicePackageOrder(auth, {
+        voicePackageId: VOICE_PACKAGE_ID,
+        agentId: AGENT_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+
+    expect(orderModel.save).not.toHaveBeenCalled();
+  });
+
   it('deducts historical vip payments from a member upgrade order', async () => {
     const historicalOrder = createOrder({
       id: new MongoObjectId('665000000000000000000011'),

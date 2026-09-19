@@ -565,9 +565,7 @@ describe('memory value contract', () => {
       value: '嗲嗲婆婆（爸爸）每天喝酒不吃饭',
       evidence: [{ messageId: 'm1', quote: '看爸爸每天喝了酒不吃饭' }],
     };
-    expect(() => parse(conflated as any, source)).toThrow(
-      'KINSHIP_CONFLATION'
-    );
+    expect(() => parse(conflated as any, source)).toThrow('KINSHIP_CONFLATION');
     const samePerson = {
       ...decision(),
       value: '用户提到妈妈（母亲）身体不舒服',
@@ -713,8 +711,8 @@ describe('memory value contract', () => {
       );
     }
     // 对具体的人说“挺好”是有效事实，但主体必须是这位亲人本人，不能记在用户名下。
-    expect(
-      () => parse({ ...decision(), value: '奶奶身体挺好' } as any)
+    expect(() =>
+      parse({ ...decision(), value: '奶奶身体挺好' } as any)
     ).toThrow('SUBJECT_MISMATCH');
     // 用户与亲人的关系类事实不受影响。
     expect(
@@ -748,7 +746,9 @@ describe('memory value contract', () => {
     expect(accepted).toHaveLength(1);
     // 同一个人只允许一个身份：应复用正在对话的亲人主体，而不是另建 relative。
     expect(refs.get('new:father')).toBe('agent:7');
-    expect(source.subjects.filter(s => s.ref.startsWith('relative:'))).toHaveLength(0);
+    expect(
+      source.subjects.filter(s => s.ref.startsWith('relative:'))
+    ).toHaveLength(0);
   });
   it('flags a whole fact category that no decision covered', () => {
     const text = '我爸爸住院了，做了手术，这几天生意也没顾上';
@@ -756,7 +756,9 @@ describe('memory value contract', () => {
       { key: 'grief.miss_father', value: '用户很想念爸爸' },
     ]);
     const names = gaps.map(g => g.category);
-    expect(names).toEqual(expect.arrayContaining(['健康与就医', '工作与生活常态']));
+    expect(names).toEqual(
+      expect.arrayContaining(['健康与就医', '工作与生活常态'])
+    );
     // 必须把触发该类别的原话一起带出来，否则模型不知道该补什么。
     const health = gaps.find(g => g.category === '健康与就医');
     expect(health && health.quotes.join('')).toContain('住院');
@@ -876,21 +878,19 @@ describe('memory value contract', () => {
     expect(isEmotionalValue('用户已结婚并育有一儿一女')).toBe(false);
   });
   it('rejects a memory that crams several relatives into one entry', () => {
-    expect(
-      () =>
-        parse({
-          ...decision(),
-          value: '用户家里有爸爸、妈妈、哥哥和妹妹',
-        } as any)
+    expect(() =>
+      parse({
+        ...decision(),
+        value: '用户家里有爸爸、妈妈、哥哥和妹妹',
+      } as any)
     ).toThrow('AGGREGATE');
     expect(
       parse({ ...decision(), value: '用户有一个妹妹' } as any)
     ).toHaveLength(1);
   });
   it('rejects people the user never mentioned', () => {
-    expect(
-      () =>
-        parse({ ...decision(), value: '用户是和朋友一起去KTV的' } as any)
+    expect(() =>
+      parse({ ...decision(), value: '用户是和朋友一起去KTV的' } as any)
     ).toThrow('UNSOURCED_PERSON');
     expect(
       parse({ ...decision(), value: '用户独自去了KTV' } as any)
@@ -926,9 +926,7 @@ describe('memory value contract', () => {
     expect(b.accepted).toHaveLength(1);
     // 同一个人换个称呼也要落到同一个主体：先按关系复用已有人物。
     expect(a.refs.get('new:grandson')).toBeDefined();
-    expect(b.refs.get('new:grandson_again')).toBe(
-      a.refs.get('new:grandson')
-    );
+    expect(b.refs.get('new:grandson_again')).toBe(a.refs.get('new:grandson'));
   });
   it('does not fold a third party relation into a core relative', () => {
     // “母亲的兄弟”是舅舅，不能归到母亲身份上（否则出现“妈妈是妈妈的兄弟”）。

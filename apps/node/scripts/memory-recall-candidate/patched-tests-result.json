@@ -1,0 +1,48 @@
+{
+  "date": "2026-09-15T11:45:33.103Z",
+  "patchedSource": "candidate-src (= prod-src + proposed.patch)",
+  "note": "直接调用补丁后的实际函数；构造用例只证明机制，不代表真实召回效果",
+  "assertions": [
+    {
+      "name": "空检索键仍会检索",
+      "ok": true,
+      "detail": "{\"keys\":\"\",\"trigger\":true,\"query\":\"我明天监考美术\"}"
+    },
+    {
+      "name": "空检索键时用完整原话查询",
+      "ok": true,
+      "detail": "我明天监考美术"
+    },
+    {
+      "name": "有关键词时查询仍保留具体事情",
+      "ok": true,
+      "detail": "{\"keys\":\"爸 爸爸\",\"query\":\"爸爸我明天坐高铁回去读书\"}"
+    },
+    {
+      "name": "短回复不触发检索、实句触发",
+      "ok": true,
+      "detail": "{\"t1\":false,\"t2\":false,\"t3\":true}"
+    },
+    {
+      "name": "不再因缺字面键删候选、仍丢纯碎片",
+      "ok": true,
+      "detail": "{\"keep\":true,\"dropAck\":false}"
+    },
+    {
+      "name": "原话优先且保留其他人物精确命中",
+      "ok": true,
+      "detail": "[\"r-same\",\"p-other\"]"
+    },
+    {
+      "name": "请求 10 条实际给到 10",
+      "ok": true,
+      "detail": "len=10"
+    },
+    {
+      "name": "写入侧复现：事实句可入索引、事实+情绪/祈愿被排除",
+      "ok": true,
+      "detail": "{\"pureFact\":true,\"factPlusEmotion\":false}"
+    }
+  ],
+  "allPassed": true
+}

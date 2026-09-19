@@ -3,6 +3,9 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import type {
   AdminAuthenticatedPayload,
   AdminChatQualityDTO,
+  AdminMonthlySummaryDTO,
+  AdminMonthlySummaryPointDTO,
+  AdminMonthlySummaryRange,
   AdminOperationsAlertDTO,
   AdminOrderAnalyticsDTO,
   AdminOperationsOverviewDTO,
@@ -49,6 +52,10 @@ type TaskQuery = {
 type DailyCountRow = { _id: string; count: number };
 type DailyAmountRow = { _id: string; amount: number };
 type HourlyCountRow = { _id: string; count: number };
+/** 月度聚合行：_id 为北京时间 YYYY-MM */
+type MonthlyCountRow = { _id: string; count: number };
+type MonthlyAmountRow = { _id: string; amount: number };
+type EarliestTimestampRow = { createdAt?: Date };
 type DailyMessageStatsRow = {
   _id: string;
   allChatUsers: number;
@@ -138,6 +145,16 @@ const periodOrderStatsCache = new Map<
   string,
   { expiresAt: number; value: PeriodOrderStatsRow }
 >();
+const monthlySummaryCache = new Map<
+  string,
+  { expiresAt: number; value: AdminMonthlySummaryDTO }
+>();
+
+/** 仪表盘月度统计支持的区间；其他取值回落到默认值 */
+const MONTHLY_SUMMARY_RANGES = [6, 12, 24] as const;
+const MONTHLY_SUMMARY_DEFAULT_RANGE = 12;
+/** 「全部」区间最多回溯的月份数，避免异常时间戳导致超长枚举 */
+const MONTHLY_SUMMARY_MAX_MONTHS = 120;
 
 /**
  * 人工推广费覆盖值集合。刻意与 admin_daily_stats 分表存储：
@@ -709,11 +726,111 @@ export class AdminOperationsService {
    * 手动刷新仪表盘数据：清空报表相关缓存，并重算今天/昨天的每日汇总，
    * 使管理端点击“刷新”后立即看到最新数据，而不必等待 30 分钟定时任务。
    */
+  /**
+   * 月度统计：每月新增用户、总消息数（用户发送）和净收入（实付 − 退款）。
+   *
+   * 刻意不复用 admin_daily_stats 汇总表：该表早期月份只有最近 7 天
+   * （实时补算上限 MAX_LIVE_BACKFILL_DAYS），按月求和会严重少算。
+   * 这里直接对原始集合按月聚合，口径与每日统计保持一致。
+   */
+  async getMonthlySummary(range?: unknown): Promise<AdminMonthlySummaryDTO> {
+    const normalizedRange = this.normalizeMonthlyRange(range);
+    const cacheKey = String(normalizedRange);
+    const now = new Date();
+    const cached = monthlySummaryCache.get(cacheKey);
+    if (cached && cached.expiresAt > now.getTime()) {
+      return cached.value;
+    }
+
+    const currentMonth = this.getBeijingMonth(now);
+    const startMonth =
+      normalizedRange === 'all'
+        ? await this.resolveEarliestMonth(currentMonth)
+        : this.addMonths(currentMonth, -(normalizedRange - 1));
+    const months = this.enumerateMonths(startMonth, currentMonth);
+    const start = this.beijingMonthStart(startMonth);
+    const end = this.beijingMonthStart(this.addMonths(currentMonth, 1));
+
+    const liveUserMessageMatch = {
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      $or: [{ source: { $exists: false } }, { source: 'live' }],
+    };
+    const realOrderMatch = {
+      targetCode: { $ne: 'voice_one' },
+      source: { $ne: 'admin' },
+      paymentProvider: { $ne: 'admin_manual' },
+    };
+
+    const [userRows, messageRows, paidRows, refundRows, legacyRefundRows] =
+      await Promise.all([
+        this.aggregateMonthlyCount(this.userModel, start, end),
+        this.aggregateMonthlyCount(
+          this.messageModel,
+          start,
+          end,
+          liveUserMessageMatch
+        ),
+        this.aggregateMonthlyAmount(
+          this.orderModel,
+          {
+            ...realOrderMatch,
+            paidAt: { $gte: start, $lt: end },
+          },
+          '$paidAt',
+          { $ifNull: ['$paidAmount', '$payableAmount'] }
+        ),
+        this.aggregateMonthlyAmount(
+          this.orderRefundModel,
+          {
+            ...realOrderMatch,
+            status: OrderRefundStatus.completed,
+            completedAt: { $gte: start, $lt: end },
+          },
+          '$completedAt',
+          '$amount'
+        ),
+        this.aggregateLegacyMonthlyRefundAmounts(start, end, realOrderMatch),
+      ]);
+
+    const userMap = this.countMap(userRows);
+    const messageMap = this.countMap(messageRows);
+    const paidMap = this.mergeAmountMaps(paidRows);
+    const refundMap = this.mergeAmountMaps(refundRows, legacyRefundRows);
+
+    const items: AdminMonthlySummaryPointDTO[] = months.map(month => {
+      const paidRevenue = this.centsToYuan(paidMap.get(month) ?? 0);
+      const refundedRevenue = this.centsToYuan(refundMap.get(month) ?? 0);
+      return {
+        month,
+        newUsers: userMap.get(month) ?? 0,
+        userMessages: messageMap.get(month) ?? 0,
+        paidRevenue,
+        refundedRevenue,
+        netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
+        isCurrentMonth: month === currentMonth,
+      };
+    });
+
+    const value: AdminMonthlySummaryDTO = {
+      generatedAt: now.toISOString(),
+      timezone: BEIJING_TIMEZONE,
+      range: normalizedRange,
+      items,
+    };
+    monthlySummaryCache.set(cacheKey, {
+      expiresAt: now.getTime() + 30 * 60 * 1000,
+      value,
+    });
+    return value;
+  }
+
   private async refreshReportData(month: string): Promise<void> {
     reportCache.delete(month);
     allTimeCache = undefined;
     hourlyCountCache.clear();
     periodOrderStatsCache.clear();
+    monthlySummaryCache.clear();
 
     const today = this.getTodayBeijing();
     const [year, monthNumber, day] = today.split('-').map(Number);
@@ -2542,6 +2659,172 @@ export class AdminOperationsService {
     return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value ?? ''))
       ? String(value)
       : fallback;
+  }
+
+  /** 月度统计区间：6 / 12 / 24 个月或「全部」，其余取值回落到默认 12 个月。 */
+  private normalizeMonthlyRange(value: unknown): AdminMonthlySummaryRange {
+    const text = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    if (text === 'all') return 'all';
+    const parsed = Number(text);
+    return (MONTHLY_SUMMARY_RANGES as readonly number[]).includes(parsed)
+      ? (parsed as AdminMonthlySummaryRange)
+      : MONTHLY_SUMMARY_DEFAULT_RANGE;
+  }
+
+  /** YYYY-MM 偏移若干个月。 */
+  private addMonths(month: string, delta: number): string {
+    const [yearText, monthText] = month.split('-');
+    const shifted = new Date(
+      Date.UTC(Number(yearText), Number(monthText) - 1 + delta, 1)
+    );
+    return `${shifted.getUTCFullYear()}-${String(
+      shifted.getUTCMonth() + 1
+    ).padStart(2, '0')}`;
+  }
+
+  /** 北京时间的月份起点，转为 UTC Date 供 Mongo 范围查询使用。 */
+  private beijingMonthStart(month: string): Date {
+    const [yearText, monthText] = month.split('-');
+    return new Date(
+      Date.UTC(Number(yearText), Number(monthText) - 1, 1) - BEIJING_OFFSET_MS
+    );
+  }
+
+  /** 枚举 [startMonth, endMonth] 之间的所有月份（含首尾，升序）。 */
+  private enumerateMonths(startMonth: string, endMonth: string): string[] {
+    const result: string[] = [];
+    let cursor = startMonth;
+    while (cursor <= endMonth && result.length < MONTHLY_SUMMARY_MAX_MONTHS) {
+      result.push(cursor);
+      cursor = this.addMonths(cursor, 1);
+    }
+    return result;
+  }
+
+  /**
+   * 「全部」区间的起点：最早注册用户所在的月份。
+   * 没有用户时退回当前月，避免枚举出空区间。
+   */
+  private async resolveEarliestMonth(currentMonth: string): Promise<string> {
+    const rows = await this.userModel.aggregate<EarliestTimestampRow>([
+      { $match: { createdAt: { $type: 'date' } } },
+      { $sort: { createdAt: 1 } },
+      { $limit: 1 },
+      { $project: { createdAt: 1 } },
+    ]).toArray();
+    const earliest = rows[0]?.createdAt;
+    if (!(earliest instanceof Date) || Number.isNaN(earliest.getTime())) {
+      return currentMonth;
+    }
+    const month = this.getBeijingMonth(earliest);
+    return month <= currentMonth ? month : currentMonth;
+  }
+
+  /** 按北京时间月份分组的计数聚合。 */
+  private async aggregateMonthlyCount<T extends object>(
+    repository: MongoRepository<T>,
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown> = {}
+  ): Promise<MonthlyCountRow[]> {
+    return repository
+      .aggregate<MonthlyCountRow>([
+        {
+          $match: {
+            ...extraMatch,
+            createdAt: { $gte: start, $lt: end },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m',
+                date: '$createdAt',
+                timezone: '+08:00',
+              },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  /** 按北京时间月份分组的金额聚合（金额保持分为单位）。 */
+  private async aggregateMonthlyAmount<T extends object>(
+    repository: MongoRepository<T>,
+    match: Record<string, unknown>,
+    dateExpression: string | Record<string, unknown>,
+    amountExpression: string | Record<string, unknown>
+  ): Promise<MonthlyAmountRow[]> {
+    return repository
+      .aggregate<MonthlyAmountRow>([
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m',
+                date: dateExpression,
+                timezone: '+08:00',
+              },
+            },
+            amount: { $sum: amountExpression },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  /** 历史遗留退款（订单自身带 refundAmount，且没有独立退款单）按月汇总。 */
+  private async aggregateLegacyMonthlyRefundAmounts(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<MonthlyAmountRow[]> {
+    return this.orderModel
+      .aggregate<MonthlyAmountRow>([
+        {
+          $match: this.buildLegacyRefundFlowMatch(start, end, extraMatch),
+        },
+        {
+          $lookup: {
+            from: TableName.order_refund,
+            localField: '_id',
+            foreignField: 'originalOrderId',
+            as: 'independentRefundOrders',
+          },
+        },
+        {
+          $match: {
+            'independentRefundOrders.0': { $exists: false },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m',
+                date: { $ifNull: ['$refundedAt', '$updatedAt'] },
+                timezone: '+08:00',
+              },
+            },
+            amount: {
+              $sum: {
+                $cond: [
+                  { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                  '$refundAmount',
+                  '$payableAmount',
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .toArray();
   }
 
   private uniqueObjectIds(ids: MongoObjectId[]): MongoObjectId[] {

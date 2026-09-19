@@ -148,6 +148,27 @@ export class OrderService {
   @InjectEntityModel(VoiceTrainingTaskEntity)
   voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
 
+  /**
+   * 微信平台已关闭非 iOS 系统的普通微信支付能力，虚拟商品必须使用小程序虚拟支付。
+   * 配置了虚拟支付商品的套餐/语音包，其普通微信支付下单接口一律拒绝，
+   * 避免旧版本小程序在虚拟支付失败后自动回退并生成 wechat_pay 订单。
+   */
+  private assertOrdinaryWechatPayAllowed(
+    virtualPaymentProductId?: string
+  ): void {
+    if (virtualPaymentProductId?.trim()) {
+      this.logger?.warn?.(
+        '[order] ordinary wechat pay disabled, rejected order creation, virtualPaymentProductId=%s',
+        virtualPaymentProductId
+      );
+      throw new AppError(
+        'WECHAT_ORDINARY_PAY_DISABLED',
+        '当前小程序已关闭普通微信支付，请更新微信到最新版本后重试',
+        400
+      );
+    }
+  }
+
   async createVipPlanOrder(
     auth: AuthenticatedUserPayload,
     payload: CreateVipPlanOrderDTO
@@ -155,6 +176,9 @@ export class OrderService {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
     const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
+    if (preliminaryPricing.payableAmount > 0) {
+      this.assertOrdinaryWechatPayAllowed(plan.virtualPaymentProductId);
+    }
     let openid =
       preliminaryPricing.payableAmount > 0
         ? await this.wechatPayService.getOpenidByJsCode(payload.jsCode)
@@ -176,6 +200,8 @@ export class OrderService {
             payload.supportsZeroAmountOrder
           );
         }
+
+        this.assertOrdinaryWechatPayAllowed(plan.virtualPaymentProductId);
 
         if (!openid) {
           needsOpenid = true;
@@ -255,6 +281,9 @@ export class OrderService {
       this.getUserAgentById(userId, payload.agentId),
     ]);
     await this.assertAgentCanBuyVoicePackage(agent.id);
+    if (voicePackage.priceAmount > 0) {
+      this.assertOrdinaryWechatPayAllowed(voicePackage.virtualPaymentProductId);
+    }
     const materialObjectKeys = this.normalizeVoiceTrainingMaterialObjectKeys(
       payload.materialObjectKeys
     );

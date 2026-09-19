@@ -5,8 +5,13 @@ import { isApiResponse, successResponse } from '@tzl/shared';
 @Middleware()
 export class FormatMiddleware implements IMiddleware<Context, NextFunction> {
   resolve() {
-    return async (_ctx: Context, next: NextFunction) => {
+    return async (ctx: Context, next: NextFunction) => {
       const result = await next();
+
+      // HTML 页面（如声音训练工作台独立页）原样输出，不包 JSON 信封
+      if (String(ctx.type || '').includes('text/html')) {
+        return result;
+      }
 
       if (isApiResponse(result)) {
         return result;

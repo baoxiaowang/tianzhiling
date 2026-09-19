@@ -34,6 +34,7 @@ import {
 import { isPastOnlyStatement } from './memory-open-item-extraction';
 import {
   SAME_MATTER_MENTION_SCORE,
+  longestCommonSubstringLength,
   scoreOpenItemMention,
 } from './memory-return-turn';
 import type {
@@ -67,6 +68,60 @@ const RECALL_BUDGET_MS = 1200;
 const REBUILD_MESSAGE_LIMIT = 3000;
 /** 每人最多保留 5 条活跃的未了结事项：清单要像"最近惦记的几件事"，不能是流水账。 */
 const MAX_ACTIVE_OPEN_ITEMS = 5;
+/**
+ * 说明"这件事有进展"的说法：只有这些才算在更新同一件事，而不是另开一件。
+ * 注意：单独出现这些词不足以并条（"爸爸开始上班了"会撞上"开始"），
+ * 还必须与已有条目有一段共同的实词（见 sharesContentBeyondSubject）。
+ */
+const OPEN_ITEM_CONTINUATION_PATTERN =
+  /做完|做完了|完成|结束|结果|出来|取消|不去了|改期|开始|继续|已经|还是/u;
+/** 去主体后仍有一段共同实词（≥2 字）才算同一件事的延续。 */
+const KIN_STRIP_TERMS = [
+  '爸爸',
+  '妈妈',
+  '父亲',
+  '母亲',
+  '爷爷',
+  '奶奶',
+  '姥姥',
+  '姥爷',
+  '外婆',
+  '外公',
+  '姐姐',
+  '妹妹',
+  '哥哥',
+  '弟弟',
+  '儿子',
+  '女儿',
+  '老婆',
+  '老公',
+  '媳妇',
+  '丈夫',
+  '我',
+  '你',
+  '他',
+  '她',
+  '它',
+  '爸',
+  '妈',
+  '哥',
+  '姐',
+  '弟',
+  '妹',
+];
+function sharesContentBeyondSubject(
+  left: string,
+  right: string,
+  subjectRef?: string
+): boolean {
+  const strip = (text: string) => {
+    let value = text || '';
+    if (subjectRef) value = value.split(subjectRef).join('');
+    for (const term of KIN_STRIP_TERMS) value = value.split(term).join('');
+    return value;
+  };
+  return longestCommonSubstringLength(strip(left), strip(right)) >= 2;
+}
 /**
  * 两句话是不是同一件事（同一件事的不同说法、或其中一条没带主体时靠它兜底）。
  * 主体没提到（模型没给 subjectRef）或者换了个说法时，光比话题+主体会漏，
@@ -103,8 +158,18 @@ function isSameOpenItem(
   const sameSubject =
     normalizeSubject(item.subjectRef) ===
     normalizeSubject(candidate.subjectRef);
-  // 同类同主体：一定是同一件（哪怕这句话换了说法）
-  if (item.topicKey === candidate.topicKey && sameSubject) return true;
+  // 同类同主体：像同一件才算同一件。
+  // 实测（R00 探针 M1）：'爸爸明天做手术' 与 '爸爸后天去复查牙齿' 只因为话题+主体相同
+  // 就被并成一条，同一家人的两件事被吃掉一件。所以这里再加一层：内容够像，或者
+  // 新这句话是在说这件事的进展（做完了/结果/取消/开始…），才认同一件；
+  // 否则当新的一件事。
+  if (item.topicKey === candidate.topicKey && sameSubject) {
+    if (isSameOpenItemMatter(summary, item.summary)) return true;
+    return (
+      OPEN_ITEM_CONTINUATION_PATTERN.test(summary) &&
+      sharesContentBeyondSubject(summary, item.summary, candidate.subjectRef)
+    );
+  }
   // 两边都点了不同的人：不是同一件，不再往下比内容
   if (item.subjectRef && candidate.subjectRef && !sameSubject) return false;
   // 其余情况看内容：换说法、少了个称呼、被抽到两个类别，都要能认出来

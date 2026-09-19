@@ -1,6 +1,9 @@
 import { createApp, close, createHttpRequest } from '@midwayjs/mock';
 import { Framework, IMidwayKoaApplication } from '@midwayjs/koa';
 
+// 全量套件并行跑时 createApp 会超过 Jest 默认 5s 钩子超时；按应用真实启动时间放宽。
+jest.setTimeout(60000);
+
 describe('test/controller/home.test.ts', () => {
   let app: IMidwayKoaApplication;
 

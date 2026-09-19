@@ -561,6 +561,47 @@ describe('VoiceServiceService', () => {
     );
   });
 
+  it('persists the requested training dialect on the session', async () => {
+    const { service, sessions } = createService();
+    const now = new Date();
+    sessions.push(
+      Object.assign(new VoiceServiceSessionEntity(), {
+        id: new MongoObjectId(SESSION_ID),
+        userId: new MongoObjectId(USER_ID),
+        status: VoiceServiceSessionStatus.reviewing,
+        materials: [],
+        reviewClips: [
+          {
+            id: 'clip-accepted',
+            objectKey: 'voice-service-clips/accepted.mp3',
+            reviewStatus: 'accepted',
+            createdAt: now,
+          },
+        ],
+        messages: [],
+        events: [],
+        processingAttempts: [],
+        createdAt: now,
+        updatedAt: now,
+      })
+    );
+
+    const training = await service.startTraining(
+      { sub: USER_ID } as never,
+      SESSION_ID,
+      { speechDialect: 'hebei' }
+    );
+    expect(training.speechDialect).toBe('hebei');
+
+    sessions[0].status = VoiceServiceSessionStatus.reviewing;
+    const fallback = await service.startTraining(
+      { sub: USER_ID } as never,
+      SESSION_ID,
+      { speechDialect: '河北话' as never }
+    );
+    expect(fallback.speechDialect).toBe('auto');
+  });
+
   it('returns from training to clip review and cleans a late model result', async () => {
     const { service, sessions, trainVoiceModel, cleanupLateTimbre } =
       createService();

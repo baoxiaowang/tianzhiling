@@ -35,33 +35,29 @@ run('full history reconstruction on standalone MongoDB', () => {
       pressure: async () => false,
     });
     await source.collection('user').insertOne({ _id: uid, status: 'active' });
-    await source
-      .collection('agent')
-      .insertOne({
-        _id: aid,
-        createdUserId: uid,
-        name: '爸爸',
-        iCallAgent: '爸爸',
-        agentCallMe: '囡囡',
-        customContext: '手工设定',
-        createdAt: old,
-        updatedAt: old,
-      });
-    await source
-      .collection('message')
-      .insertMany(
-        [old, recent].map(createdAt => ({
-          _id: new ObjectId(),
-          userId: uid,
-          agentId: aid,
-          conversationId: cid,
-          role: 'user',
-          status: 'sent',
-          type: 'text',
-          content: '小时候爸爸在树下给我讲故事',
-          createdAt,
-        }))
-      );
+    await source.collection('agent').insertOne({
+      _id: aid,
+      createdUserId: uid,
+      name: '爸爸',
+      iCallAgent: '爸爸',
+      agentCallMe: '囡囡',
+      customContext: '手工设定',
+      createdAt: old,
+      updatedAt: old,
+    });
+    await source.collection('message').insertMany(
+      [old, recent].map(createdAt => ({
+        _id: new ObjectId(),
+        userId: uid,
+        agentId: aid,
+        conversationId: cid,
+        role: 'user',
+        status: 'sent',
+        type: 'text',
+        content: '小时候爸爸在树下给我讲故事',
+        createdAt,
+      }))
+    );
     await source
       .collection('agent_profile_fact')
       .createIndex({ userId: 1, agentId: 1, key: 1 }, { unique: true });
@@ -154,20 +150,18 @@ run('full history reconstruction on standalone MongoDB', () => {
       updatedAt: old,
       status: 'active',
     };
-    await source
-      .collection('agent_profile_fact')
-      .insertMany([
-        bad,
-        {
-          _id: new ObjectId(),
-          userId: uid,
-          agentId: aid,
-          key: 'profile_source.hobbies',
-          value: '手工爱好',
-          sourceMessageId: m._id,
-          updatedAt: old,
-        },
-      ]);
+    await source.collection('agent_profile_fact').insertMany([
+      bad,
+      {
+        _id: new ObjectId(),
+        userId: uid,
+        agentId: aid,
+        key: 'profile_source.hobbies',
+        value: '手工爱好',
+        sourceMessageId: m._id,
+        updatedAt: old,
+      },
+    ]);
     await job.plan();
     await job.seed(await stage.collection('accounts').findOne({ _id: uid }));
     expect(
@@ -227,30 +221,26 @@ run('full history reconstruction on standalone MongoDB', () => {
   it('preserves concurrent live changes instead of replacing them with historical replay', async () => {
     const m = await source.collection('message').findOne({});
     const fid = new ObjectId();
-    await source
-      .collection('agent_profile_fact')
-      .insertOne({
-        _id: fid,
-        userId: uid,
-        agentId: aid,
-        key: 'memory.shared',
-        value: '旧内容',
-        sourceMessageId: m._id,
-        updatedAt: old,
-      });
+    await source.collection('agent_profile_fact').insertOne({
+      _id: fid,
+      userId: uid,
+      agentId: aid,
+      key: 'memory.shared',
+      value: '旧内容',
+      sourceMessageId: m._id,
+      updatedAt: old,
+    });
     await job.plan();
     await job.seed(await stage.collection('accounts').findOne({ _id: uid }));
-    await stage
-      .collection('agent_profile_fact')
-      .insertOne({
-        _id: new ObjectId(),
-        userId: uid,
-        agentId: aid,
-        key: 'memory.shared',
-        value: '历史重建',
-        sourceMessageId: m._id,
-        updatedAt: new Date(),
-      });
+    await stage.collection('agent_profile_fact').insertOne({
+      _id: new ObjectId(),
+      userId: uid,
+      agentId: aid,
+      key: 'memory.shared',
+      value: '历史重建',
+      sourceMessageId: m._id,
+      updatedAt: new Date(),
+    });
     await source
       .collection('agent_profile_fact')
       .updateOne(
@@ -266,19 +256,17 @@ run('full history reconstruction on standalone MongoDB', () => {
   });
   it('does not reuse old audits, and forbids original text writes through adapters', async () => {
     const m = await source.collection('message').findOne({});
-    await source
-      .collection('message')
-      .updateOne(
-        { _id: m._id },
-        {
-          $set: {
-            memoryValueAudit: {
-              status: 'completed',
-              version: 'memory_value_v1',
-            },
+    await source.collection('message').updateOne(
+      { _id: m._id },
+      {
+        $set: {
+          memoryValueAudit: {
+            status: 'completed',
+            version: 'memory_value_v1',
           },
-        }
-      );
+        },
+      }
+    );
     const repo = messageRepository(source, stage);
     expect(
       (await repo.findOne({ where: { _id: m._id } })).memoryValueAudit

@@ -8,11 +8,26 @@ describe('memory pipeline observability', () => {
     service.logger = { info: jest.fn() } as any;
     service.openAIService = new OpenAIService();
     const memoryModel = new OpenAIService();
-    memoryModel.openAIConfig = { embeddingModel: 'embedding-test', embeddingDimensions: 2 };
-    (memoryModel as any).getEmbeddingClient = () => ({ embeddings: { create: jest.fn().mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] }) } });
+    memoryModel.openAIConfig = {
+      embeddingModel: 'embedding-test',
+      embeddingDimensions: 2,
+    };
+    (memoryModel as any).getEmbeddingClient = () => ({
+      embeddings: {
+        create: jest
+          .fn()
+          .mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] }),
+      },
+    });
     service.memoryValueService = { openAIService: memoryModel } as any;
-    (service as any).executeMemoryPipelineTask = async () => { await memoryModel.createEmbedding({ input: 'test' }); return 'completed'; };
-    await service.processMemoryPipelineTask({ id: new MongoObjectId(), kind: MemoryPipelineTaskKind.structuredMemory } as any);
+    (service as any).executeMemoryPipelineTask = async () => {
+      await memoryModel.createEmbedding({ input: 'test' });
+      return 'completed';
+    };
+    await service.processMemoryPipelineTask({
+      id: new MongoObjectId(),
+      kind: MemoryPipelineTaskKind.structuredMemory,
+    } as any);
     const args = (service.logger.info as jest.Mock).mock.calls[0];
     expect(args[5]).toBe(1);
     expect(args[8]).toBe(1);

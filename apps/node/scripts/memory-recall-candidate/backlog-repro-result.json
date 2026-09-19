@@ -1,0 +1,62 @@
+{
+  "date": "2026-09-15T11:43:45.888Z",
+  "prefix": "{tzl-diag-1789472616301}",
+  "scope": "隔离本地 Redis + BullMQ，模拟生产 processTask/enqueueTaskJob/requeueDueTask 分支",
+  "assertions": [
+    {
+      "name": "门槛拒绝后 Bull 任务完成、DB 任务仍 pending",
+      "ok": true,
+      "detail": "{\"status\":\"pending\",\"attemptCount\":0}"
+    },
+    {
+      "name": "同 jobId 重排被保留的完成记录挡住（未新增可执行 job、任务未再跑）",
+      "ok": true,
+      "detail": "{\"state\":\"completed\",\"before\":{\"waiting\":0,\"active\":0,\"completed\":1,\"failed\":0,\"paused\":0},\"after\":{\"waiting\":0,\"active\":0,\"completed\":1,\"failed\":0,\"paused\":0},\"runs\":0}"
+    },
+    {
+      "name": "门槛恢复后当前实现仍不执行（缺陷成立）",
+      "ok": true,
+      "detail": "{\"status\":\"pending\",\"attemptCount\":0}"
+    },
+    {
+      "name": "修复后门槛恢复即可重新执行",
+      "ok": true,
+      "detail": "{\"status\":\"completed\",\"attemptCount\":1}"
+    },
+    {
+      "name": "job 在跑时多次协调不重复执行同一业务任务",
+      "ok": true,
+      "detail": "{\"runs\":1,\"dup1\":true,\"dup2\":true}"
+    },
+    {
+      "name": "执行失败仍可恢复",
+      "ok": true,
+      "detail": "{\"afterFail\":\"{\\\"status\\\":\\\"pending\\\",\\\"attemptCount\\\":1}\",\"now\":{\"status\":\"completed\",\"attemptCount\":2}}"
+    },
+    {
+      "name": "未删除任务、未提前标完成",
+      "ok": true,
+      "detail": "[[\"T1\",{\"status\":\"completed\",\"attemptCount\":1}],[\"T2\",{\"status\":\"completed\",\"attemptCount\":1}],[\"T3\",{\"status\":\"completed\",\"attemptCount\":2}]]"
+    }
+  ],
+  "taskStates": {
+    "T1": {
+      "status": "completed",
+      "attemptCount": 1
+    },
+    "T2": {
+      "status": "completed",
+      "attemptCount": 1
+    },
+    "T3": {
+      "status": "completed",
+      "attemptCount": 2
+    }
+  },
+  "runs": {
+    "T1": 1,
+    "T2": 1,
+    "T3": 1
+  },
+  "allPassed": true
+}

@@ -285,6 +285,141 @@ describe('AdminOperationsService', () => {
     ).toBeGreaterThan(countAfterFirst);
   });
 
+  it('月度统计按北京时间月份汇总新增用户、消息与净收入', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-19T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+    service.userModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([
+          { _id: '2026-08', count: 100 },
+          { _id: '2026-09', count: 50 },
+        ])
+      ),
+    } as never;
+    service.messageModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([
+          { _id: '2026-08', count: 1000 },
+          { _id: '2026-09', count: 400 },
+        ])
+      ),
+    } as never;
+    service.orderModel = {
+      aggregate: jest.fn((pipeline: Record<string, unknown>[]) =>
+        JSON.stringify(pipeline).includes('independentRefundOrders')
+          ? aggregateResult([{ _id: '2026-08', amount: 1000 }])
+          : aggregateResult([
+              { _id: '2026-08', amount: 200000 },
+              { _id: '2026-09', amount: 50000 },
+            ])
+      ),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08', amount: 20000 }])
+      ),
+    } as never;
+
+    const result = await service.getMonthlySummary(6);
+
+    expect(result.range).toBe(6);
+    expect(result.timezone).toBe('Asia/Shanghai');
+    // 2026-09 往前 6 个月：2026-04 ~ 2026-09，无数据的月份补零
+    expect(result.items.map(item => item.month)).toEqual([
+      '2026-04',
+      '2026-05',
+      '2026-06',
+      '2026-07',
+      '2026-08',
+      '2026-09',
+    ]);
+    expect(result.items[0]).toMatchObject({
+      month: '2026-04',
+      newUsers: 0,
+      userMessages: 0,
+      paidRevenue: 0,
+      refundedRevenue: 0,
+      netRevenue: 0,
+      isCurrentMonth: false,
+    });
+    // 实付 200000 分 = 2000 元；退款 = 独立退款 20000 分 + 遗留退款 1000 分 = 210 元
+    expect(result.items[4]).toMatchObject({
+      month: '2026-08',
+      newUsers: 100,
+      userMessages: 1000,
+      paidRevenue: 2000,
+      refundedRevenue: 210,
+      netRevenue: 1790,
+      isCurrentMonth: false,
+    });
+    expect(result.items[5]).toMatchObject({
+      month: '2026-09',
+      newUsers: 50,
+      userMessages: 400,
+      paidRevenue: 500,
+      refundedRevenue: 0,
+      netRevenue: 500,
+      isCurrentMonth: true,
+    });
+    expect(service.orderRefundModel.aggregate).toHaveBeenCalled();
+  });
+
+  it('月度统计区间 all 从最早注册用户所在月开始枚举', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-19T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+    service.userModel = {
+      aggregate: jest.fn((pipeline: Record<string, unknown>[]) =>
+        JSON.stringify(pipeline).includes('"$limit"')
+          ? aggregateResult([
+              { createdAt: new Date('2026-01-05T02:00:00.000Z') },
+            ])
+          : aggregateResult([{ _id: '2026-01', count: 7 }])
+      ),
+    } as never;
+    service.messageModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.orderModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+
+    const result = await service.getMonthlySummary('all');
+
+    expect(result.range).toBe('all');
+    expect(result.items[0].month).toBe('2026-01');
+    expect(result.items[result.items.length - 1].month).toBe('2026-09');
+    expect(result.items).toHaveLength(9);
+    expect(result.items[0]).toMatchObject({ newUsers: 7, isCurrentMonth: false });
+  });
+
+  it('月度统计非法区间回落到 12 个月并命中缓存', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-19T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+    const userAggregate = jest.fn(() => aggregateResult([]));
+    service.userModel = { aggregate: userAggregate } as never;
+    service.messageModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.orderModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+
+    const first = await service.getMonthlySummary('oops');
+    const callsAfterFirst = userAggregate.mock.calls.length;
+    const second = await service.getMonthlySummary('oops');
+
+    expect(first.range).toBe(12);
+    expect(first.items).toHaveLength(12);
+    expect(userAggregate.mock.calls.length).toBe(callsAfterFirst);
+    expect(second.items).toEqual(first.items);
+  });
+
   it('computeDailyStats 排除内部小使者并计算单日统计', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-23T04:30:00.000Z'));
     const service = new AdminOperationsService();

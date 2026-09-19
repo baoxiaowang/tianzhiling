@@ -12,15 +12,13 @@ describe('4GB worker memory budget', () => {
     else process.env.NODE_MEMORY_MAX_RSS_MB = original;
   });
   function usage(rss: number, heap: number) {
-    jest
-      .spyOn(process, 'memoryUsage')
-      .mockReturnValue({
-        rss: rss * 1024 ** 2,
-        heapUsed: heap * 1024 ** 2,
-        heapTotal: heap * 1024 ** 2,
-        external: 0,
-        arrayBuffers: 0,
-      });
+    jest.spyOn(process, 'memoryUsage').mockReturnValue({
+      rss: rss * 1024 ** 2,
+      heapUsed: heap * 1024 ** 2,
+      heapTotal: heap * 1024 ** 2,
+      external: 0,
+      arrayBuffers: 0,
+    });
   }
   it('allows a 2GB RSS worker under an explicit 4608MB RSS budget', () => {
     process.env.NODE_MEMORY_MAX_RSS_MB = '4608';

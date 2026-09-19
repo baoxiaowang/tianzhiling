@@ -73,6 +73,70 @@
           </a-card>
         </a-grid-item>
       </a-grid>
+
+      <a-card
+        class="data-dashboard__monthly"
+        :bordered="false"
+        title="每月新增用户、收入与消息数"
+      >
+        <template #extra>
+          <a-space>
+            <a-typography-text type="secondary">
+              收入为当月净收入（实付 − 退款）
+            </a-typography-text>
+            <a-select
+              v-model="monthlyRange"
+              class="data-dashboard__monthly-range"
+              @change="() => fetchMonthly()"
+            >
+              <a-option :value="6">近 6 个月</a-option>
+              <a-option :value="12">近 12 个月</a-option>
+              <a-option :value="24">近 24 个月</a-option>
+              <a-option value="all">全部月份</a-option>
+            </a-select>
+          </a-space>
+        </template>
+        <a-table
+          row-key="month"
+          :data="monthlyRows"
+          :loading="monthlyLoading"
+          :pagination="false"
+          :scroll="{ x: 860 }"
+          :row-class="monthlyRowClass"
+        >
+          <template #columns>
+            <a-table-column title="月份" data-index="month" :width="160">
+              <template #cell="{ record }">
+                <strong>{{ record.month }}</strong>
+                <small v-if="record.isCurrentMonth">本月进行中</small>
+              </template>
+            </a-table-column>
+            <a-table-column title="新增用户" :width="150">
+              <template #cell="{ record }">{{
+                formatNumber(record.newUsers)
+              }}</template>
+            </a-table-column>
+            <a-table-column title="总消息数" :width="150">
+              <template #cell="{ record }">{{
+                formatNumber(record.userMessages)
+              }}</template>
+            </a-table-column>
+            <a-table-column title="收入（净）" :width="150">
+              <template #cell="{ record }">{{
+                formatMoney(record.netRevenue)
+              }}</template>
+            </a-table-column>
+            <a-table-column title="实付 / 退款" :width="220">
+              <template #cell="{ record }">
+                <span class="data-dashboard__monthly-detail">
+                  {{ formatMoney(record.paidRevenue) }} /
+                  {{ formatMoney(record.refundedRevenue) }}
+                </span>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
+      </a-card>
     </a-spin>
   </div>
 </template>
@@ -82,8 +146,12 @@
   import { useRoute, useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import type { AdminOperationsReportDTO } from '@tzl/shared';
-  import { queryOperationsReport } from '@/api/operations';
+  import type {
+    AdminMonthlySummaryPointDTO,
+    AdminMonthlySummaryRange,
+    AdminOperationsReportDTO,
+  } from '@tzl/shared';
+  import { queryMonthlySummary, queryOperationsReport } from '@/api/operations';
 
   // 异步加载 Chart 组件，减小首屏 bundle
   const Chart = defineAsyncComponent(
@@ -103,6 +171,9 @@
     'newUsers'
   );
   const report = ref<AdminOperationsReportDTO>();
+  const monthlyRange = ref<AdminMonthlySummaryRange>(12);
+  const monthlyLoading = ref(false);
+  const monthlyRows = ref<AdminMonthlySummaryPointDTO[]>([]);
 
   const summary = computed(() => [
     {
@@ -279,6 +350,21 @@
     }
   };
 
+  // 月度统计独立请求：切换区间时只重取这张表，不重算整个仪表盘
+  const fetchMonthly = async (options?: { silent?: boolean }) => {
+    try {
+      monthlyLoading.value = true;
+      const { data } = await queryMonthlySummary(monthlyRange.value);
+      monthlyRows.value = data.items || [];
+    } catch (error) {
+      if (!options?.silent) {
+        Message.error('月度统计加载失败');
+      }
+    } finally {
+      monthlyLoading.value = false;
+    }
+  };
+
   const handleMonthChange = () => {
     fetchData();
   };
@@ -286,10 +372,14 @@
   // 手动刷新：绕过后端 30 分钟缓存并重算最近汇总
   const refreshData = async () => {
     const refreshed = await fetchData({ refresh: true });
+    await fetchMonthly({ silent: true });
     if (refreshed) {
       Message.success('数据已刷新');
     }
   };
+
+  const monthlyRowClass = (record: AdminMonthlySummaryPointDTO) =>
+    record.isCurrentMonth ? 'is-current-month' : '';
 
   const formatNumber = (value: number) =>
     Number(value || 0).toLocaleString('zh-CN');
@@ -323,7 +413,10 @@
     URL.revokeObjectURL(url);
   };
 
-  onMounted(fetchData);
+  onMounted(() => {
+    fetchData();
+    fetchMonthly();
+  });
 </script>
 
 <script lang="ts">
@@ -413,6 +506,33 @@
 
     &__chart-card {
       width: 100%;
+    }
+
+    &__monthly {
+      width: 100%;
+      margin-top: 16px;
+
+      :deep(.arco-table-cell) strong {
+        display: block;
+      }
+
+      :deep(.arco-table-cell) small {
+        display: block;
+        color: var(--color-text-3);
+        font-size: 12px;
+      }
+
+      :deep(.is-current-month) td {
+        background: rgb(var(--purple-1));
+      }
+
+      &-range {
+        width: 132px;
+      }
+
+      &-detail {
+        color: var(--color-text-3);
+      }
     }
   }
 

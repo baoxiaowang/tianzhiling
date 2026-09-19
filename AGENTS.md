@@ -1,10 +1,12 @@
-# TianZhiLing repository facts
+# 天之灵项目支持信息
 
-- Use Chinese copy unless localization is requested; validate the changed dependency closure and lint changed admin source.
-- `MongoRepository` count operations use the raw query.
-- Preserve older-client compatibility additively.
-- Keep brand model, messenger, payment, review, and domain configuration separate; verify live policy instead of inferring it.
-- In weapp, reuse existing API/auth patterns and NutUI, use `px`, avoid the capsule, and use `Taro.editImage` for image editing.
-- Voice work preserves existing handoff records and updates them only when the contract changes.
-- Actual production work uses the production-release skill; voice training and data mutation require separate authority.
-- Discover reusable task capabilities with `node scripts/taskctl.mjs capabilities`; methods are optional, declared effects and acceptance evidence are authoritative.
+文档提供项目事实、资源和必要边界。根据当前任务选择材料与方法；历史报告和工作记忆中的执行步骤不自动成为本轮义务。
+
+- 界面默认使用中文。后台源码改动使用项目 ESLint 检查；其他验证按实际影响选择。
+- TypeORM `MongoRepository.count()` 的首参是原始 Mongo 查询，例如 `{ userId, isRead: false }`，不是 `{ where: ... }`。
+- 已发布小程序仍有旧客户端在使用；接口、字段和枚举变更保持兼容，必要的破坏性变更提供迁移或版本兼容路径。
+- 天之灵与未了言的模型、小使者、支付、审核和域名配置各自独立。涉及其中某项时核实该品牌的实际配置。
+- 小程序现有 API/auth 结构、NutUI 和 `px` 是可复用约定；布局避开原生右上角胶囊，头像上传沿用 `Taro.editImage` 编辑流程。
+- 语音流程的业务记录需保持完整；涉及契约变化时可查 `docs/voice-service-workflow-handoff.md` 并更新受影响内容。
+- 实际生产操作可用 `tianzhiling-production-release` 技能获取环境和发布支持。普通后端发布不包含语音训练，生产数据修改也需要明确覆盖该操作的授权；已有授权无需重复申请。
+- 可用 `node scripts/taskctl.mjs capabilities` 查看本分支的任务工具及其效果与验证依据，按需使用。

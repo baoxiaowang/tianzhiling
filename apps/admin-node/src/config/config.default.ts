@@ -17,6 +17,7 @@ import {
   AgentMemoryFactEntity,
   AgentProfileFactEntity,
   AgentSubEntity,
+  AgentVoiceTrainingLinkEntity,
   ChatTraceEntity,
   ConversationChatImportBatchEntity,
   ConversationEmotionStateEntity,
@@ -117,6 +118,15 @@ export default {
     model: readStringFrom(['ADMIN_LLM_MODEL', 'NODE_CHAT_MODEL'], 'MiniMax-M2.5'),
     timeoutMs: readNumberFrom(['ADMIN_LLM_TIMEOUT_MS'], 30000),
   },
+  /** 声音训练 Agent 工作台（独立入口 + 唯一链接） */
+  agentVt: {
+    /** X-Agent-Vt-Secret 共享密钥；生产需并入 AGENT_VOICE_SECRET */
+    secret: readStringFrom(['AGENT_VOICE_SECRET'], ''),
+    /** 工作台页面对话标题 */
+    title: readStringFrom(['AGENT_VT_TITLE'], '声音训练工作台'),
+    /** 页面 token 链接是否强制校验密钥（页面 GET 仅凭 token 放行） */
+    allowPageWithoutSecret: readBooleanFrom(['AGENT_VT_ALLOW_PAGE_WITHOUT_SECRET'], true),
+  },
   koa: {
     port: readNumberFrom(['ADMIN_API_PORT'], 7101),
     globalPrefix: '/admin_api',
@@ -137,7 +147,7 @@ export default {
       '.webp',
       '.bmp',
     ],
-    match: /\/admin_api\/storage\/cos\/upload$/,
+    match: /\/admin_api\/(storage\/cos\/upload|agent_vt\/api\/[^/]+\/upload)$/,
     limits: {
       fileSize: 200 * 1024 * 1024,
       files: 1,
@@ -730,6 +740,7 @@ export default {
           VoiceTimbreEntity,
           VoiceTimbreMaterialEntity,
           VoiceTrainingTaskEntity,
+          AgentVoiceTrainingLinkEntity,
         ],
       },
     },

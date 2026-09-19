@@ -48,7 +48,9 @@ function makeTask(
     id: new MongoObjectId('665000000000000000000100'),
     kind,
     status: MemoryPipelineTaskStatus.pending,
-    messageId: new MongoObjectId(firstMessageId || messageIds?.[0] || '665000000000000000000010'),
+    messageId: new MongoObjectId(
+      firstMessageId || messageIds?.[0] || '665000000000000000000010'
+    ),
     messageIds: messageIds?.map(id => new MongoObjectId(id)),
     conversationId,
     userId,
@@ -94,9 +96,11 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
       };
 
       const enrichCallArgs: string[] = [];
-      service.enrichUserMessageForReply = jest.fn(async (msg: MessageEntity) => {
-        enrichCallArgs.push(String(msg.id));
-      });
+      service.enrichUserMessageForReply = jest.fn(
+        async (msg: MessageEntity) => {
+          enrichCallArgs.push(String(msg.id));
+        }
+      );
       service.findAgentById = jest.fn(async () => {
         const a = new AgentEntity();
         Object.assign(a, { id: agentId, createdUserId: userId });
@@ -115,7 +119,10 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         process: jest.fn(),
       };
 
-      const task = makeTask(MemoryPipelineTaskKind.structuredMemory, messageIds);
+      const task = makeTask(
+        MemoryPipelineTaskKind.structuredMemory,
+        messageIds
+      );
       const result = await service.executeMemoryPipelineTask(task);
 
       expect(result).toBe('completed');
@@ -209,7 +216,10 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         return a;
       });
 
-      const processBatch = jest.fn(async () => ({ count: 2, changedAgents: [] }));
+      const processBatch = jest.fn(async () => ({
+        count: 2,
+        changedAgents: [],
+      }));
       service.memoryValueService = {
         enabled: jest.fn(() => true),
         active: jest.fn(() => true),
@@ -217,7 +227,9 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         process: jest.fn(),
       };
 
-      service.recognizeEmotionStateForUserMessage = jest.fn(async () => undefined);
+      service.recognizeEmotionStateForUserMessage = jest.fn(
+        async () => undefined
+      );
       service.captureRelationshipOpenLoop = jest.fn(async () => undefined);
       service.memoryPipelineTaskService = {
         enqueueForMessage: jest.fn(async () => []),
@@ -226,7 +238,10 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         refreshFromMemoryNow: jest.fn(),
       };
 
-      const task = makeTask(MemoryPipelineTaskKind.structuredMemory, messageIds);
+      const task = makeTask(
+        MemoryPipelineTaskKind.structuredMemory,
+        messageIds
+      );
       const result = await service.executeMemoryPipelineTask(task);
 
       expect(result).toBe('completed');
@@ -270,7 +285,9 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         process,
       };
 
-      service.recognizeEmotionStateForUserMessage = jest.fn(async () => undefined);
+      service.recognizeEmotionStateForUserMessage = jest.fn(
+        async () => undefined
+      );
       service.captureRelationshipOpenLoop = jest.fn(async () => undefined);
       service.memoryPipelineTaskService = {
         enqueueForMessage: jest.fn(async () => []),
@@ -279,7 +296,10 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         refreshFromMemoryNow: jest.fn(),
       };
 
-      const task = makeTask(MemoryPipelineTaskKind.structuredMemory, messageIds);
+      const task = makeTask(
+        MemoryPipelineTaskKind.structuredMemory,
+        messageIds
+      );
       const result = await service.executeMemoryPipelineTask(task);
 
       expect(result).toBe('completed');
@@ -313,10 +333,12 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
       };
 
       let callCount = 0;
-      service.enrichUserMessageForReply = jest.fn(async (msg: MessageEntity) => {
-        callCount++;
-        if (callCount === 2) throw new Error('DB write failed for msg 2');
-      });
+      service.enrichUserMessageForReply = jest.fn(
+        async (msg: MessageEntity) => {
+          callCount++;
+          if (callCount === 2) throw new Error('DB write failed for msg 2');
+        }
+      );
       service.userRelativeProfileService = {
         listSemanticUnitsForSourceMessage: jest.fn(async () => []),
       };
@@ -324,7 +346,10 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         enqueueForMessage: jest.fn(async () => []),
       };
 
-      const task = makeTask(MemoryPipelineTaskKind.structuredMemory, messageIds);
+      const task = makeTask(
+        MemoryPipelineTaskKind.structuredMemory,
+        messageIds
+      );
       const result = await service.executeMemoryPipelineTask(task);
 
       expect(result).toBe('completed');
@@ -355,7 +380,9 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         process,
       };
 
-      service.recognizeEmotionStateForUserMessage = jest.fn(async () => undefined);
+      service.recognizeEmotionStateForUserMessage = jest.fn(
+        async () => undefined
+      );
       service.captureRelationshipOpenLoop = jest.fn(async () => undefined);
       service.memoryPipelineTaskService = {
         enqueueForMessage: jest.fn(async () => []),
@@ -364,7 +391,11 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         refreshFromMemoryNow: jest.fn(),
       };
 
-      const task = makeTask(MemoryPipelineTaskKind.structuredMemory, undefined, '665000000000000000000050');
+      const task = makeTask(
+        MemoryPipelineTaskKind.structuredMemory,
+        undefined,
+        '665000000000000000000050'
+      );
       task.messageIds = undefined;
 
       const result = await service.executeMemoryPipelineTask(task);
@@ -373,7 +404,11 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
       expect(service.messageModel.findOne).toHaveBeenCalled();
       expect(service.messageModel.find).not.toHaveBeenCalled();
       expect(process).toHaveBeenCalledTimes(1);
-      expect(process).toHaveBeenCalledWith(message, '单条消息', expect.any(AgentEntity));
+      expect(process).toHaveBeenCalledWith(
+        message,
+        '单条消息',
+        expect.any(AgentEntity)
+      );
     });
 
     it('returns skipped when message is archived', async () => {
@@ -386,7 +421,11 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
         find: jest.fn(),
       };
 
-      const task = makeTask(MemoryPipelineTaskKind.structuredMemory, undefined, '665000000000000000000060');
+      const task = makeTask(
+        MemoryPipelineTaskKind.structuredMemory,
+        undefined,
+        '665000000000000000000060'
+      );
       task.messageIds = undefined;
 
       const result = await service.executeMemoryPipelineTask(task);
@@ -587,7 +626,11 @@ describe('MemoryValueService.processBatch', () => {
       createdAt: new Date('2026-09-08T00:00:00Z'),
     });
 
-    await service.processBatch([msg1], ['妈妈最近还好，儿子也上幼儿园了'], agent);
+    await service.processBatch(
+      [msg1],
+      ['妈妈最近还好，儿子也上幼儿园了'],
+      agent
+    );
 
     const relations = upsert.mock.calls.map(
       call => (call[0] as any).declaration.relationToUser
@@ -734,9 +777,9 @@ describe('MemoryValueService.processBatch', () => {
       createdAt: new Date(),
     });
 
-    await expect(
-      service.processBatch([msg1], ['测试'], agent)
-    ).rejects.toThrow('MEMORY_VALUE_MODEL_DISABLED');
+    await expect(service.processBatch([msg1], ['测试'], agent)).rejects.toThrow(
+      'MEMORY_VALUE_MODEL_DISABLED'
+    );
   });
 
   it('returns empty result for empty messages array', async () => {

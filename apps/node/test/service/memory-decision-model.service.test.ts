@@ -71,11 +71,9 @@ describe('independent memory model configuration', () => {
       },
     };
     service.configureMemoryModel();
-    const create = jest
-      .fn()
-      .mockResolvedValue({
-        choices: [{ message: { content: '{"decisions":[]}' } }],
-      });
+    const create = jest.fn().mockResolvedValue({
+      choices: [{ message: { content: '{"decisions":[]}' } }],
+    });
     (service as any).client = { chat: { completions: { create } } };
     const state = service.createModelCallAttribution();
     const result = await service.runWithModelCallAttribution(state, () =>
