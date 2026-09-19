@@ -272,4 +272,68 @@ describe('parseAgentDepartureTime', () => {
     expect(parsed?.normalizedExactDate).toBeUndefined();
     expect(parsed?.normalizedMonth).toBeUndefined();
   });
+
+  it('keeps a bare day derivation distinct from an explicit stated date', () => {
+    const explicit = parseAgentDepartureTime({
+      text: '你是2025年5月16日走的',
+      referenceAt: REFERENCE,
+    });
+    const derived = parseAgentDepartureTime({
+      text: '15号',
+      referenceAt: REFERENCE,
+      implicitCurrentAgent: true,
+      answeringDepartureQuestion: true,
+    });
+
+    expect(explicit?.resolutionCertainty).toBe(
+      PersonTemporalResolutionCertainty.explicitExact
+    );
+    expect(derived?.resolutionCertainty).toBe(
+      PersonTemporalResolutionCertainty.derivedExact
+    );
+    expect(derived).toMatchObject({
+      // REFERENCE 是 9/5，日号 15 晚于来源当天，按既有规则回退到上个月。
+      normalizedExactDate: new Date('2026-08-15T00:00:00.000Z'),
+      derivationRule: 'bare_day_of_month_reference_month_v1',
+    });
+  });
+
+  it('rolls a bare day back a month/year when it is after the source day', () => {
+    const sameDay = parseAgentDepartureTime({
+      text: '3号',
+      referenceAt: new Date('2026-09-03T02:00:00.000Z'),
+      implicitCurrentAgent: true,
+      answeringDepartureQuestion: true,
+    });
+    expect(sameDay?.normalizedExactDate).toEqual(
+      new Date('2026-09-03T00:00:00.000Z')
+    );
+
+    // 来源 9/3 说"31号"：本月没有 31 号（且 31 > 3），回退到 8/31。
+    const previousMonth = parseAgentDepartureTime({
+      text: '31号',
+      referenceAt: new Date('2026-09-03T02:00:00.000Z'),
+      implicitCurrentAgent: true,
+      answeringDepartureQuestion: true,
+    });
+    expect(previousMonth).toMatchObject({
+      normalizedYear: 2026,
+      normalizedMonth: 8,
+      normalizedDay: 31,
+      normalizedExactDate: new Date('2026-08-31T00:00:00.000Z'),
+      resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+      derivationRule: 'bare_day_of_month_reference_month_v1',
+    });
+
+    // 来源 1/5 说"31号"：跨年回退到上一年 12/31。
+    const previousYear = parseAgentDepartureTime({
+      text: '31号',
+      referenceAt: new Date('2026-01-05T02:00:00.000Z'),
+      implicitCurrentAgent: true,
+      answeringDepartureQuestion: true,
+    });
+    expect(previousYear?.normalizedExactDate).toEqual(
+      new Date('2025-12-31T00:00:00.000Z')
+    );
+  });
 });

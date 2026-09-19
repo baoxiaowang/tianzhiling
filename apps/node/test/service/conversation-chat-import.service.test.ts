@@ -1,4 +1,5 @@
 import {
+  AgentEntity,
   ConversationChatImportBatchEntity,
   ConversationChatImportConfidence,
   ConversationChatImportItemEntity,
@@ -284,6 +285,141 @@ describe('ConversationChatImportService', () => {
       });
 
       expect(result).toHaveLength(2);
+    });
+  });
+
+  describe('updateAgentLanguageProfile batch merging', () => {
+    function buildBatch() {
+      const batch = new ConversationChatImportBatchEntity();
+      batch.id = new MongoObjectId();
+      batch.userId = new MongoObjectId();
+      batch.agentId = new MongoObjectId();
+      batch.createdAt = new Date('2026-08-01T00:00:00.000Z');
+      batch.updatedAt = batch.createdAt;
+      return batch;
+    }
+
+    function buildItems(
+      batch: ConversationChatImportBatchEntity,
+      count: number,
+      dates: Date[]
+    ) {
+      return Array.from({ length: count }, (_, index) => {
+        const occurredAt = dates[index % dates.length];
+        const item = new ConversationChatImportItemEntity();
+        item.id = new MongoObjectId();
+        item.batchId = batch.id;
+        item.userId = batch.userId;
+        item.agentId = batch.agentId;
+        item.speaker = ConversationChatImportSpeaker.agent;
+        item.content = `他以前常说的第${index}句话，今天也要按时吃饭呀`;
+        item.occurredAt = occurredAt;
+        item.createdAt = occurredAt;
+        item.updatedAt = occurredAt;
+        return item;
+      });
+    }
+
+    function buildService(agent: AgentEntity) {
+      const service = new ConversationChatImportService();
+      service.agentProfileFactService = {
+        upsertFromHistoricalImport: jest
+          .fn()
+          .mockResolvedValue({ id: new MongoObjectId() }),
+      } as never;
+      service.openAIService = {
+        isEnabled: jest.fn().mockReturnValue(false),
+      } as never;
+      service.agentModel = {
+        findOne: jest.fn().mockResolvedValue(agent),
+        save: jest.fn().mockImplementation(async value => value),
+      } as never;
+      service.logger = { warn: jest.fn() } as never;
+      return service as unknown as {
+        updateAgentLanguageProfile: (
+          batch: ConversationChatImportBatchEntity,
+          items: ConversationChatImportItemEntity[]
+        ) => Promise<void>;
+      };
+    }
+
+    function buildAgent() {
+      return Object.assign(new AgentEntity(), {
+        id: new MongoObjectId(),
+        createdUserId: new MongoObjectId(),
+        updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+      });
+    }
+
+    it('does not let a weak 10-29 item batch overwrite a reliable strong result', async () => {
+      const agent = buildAgent();
+      const service = buildService(agent);
+      const strongBatch = buildBatch();
+      await service.updateAgentLanguageProfile(
+        strongBatch,
+        buildItems(strongBatch, 30, [
+          new Date('2020-05-03T10:00:00.000Z'),
+          new Date('2020-05-04T10:00:00.000Z'),
+        ])
+      );
+
+      expect(agent.personaProfile?.confidence).toBe(0.82);
+      const adopted = { ...agent.personaProfile?.languageProfile };
+      expect(Object.keys(adopted)).toHaveLength(7);
+
+      const weakBatch = buildBatch();
+      await service.updateAgentLanguageProfile(
+        weakBatch,
+        buildItems(weakBatch, 12, [new Date('2020-06-01T10:00:00.000Z')])
+      );
+
+      expect(agent.personaProfile?.confidence).toBe(0.82);
+      expect(agent.personaProfile?.languageProfile).toEqual(adopted);
+      const sources = (agent.personaProfile?.languageProfileSources || {}) as Record<
+        string,
+        { batchId?: string; confidence?: number }
+      >;
+      for (const dimension of Object.keys(adopted)) {
+        expect(sources[dimension]?.batchId).toBe(
+          strongBatch.id.toHexString()
+        );
+        expect(sources[dimension]?.confidence).toBe(0.82);
+      }
+    });
+
+    it('lets a strong later batch overwrite a weak result', async () => {
+      const agent = buildAgent();
+      const service = buildService(agent);
+      const weakBatch = buildBatch();
+      await service.updateAgentLanguageProfile(
+        weakBatch,
+        buildItems(weakBatch, 12, [new Date('2020-06-01T10:00:00.000Z')])
+      );
+
+      expect(agent.personaProfile?.confidence).toBe(0.48);
+
+      const strongBatch = buildBatch();
+      await service.updateAgentLanguageProfile(
+        strongBatch,
+        buildItems(strongBatch, 30, [
+          new Date('2020-05-03T10:00:00.000Z'),
+          new Date('2020-05-04T10:00:00.000Z'),
+        ])
+      );
+
+      expect(agent.personaProfile?.confidence).toBe(0.82);
+      const sources = (agent.personaProfile?.languageProfileSources || {}) as Record<
+        string,
+        { batchId?: string; confidence?: number }
+      >;
+      for (const dimension of Object.keys(
+        agent.personaProfile?.languageProfile || {}
+      )) {
+        expect(sources[dimension]?.batchId).toBe(
+          strongBatch.id.toHexString()
+        );
+        expect(sources[dimension]?.confidence).toBe(0.82);
+      }
     });
   });
 });

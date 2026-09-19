@@ -16,6 +16,7 @@ import {
   ChatSpanAttributeValue,
   ChatSpanStatus,
   ChatTraceStage,
+  PersonTemporalResolutionCertainty,
 } from '@tzl/entities';
 import {
   deriveLanguageSettings,
@@ -465,6 +466,69 @@ export function buildCoreLanguageSettings(options: {
   return [result.active, ...result.superseded].filter(
     (item): item is RoleCoreLanguageSetting => Boolean(item)
   );
+}
+
+/**
+ * 人物时间事实的读侧渲染（纯函数，供提示与测试共用）。
+ *
+ * `resolutionCertainty=derived_exact` 表示日期是系统按来源消息时间推导出来的
+ * （例如裸日号"15号"按来源当月/上月换算），并不是用户原话明确给出的日期；
+ * 若把它并入"已确认/可按日期使用"，回复侧就会把推导值当成原话断言。
+ * 因此明确日、推导日、范围日各自成段，并沿用既有 precision/approximate/
+ * estimatedStart-End 表达，不新增精度枚举。
+ */
+export function buildTemporalProfilePromptSection(
+  temporalProfiles: PersonTemporalPromptFact[] = []
+): string {
+  if (!temporalProfiles.length) {
+    return '';
+  }
+  const explicitFacts: PersonTemporalPromptFact[] = [];
+  const derivedFacts: PersonTemporalPromptFact[] = [];
+  const rangeFacts: PersonTemporalPromptFact[] = [];
+  for (const fact of temporalProfiles) {
+    if (
+      fact.resolutionCertainty === PersonTemporalResolutionCertainty.explicitExact
+    ) {
+      explicitFacts.push(fact);
+    } else if (
+      fact.resolutionCertainty === PersonTemporalResolutionCertainty.derivedExact
+    ) {
+      derivedFacts.push(fact);
+    } else {
+      rangeFacts.push(fact);
+    }
+  }
+
+  const sections: string[] = [];
+  if (explicitFacts.length) {
+    sections.push(
+      [
+        '# 用户原话明确的人物时间事实',
+        JSON.stringify(explicitFacts),
+        'exactDate是用户原话给出的日期，可按日期使用。',
+      ].join('\n')
+    );
+  }
+  if (derivedFacts.length) {
+    sections.push(
+      [
+        '# 由来源消息时间推导的人物时间事实（非用户原话明确）',
+        JSON.stringify(derivedFacts),
+        '这些exactDate是系统按来源消息时间换算的，可能因跨月/跨年而偏移；只能当作大致时间，用"大概/前后"等模糊说法表达，不得说成用户明确给出的日期。estimatedStart/estimatedEnd一并按范围表达。',
+      ].join('\n')
+    );
+  }
+  if (rangeFacts.length) {
+    sections.push(
+      [
+        '# 人物时间范围事实',
+        JSON.stringify(rangeFacts),
+        'estimatedStart/estimatedEnd和模糊精度只能按范围表达，不得说成精确日期。',
+      ].join('\n')
+    );
+  }
+  return sections.join('\n');
 }
 
 function stripFactValuePrefix(
@@ -1653,13 +1717,7 @@ export class AgentContextService {
       companionCorePrompt,
       basePrompt + doubaoAdaptation,
       persona?.prompt,
-      temporalProfiles.length
-        ? [
-            '# 已确认的人物时间事实',
-            JSON.stringify(temporalProfiles),
-            'exactDate可按日期使用；estimatedStart/estimatedEnd和模糊精度只能按范围表达，不得说成精确日期。',
-          ].join('\n')
-        : '',
+      buildTemporalProfilePromptSection(temporalProfiles),
       plan.includeContinuity ? continuitySummaryPrompt : '',
       sessionContinuityPrompt,
       conversationReturnContextPrompt,

@@ -3,6 +3,7 @@ import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import { resolveAgentChatToolTurnPlan } from '../../src/service/agents/agent-chat-tools';
 import {
   buildMemoryRetrievalQuery,
+  buildTemporalProfilePromptSection,
   isFactOrRecallSeeking,
   isInjectableMemoryEvidence,
   needsLongTermMemoryRetrieval,
@@ -23,6 +24,9 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  PersonTemporalEventType,
+  PersonTemporalPrecision,
+  PersonTemporalResolutionCertainty,
 } from '@tzl/entities';
 
 describe('AgentContextService', () => {
@@ -44,6 +48,51 @@ describe('AgentContextService', () => {
     expect(prompt).toContain('用户上一次说话：2026年6月5日（周五）20:00');
     expect(prompt).toContain('距上一次联系：约 3 个月');
     expect(prompt).not.toMatch(/请|必须|应该|重逢|问候|表达/);
+  });
+
+  it('keeps source-derived dates out of the user-stated time facts section', () => {
+    const prompt = buildTemporalProfilePromptSection([
+      {
+        subjectRef: 'agent',
+        eventType: PersonTemporalEventType.death,
+        exactDate: '2025-05-16',
+        precision: PersonTemporalPrecision.exactDay,
+        resolutionCertainty: PersonTemporalResolutionCertainty.explicitExact,
+        sourceText: '你是2025年5月16日走的',
+      },
+      {
+        subjectRef: 'agent',
+        eventType: PersonTemporalEventType.death,
+        exactDate: '2026-09-15',
+        precision: PersonTemporalPrecision.exactDay,
+        resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+        sourceText: '15号',
+      },
+      {
+        subjectRef: 'agent',
+        eventType: PersonTemporalEventType.death,
+        estimatedStart: '2004-01-01',
+        estimatedEnd: '2008-12-31',
+        precision: PersonTemporalPrecision.yearRange,
+        resolutionCertainty: PersonTemporalResolutionCertainty.estimatedRange,
+        sourceText: '你离开已经20年了',
+      },
+    ]);
+
+    expect(prompt).toContain('# 用户原话明确的人物时间事实');
+    expect(prompt).toContain(
+      '# 由来源消息时间推导的人物时间事实（非用户原话明确）'
+    );
+    expect(prompt).toContain('# 人物时间范围事实');
+
+    // 推导出来的 exactDate 不得出现在"原话明确"段落里被当成原话日期。
+    const derivedSectionStart = prompt.indexOf(
+      '# 由来源消息时间推导的人物时间事实'
+    );
+    const explicitSection = prompt.slice(0, derivedSectionStart);
+    expect(explicitSection).toContain('2025-05-16');
+    expect(explicitSection).not.toContain('2026-09-15');
+    expect(prompt).toContain('不得说成用户明确给出的日期');
   });
 
   it('gives the current time even when there is no previous contact', () => {

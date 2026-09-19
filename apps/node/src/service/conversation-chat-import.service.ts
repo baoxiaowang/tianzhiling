@@ -24,6 +24,7 @@ import {
   MessageType,
   MongoObjectId,
 } from '@tzl/entities';
+import { mergeChatImportLanguageProfile } from '@tzl/shared';
 import { randomBytes, createHash } from 'crypto';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { MongoRepository } from 'typeorm';
@@ -1524,9 +1525,6 @@ export class ConversationChatImportService {
       stats.messageCount >= 30 && stats.dayCount >= 2 ? 0.82 : 0.48;
     const previousConfidence =
       typeof previous.confidence === 'number' ? previous.confidence : 0;
-    // 新批次强于（或等于）既有结果时才允许改写已采用的维度；否则只补空维度。
-    // 样本量置信只是启发值，弱批次整块覆盖会把可靠旧结果冲掉。
-    const incomingStronger = confidence >= previousConfidence;
     const candidateLanguage = {
         sentenceLength:
           this.readGeneratedString(generated.sentenceLength) ||
@@ -1556,34 +1554,22 @@ export class ConversationChatImportService {
             ? '习惯连续发送短消息'
             : '长短句交替'),
     };
-    const dimensionSources = {
-      ...(previous.languageProfileSources || {}),
-    };
-    const mergedLanguage: Partial<typeof candidateLanguage> = {};
-    for (const dimension of Object.keys(
-      candidateLanguage
-    ) as Array<keyof typeof candidateLanguage>) {
-      const incoming = candidateLanguage[dimension];
-      const existing = previous.languageProfile?.[dimension];
-      if (!incoming) {
-        if (existing) mergedLanguage[dimension] = existing;
-        continue;
-      }
-      if (!existing || incomingStronger) {
-        mergedLanguage[dimension] = incoming;
-        dimensionSources[dimension] = {
-          batchId: this.stringifyObjectId(batch.id),
-          confidence,
-        };
-      } else {
-        mergedLanguage[dimension] = existing;
-      }
-    }
+    // 新批次强于（或等于）既有结果时才允许改写已采用的维度；否则只补空维度。
+    // 样本量置信只是启发值，弱批次整块覆盖会把可靠旧结果冲掉。
+    // 合并规则抽到 @tzl/shared，node 与 admin-node 共用同一套选择逻辑。
+    const merged = mergeChatImportLanguageProfile({
+      previousLanguageProfile: previous.languageProfile,
+      previousLanguageProfileSources: previous.languageProfileSources,
+      previousConfidence,
+      incomingLanguageProfile: candidateLanguage,
+      incomingConfidence: confidence,
+      incomingBatchId: this.stringifyObjectId(batch.id),
+    });
     agent.personaProfile = {
       ...previous,
       version: 'wechat_import_style_v1',
-      languageProfile: mergedLanguage,
-      languageProfileSources: dimensionSources,
+      languageProfile: merged.languageProfile,
+      languageProfileSources: merged.languageProfileSources,
       evidenceSummary: this.readGeneratedStringArray(generated.evidenceSummary)
         .length
         ? this.readGeneratedStringArray(generated.evidenceSummary)
@@ -1595,7 +1581,7 @@ export class ConversationChatImportService {
               ? [`常见句尾：${stats.commonEndings.join('、')}`]
               : []),
           ],
-      confidence: Math.max(previousConfidence, confidence),
+      confidence: merged.confidence,
     };
     agent.updatedAt = new Date();
     await this.agentModel.save(agent);

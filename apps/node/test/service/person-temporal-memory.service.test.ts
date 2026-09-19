@@ -625,4 +625,43 @@ describe('PersonTemporalMemoryService', () => {
       new Date('2026-09-15T00:00:00.000Z')
     );
   });
+
+  it('does not let a derived bare-day answer overwrite an explicit existing date', async () => {
+    const existingDate = new Date('2025-05-16T00:00:00.000Z');
+    const harness = createHarness({ deathDate: existingDate });
+    const message = createMessage('15号', {
+      createdAt: new Date('2026-09-19T07:25:42.748Z'),
+    });
+
+    const result = await harness.service.recordAgentDepartureFromMessage({
+      message,
+      searchableText: message.content,
+      implicitCurrentAgent: true,
+      qaContext: [
+        {
+          role: 'assistant',
+          content: '对了，我走了之后，到现在过了多久了？',
+          messageId: 'qa-assistant-1',
+          createdAt: new Date('2026-09-19T07:25:20.000Z'),
+        },
+      ],
+    });
+
+    // 推导出来的日期（2026-09-15）与用户此前明确说的 2025-05-16 冲突：
+    // 按既有冲突机制保留明确值，不覆盖。
+    expect(result?.assertion.resolutionCertainty).toBe(
+      PersonTemporalResolutionCertainty.derivedExact
+    );
+    expect(result?.assertion.status).toBe(
+      PersonTemporalAssertionStatus.conflicted
+    );
+    expect(harness.agent.deathDate).toEqual(existingDate);
+    expect(harness.profile?.exactDate).toEqual(existingDate);
+    expect(harness.profile?.resolutionCertainty).toBe(
+      PersonTemporalResolutionCertainty.explicitExact
+    );
+    expect(harness.profile?.conflictStatus).toBe(
+      PersonTemporalConflictStatus.conflicted
+    );
+  });
 });

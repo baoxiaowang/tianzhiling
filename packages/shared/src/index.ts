@@ -1,6 +1,7 @@
 export * from './agent';
 export * from './admin-operations';
 export * from './auth';
+export * from './chat-import-language-profile';
 export * from './china-region';
 export { getDouyinPromotionExpense } from './douyin-promotion-expenses';
 export * from './env';
