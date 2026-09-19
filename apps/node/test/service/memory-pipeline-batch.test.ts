@@ -10,6 +10,7 @@ import {
 } from '@tzl/entities';
 import { ConversationService } from '../../src/service/conversation.service';
 import { MemoryValueService } from '../../src/service/agents/memory-value.service';
+import { MEMORY_VALUE_PROMPT } from '../../src/service/agents/memory-value';
 
 const userId = new MongoObjectId('665000000000000000000001');
 const agentId = new MongoObjectId('665000000000000000000002');
@@ -546,6 +547,13 @@ describe('MemoryValueService.processBatch', () => {
     expect(result.count).toBe(2);
     // One propose call + one review call (durable retention triggers review)
     expect(service.openAIService.generateText).toHaveBeenCalledTimes(2);
+    // 稳定大块在最前：动态任务说明/批量计数后置，保证前缀缓存共享。
+    const proposeRequest = (service.openAIService.generateText as jest.Mock).mock
+      .calls[0][0] as { systemPrompt: string };
+    expect(proposeRequest.systemPrompt.startsWith(MEMORY_VALUE_PROMPT)).toBe(
+      true
+    );
+    expect(proposeRequest.systemPrompt).toContain('本轮任务是批量识别');
     expect(service.messageModel.updateOne).toHaveBeenCalledTimes(2);
     expect(service.factModel.insertOne).toHaveBeenCalledTimes(2);
   });
