@@ -17,6 +17,12 @@ import {
   ChatSpanStatus,
   ChatTraceStage,
 } from '@tzl/entities';
+import {
+  deriveLanguageSettings,
+  HOMETOWN_FACT_KEY,
+  parseHometownProvince,
+  RoleCoreLanguageSetting,
+} from '@tzl/shared';
 import { AuthenticatedUserPayload } from '../../interface';
 import {
   containsUnsafeAssistantHistoryContent,
@@ -399,6 +405,80 @@ const LONG_TERM_RECALL_QUESTION_PATTERN =
  * （最近对话本来就在上下文里）；纯表情/寒暄更是纯浪费。因此只在这句是在
  * "问具体事实或回忆具体往事"时才检索。
  */
+/**
+ * 当前采用的语言设定（读时投影；唯一真值仍是籍贯事实与资料字段本身）。
+ *
+ * 优先级：资料里的用户明确语言习惯 > 籍贯事实派生的地域默认。
+ * 派生项保留"由籍贯生成"的来源性质，避免下游当成"从聊天证实"。
+ */
+export const LANGUAGE_HABITS_FACT_KEY = 'profile_source.language_habits';
+const LANGUAGE_HABITS_VALUE_PREFIX = '当前角色语言习惯：';
+
+export function buildCoreLanguageSettings(options: {
+  /** 结构化事实摘要：只需要 key/value/status/来源，避免耦合具体实体类型。 */
+  profileFacts?: Array<{
+    key?: string;
+    value?: string;
+    status?: string;
+    sourceMessageId?: unknown;
+    createdAt?: Date;
+  }>;
+}): RoleCoreLanguageSetting[] {
+  const hometownFact = (options.profileFacts || []).find(
+    fact =>
+      fact?.key === HOMETOWN_FACT_KEY &&
+      fact.status !== AgentProfileFactStatus.archived
+  );
+  const province = parseHometownProvince(hometownFact?.value);
+  // 语言习惯只走它的事实投影（profile_source.language_habits，带来源与状态），
+  // 不直接读原始资料段落：原始段落没有证据链，也有一条既有不变量禁止它进提示。
+  const habitsFact = (options.profileFacts || []).find(
+    fact =>
+      fact?.key === LANGUAGE_HABITS_FACT_KEY &&
+      fact.status !== AgentProfileFactStatus.archived
+  );
+  const explicitLanguage = stripFactValuePrefix(
+    habitsFact?.value,
+    LANGUAGE_HABITS_VALUE_PREFIX
+  );
+
+  const result = deriveLanguageSettings({
+    hometown: province
+      ? {
+          province,
+          languageLabel: `${province}话`,
+          source: {
+            kind: 'user_explicit',
+            messageId: hometownFact?.sourceMessageId?.toString?.(),
+            at: hometownFact?.createdAt,
+          },
+        }
+      : undefined,
+    explicit: explicitLanguage
+      ? {
+          value: explicitLanguage,
+          source: { kind: 'profile_field', field: 'languageHabits' },
+        }
+      : undefined,
+  });
+
+  return [result.active, ...result.superseded].filter(
+    (item): item is RoleCoreLanguageSetting => Boolean(item)
+  );
+}
+
+function stripFactValuePrefix(
+  value: string | undefined,
+  prefix: string
+): string | undefined {
+  const normalized = (value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return undefined;
+  const stripped = normalized.startsWith(prefix)
+    ? normalized.slice(prefix.length).trim()
+    : normalized;
+  return stripped || undefined;
+}
+
 export function needsLongTermMemoryRetrieval(query: string): boolean {
   if (!isFactOrRecallSeeking(query)) return false;
   return hasEnoughSubstance(query);
@@ -748,6 +828,7 @@ export class AgentContextService {
     const persona = buildAgentPersonaPrompt({
       agent: options.agent,
       identityContract: identity,
+      coreLanguageSettings: buildCoreLanguageSettings({ profileFacts }),
     });
     const knownFamilyMembers = (profileFacts || [])
       .map(fact => getSharedFamilyMemberNameFromFactKey(fact.key))

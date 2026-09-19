@@ -208,3 +208,29 @@ export function selectRoleCoreEntry<T>(
   }
   return { value: top.value, status: 'adopted', source: top.source, reason: top.reason };
 }
+
+/**
+ * 籍贯事实的规范 key 与取值前缀。
+ *
+ * 事实真值只有一份：`agent_profile_fact` 里一条 `origin.hometown` 记录，
+ * 由现有模型抽取写入（程序不靠"山东/老家"这类关键词猜主体）。
+ * "说山东话"是**由该事实派生的产品设定**，不单独落库，读时用
+ * `deriveLanguageSettings` 重建，避免第二份真值互相竞争。
+ */
+export const HOMETOWN_FACT_KEY = 'origin.hometown';
+export const HOMETOWN_FACT_VALUE_PREFIX = '当前角色的籍贯是';
+
+export function buildHometownFactValue(province: string): string {
+  return `${HOMETOWN_FACT_VALUE_PREFIX}${normalizeText(province)}`;
+}
+
+/** 从事实 value 里取回省级；取不到返回 undefined，不猜。 */
+export function parseHometownProvince(value?: string): string | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) return undefined;
+  const stripped = normalized.startsWith(HOMETOWN_FACT_VALUE_PREFIX)
+    ? normalized.slice(HOMETOWN_FACT_VALUE_PREFIX.length)
+    : normalized;
+  const province = stripped.replace(/(?:省|市)?(?:人|籍贯)?$/, '').trim();
+  return province || undefined;
+}

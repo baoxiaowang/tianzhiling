@@ -3,6 +3,7 @@ import {
   AgentPersonaProfile,
   AgentPersonaLanguageProfile,
 } from '@tzl/entities';
+import type { RoleCoreLanguageSetting } from '@tzl/shared';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import {
   AgentCanonicalRelationship,
@@ -69,6 +70,12 @@ const MAX_CHAT_DERIVED_LINES = 14;
 export function buildAgentPersonaPrompt(options: {
   agent: AgentEntity | null;
   identityContract?: AgentIdentityContract;
+  /**
+   * 当前采用的语言设定（读时投影，例如由籍贯事实派生的"说山东话"）。
+   * 与聊天画像七维不是同一来源：这里是"当前采用值"，七维是样本提取的风格。
+   * 传进来即表示已经过冲突解决（调用方用 @tzl/shared 的同一套优先级规则）。
+   */
+  coreLanguageSettings?: RoleCoreLanguageSetting[];
 }): AgentPersonaPromptResult {
   const agent = options.agent;
   const identity =
@@ -77,8 +84,12 @@ export function buildAgentPersonaPrompt(options: {
   const generation = identity.relationship.generation;
   const ageAtDeath = calculateAgeAtDeath(agent?.birthday, agent?.deathDate);
   const profile = agent?.personaProfile;
+  // 当前采用的语言设定优先于样本提取的风格维度：它已经过冲突解决，
+  // 且"称呼/口吻"这类条目最容易被后面的行数预算挤掉。
+  const coreLanguageLines = buildCoreLanguageLines(options.coreLanguageSettings);
   const profileLines = profile ? buildChatDerivedProfileLines(profile) : [];
   const hasUsableProfile = profileLines.length > 0;
+  const adoptionLines = [...coreLanguageLines, ...profileLines];
   // Admin custom context and chat-derived style are complementary sources.
   // Keep both; factual claims are still governed by the identity/evidence layer.
   const explicitProfile = buildExplicitProfile(agent);
@@ -105,7 +116,7 @@ export function buildAgentPersonaPrompt(options: {
     classifierIdentity,
     generationGuidance,
     canonicalGuidance,
-    ...profileLines.slice(0, 5),
+    ...adoptionLines.slice(0, 6),
     ...explicitProfile.slice(0, 2),
   ].filter(Boolean);
 
@@ -122,8 +133,8 @@ export function buildAgentPersonaPrompt(options: {
       `关系差异锚点：${relationshipVoiceAnchor}`,
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
-      ...(profileLines.length
-        ? ['聊天画像（只管表达，不作事实）：', ...profileLines]
+      ...(adoptionLines.length
+        ? ['语言与表达（只管表达，不作事实）：', ...adoptionLines]
         : []),
       ...(explicitProfile.length
         ? ['角色描述（只管表达，不作事实）：', ...explicitProfile]
@@ -143,7 +154,7 @@ export function buildAgentPersonaPrompt(options: {
       styleAnchors: Array.from(
         new Set([
           relationshipVoiceAnchor,
-          ...profileLines.slice(0, 5),
+          ...adoptionLines.slice(0, 6),
           ...explicitProfile.slice(0, 2),
         ])
       ).slice(0, 6),
@@ -209,6 +220,22 @@ function buildLanguageDimensionLines(
     lines.push(line);
   }
   return lines;
+}
+
+/**
+ * 渲染"当前采用"的语言设定。产品派生项显式标注来源性质，
+ * 避免下游把"由籍贯生成"读成"从聊天证实"。
+ */
+function buildCoreLanguageLines(
+  settings?: RoleCoreLanguageSetting[]
+): string[] {
+  return (settings || [])
+    .filter(setting => setting?.active && setting.value?.trim())
+    .map(setting =>
+      setting.origin === 'product_derived'
+        ? `语言设定：${setting.value.trim()}（由籍贯生成，非聊天证实）`
+        : `语言设定：${setting.value.trim()}`
+    );
 }
 
 function buildExplicitProfile(agent: AgentEntity | null): string[] {
