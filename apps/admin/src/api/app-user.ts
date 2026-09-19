@@ -293,6 +293,146 @@ export function queryAppUserIndexedEvidence(
   );
 }
 
+/** 后台「核心信息」只读视图：当前采用值 + 来源 + 未采用原因。 */
+export type CoreSourceKind =
+  | 'user_explicit'
+  | 'user_correction'
+  | 'profile_field'
+  | 'import_style'
+  | 'product_derived'
+  | 'summary';
+
+export interface CoreSourceView {
+  kind: CoreSourceKind;
+  label: string;
+  messageId: string;
+  conversationId: string;
+  batchId: string;
+  field: string;
+  at: string;
+}
+
+export type CoreEntryStatus = 'adopted' | 'pending' | 'rejected';
+
+export interface CoreEntryView {
+  value: string;
+  status: CoreEntryStatus;
+  subject: string;
+  source: CoreSourceView | null;
+  derivedFrom: CoreSourceView | null;
+  updatedAt: string;
+  reason: string;
+}
+
+export interface CoreAddressSection {
+  userCallsAgent: CoreEntryView | null;
+  agentCallsUser: CoreEntryView | null;
+  agentAliases: string[];
+  userAliases: string[];
+  candidates: CoreEntryView[];
+  note: string;
+}
+
+export interface CoreDateItem {
+  eventType: string;
+  eventLabel: string;
+  subjectType: string;
+  subjectId: string;
+  subjectLabel: string;
+  year: number | null;
+  monthDay: string;
+  exactDate: string;
+  calendar: string;
+  precision: string;
+  resolutionCertainty: string;
+  conflictStatus: string;
+  status: CoreEntryStatus;
+  reason: string;
+  source: CoreSourceView | null;
+  updatedAt: string;
+  note: string;
+}
+
+export interface CoreDateSection {
+  items: CoreDateItem[];
+  projections: Array<{
+    field: string;
+    label: string;
+    value: string;
+    note: string;
+  }>;
+  note: string;
+}
+
+export interface CoreImportDimension {
+  key: string;
+  label: string;
+  value: string;
+  batchId: string;
+  confidence: number | null;
+  source: CoreSourceView | null;
+  updatedAt: string;
+}
+
+export interface CoreLanguageSection {
+  hometown: {
+    province: string;
+    value: string;
+    source: CoreSourceView | null;
+    updatedAt: string;
+  } | null;
+  adopted: CoreEntryView | null;
+  superseded: CoreEntryView[];
+  explicitPreference: CoreEntryView | null;
+  profileLanguageHabits: string;
+  importDimensions: CoreImportDimension[];
+  notes: string[];
+}
+
+export interface CorePersonalitySection {
+  traits: Array<{ value: string; source: CoreSourceView | null }>;
+  note: string;
+}
+
+export interface CoreFamilyItem {
+  key: string;
+  value: string;
+  personLabel: string;
+  status: string;
+  learnedAt: string;
+  updatedAt: string;
+  stability: 'stable' | 'possibly_changing' | 'unknown';
+  stabilityLabel: string;
+  entryStatus: CoreEntryStatus;
+  reason: string;
+  source: CoreSourceView | null;
+}
+
+export interface CoreFamilySection {
+  items: CoreFamilyItem[];
+  note: string;
+}
+
+export interface AppUserAgentCoreInfoRes {
+  userId: string;
+  agentId: string;
+  agentName: string;
+  generatedAt: string;
+  addresses: CoreAddressSection;
+  dates: CoreDateSection;
+  language: CoreLanguageSection;
+  personality: CorePersonalitySection;
+  family: CoreFamilySection;
+  limitations: string[];
+}
+
+/** 只读：按用户 + 聊天对象读取核心信息（当前采用值、来源与未采用原因）。 */
+export function queryAppUserAgentCoreInfo(userId: string, agentId: string) {
+  return axios.get<AppUserAgentCoreInfoRes>(
+    `/admin_api/app-users/${userId}/agents/${agentId}/core-info`
+  );
+}
+
 export function sendAppUserMessengerMessage(
   userId: string,
   agentId: string,

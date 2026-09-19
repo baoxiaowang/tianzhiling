@@ -468,12 +468,28 @@
         </section>
 
         <aside class="app-user-detail-page__chat-right">
-          <memory-panel
-            :user-id="userId || ''"
-            :agent-id="messengerAgent?.id || ''"
-            :agent-name="messengerAgent?.name || ''"
-            @locate-source="handleLocateSource"
-          />
+          <a-tabs
+            v-model:active-key="rightPanelTab"
+            class="app-user-detail-page__chat-right-tabs"
+            lazy-load
+          >
+            <a-tab-pane key="core" title="核心信息">
+              <core-info-panel
+                :user-id="userId || ''"
+                :agent-id="messengerAgent?.id || ''"
+                :agent-name="messengerAgent?.name || ''"
+                @locate-source="handleLocateSource"
+              />
+            </a-tab-pane>
+            <a-tab-pane key="memory" title="已留存记忆">
+              <memory-panel
+                :user-id="userId || ''"
+                :agent-id="messengerAgent?.id || ''"
+                :agent-name="messengerAgent?.name || ''"
+                @locate-source="handleLocateSource"
+              />
+            </a-tab-pane>
+          </a-tabs>
         </aside>
       </div>
     </a-drawer>
@@ -514,6 +530,7 @@
   import PostListPanel from '@/views/post/components/post-list-panel.vue';
   import VoiceModelPanel from './voice-model-panel.vue';
   import MemoryPanel from './memory-panel.vue';
+  import CoreInfoPanel from './core-info-panel.vue';
 
   const route = useRoute();
   const router = useRouter();
@@ -525,6 +542,8 @@
   const accountMemoryLoading = ref(false);
   const accountMemoryLoadedUserId = ref('');
   const activeTab = ref('agents');
+  /** 右侧面板页签：核心信息（默认）/ 已留存记忆 */
+  const rightPanelTab = ref('core');
   const agentSearchForm = reactive<{
     keyword: string;
   }>({
@@ -1232,6 +1251,25 @@
       overflow: hidden;
       border-radius: 8px;
       background: var(--color-fill-2);
+    }
+
+    &__chat-right-tabs {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      min-height: 0;
+
+      :deep(.arco-tabs-content) {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      :deep(.arco-tabs-content-list),
+      :deep(.arco-tabs-pane) {
+        height: 100%;
+        min-height: 0;
+      }
     }
 
     &__messenger-list {
