@@ -28,12 +28,28 @@ import {
 } from './person-temporal-memory';
 import { OpenAIService } from './openai';
 
+/**
+ * 有界问答材料：系统实际问过的问题与用户随后 1-3 次回答。
+ * 只用于让模型判断"这句话是不是在回答当前亲人离世时间"，以及理解省略了指代的
+ * 回答（"15号"），不作为新增事实的依据。
+ */
+export interface PersonTemporalQaContextItem {
+  role: 'user' | 'assistant';
+  content: string;
+  messageId?: string;
+  createdAt?: Date;
+}
+
 export interface RecordAgentDepartureTimeOptions {
   message: MessageEntity;
   searchableText: string;
   implicitCurrentAgent?: boolean;
   /** A single memory decision already established subject and assertion semantics. */
   semanticApproved?: boolean;
+  /** 有界问答材料（实际提问 + 随后回答），参与判定与语义缓存键。 */
+  qaContext?: PersonTemporalQaContextItem[];
+  /** 内部标记：问答上下文确认这句是离世时间问题的回答。 */
+  answeringDepartureQuestion?: boolean;
 }
 
 export interface RecordAgentDepartureTimeResult {
@@ -83,7 +99,7 @@ export interface DepartureTimeSemanticDecision {
   };
 }
 
-export const PERSON_TEMPORAL_SEMANTIC_VERSION = 'departure_semantic_v2';
+export const PERSON_TEMPORAL_SEMANTIC_VERSION = 'departure_semantic_v3';
 
 function collectRegexMatches(text: string, pattern: RegExp): RegExpExecArray[] {
   const flags = pattern.global ? pattern.flags : `${pattern.flags}g`;
@@ -131,16 +147,26 @@ export class PersonTemporalMemoryService {
       return null;
     }
 
+    const answeringDepartureQuestion =
+      options.answeringDepartureQuestion ??
+      this.isDepartureQuestionAnswerCandidate(
+        options.searchableText,
+        options.qaContext
+      );
     const deterministicResult = parseAgentDepartureTime({
       text: options.searchableText,
       referenceAt: options.message.createdAt,
       implicitCurrentAgent: options.implicitCurrentAgent,
+      answeringDepartureQuestion,
     });
     let semanticSource: MessageEntity['temporalMemorySemanticSource'] =
       deterministicResult ? 'deterministic' : undefined;
     let parsed = deterministicResult;
     if (!parsed && !options.semanticApproved) {
-      parsed = await this.extractDepartureTimeWithModel(options);
+      parsed = await this.extractDepartureTimeWithModel({
+        ...options,
+        answeringDepartureQuestion,
+      });
       if (parsed) semanticSource = 'fallback';
     }
     if (!parsed) return null;
@@ -441,17 +467,20 @@ export class PersonTemporalMemoryService {
     );
     if (
       !sourceText ||
-      !hasAgentDepartureTimeSignal({
-        text: sourceText,
-        implicitCurrentAgent: options.implicitCurrentAgent,
-      })
+      (!options.answeringDepartureQuestion &&
+        !hasAgentDepartureTimeSignal({
+          text: sourceText,
+          implicitCurrentAgent: options.implicitCurrentAgent,
+        }))
     ) {
       return null;
     }
 
+    const qaContextBlock = this.buildQaContextBlock(options.qaContext);
     const semanticHash = this.buildSemanticDecisionHash(
       sourceText,
-      options.implicitCurrentAgent
+      options.implicitCurrentAgent,
+      qaContextBlock
     );
     options.message.temporalMemorySemanticHash = semanticHash;
     const cachedDecision = await this.findCachedSemanticDecision(
@@ -461,7 +490,16 @@ export class PersonTemporalMemoryService {
     );
     if (cachedDecision === null) return null;
     if (cachedDecision) return cachedDecision;
-    if (!this.openAIService?.isEnabled?.()) return null;
+    if (!this.openAIService?.isEnabled?.()) {
+      // 模型通道不可用时不能把"没能解析"当成"用户没回答"：留下 unresolved，
+      // 既保留待重试证据，也避免用再次追问用户来补偿系统故障。
+      await this.rememberSemanticOutcome(
+        options.message,
+        'unresolved',
+        'fallback'
+      );
+      return null;
+    }
 
     try {
       const result = await this.openAIService.generateMemoryText({
@@ -480,6 +518,12 @@ export class PersonTemporalMemoryService {
           `当前智能体指代是否已由相认任务确定：${
             options.implicitCurrentAgent ? '是' : '否'
           }`,
+          ...(qaContextBlock
+            ? [
+                '最近的问答上下文（只用于判断这句话在回答什么，不是新增事实的依据）：',
+                qaContextBlock,
+              ]
+            : []),
           `用户原话：${sourceText}`,
         ].join('\n'),
       });
@@ -496,7 +540,8 @@ export class PersonTemporalMemoryService {
       const parsed = this.parseAcceptedSemanticDecision(
         sourceText,
         options.message.createdAt,
-        decision
+        decision,
+        options.answeringDepartureQuestion === true
       );
       if (parsed) {
         options.message.temporalMemoryEvidence = decision.canonicalStatement
@@ -504,12 +549,33 @@ export class PersonTemporalMemoryService {
           .slice(0, 120);
         options.message.temporalMemorySpeechAct =
           decision.speechAct === 'correction' ? 'correction' : 'assertion';
+        return parsed;
       }
-      return parsed;
+      // 模型确认这就是在讲当前亲人的离世时间，只是还落不成可存储的时间
+      // （例如只给了"15号"而年月无法确定）：记 unresolved，保留待重试，
+      // 不伪造写成功，也不把它当成"用户没有回答"。
+      if (
+        decision.applies &&
+        decision.subject === 'current_agent' &&
+        ['assertion', 'correction'].includes(decision.speechAct)
+      ) {
+        await this.rememberSemanticOutcome(
+          options.message,
+          'unresolved',
+          'fallback'
+        );
+      }
+      return null;
     } catch (error) {
       this.logger?.warn?.(
         '[person-temporal-memory] semantic extraction skipped, reason=%s',
         error instanceof Error ? error.message : String(error)
+      );
+      // 调用失败属于系统故障，同样按 unresolved 留痕，避免重复向用户追问。
+      await this.rememberSemanticOutcome(
+        options.message,
+        'unresolved',
+        'fallback'
       );
       return null;
     }
@@ -642,7 +708,8 @@ export class PersonTemporalMemoryService {
       const parsed = this.parseAcceptedSemanticDecision(
         sourceText,
         options.message.createdAt,
-        decision
+        decision,
+        options.answeringDepartureQuestion === true
       );
       if (!parsed) return undefined;
       options.message.temporalMemoryEvidence = cached.temporalMemoryEvidence;
@@ -657,20 +724,74 @@ export class PersonTemporalMemoryService {
     }
   }
 
+  /**
+   * 有界问答材料：只取当前消息之前最近几条角色消息，带角色、原话、消息 ID 与时间。
+   * 用于判断省略了指代的回答指向哪一问；不做无限回溯，也不把助手话术当证据。
+   */
+  /**
+   * 是否值得把这句话当作离世时间问题的回答交给模型判断。
+   * 这是一个有界的路由判断（有问答上下文、且句子很短且含数字），
+   * 不是语义判断：是否真的在回答由模型决定。
+   */
+  private isDepartureQuestionAnswerCandidate(
+    searchableText: string,
+    qaContext?: PersonTemporalQaContextItem[]
+  ): boolean {
+    if (!qaContext?.length) return false;
+    const compact = searchableText.replace(/\s+/g, '');
+    if (!compact || compact.length > 24) return false;
+    return /[0-9零〇一二两三四五六七八九十百千]/.test(compact);
+  }
+
+  private buildQaContextBlock(
+    qaContext?: PersonTemporalQaContextItem[]
+  ): string {
+    if (!qaContext?.length) return '';
+    return qaContext
+      .filter(
+        item =>
+          (item.role === 'user' || item.role === 'assistant') &&
+          Boolean(item.content?.trim())
+      )
+      .slice(-4)
+      .map(item => {
+        const stamp = item.createdAt
+          ? new Date(item.createdAt).toISOString()
+          : '';
+        const id = item.messageId || '';
+        return `[${item.role}${id ? ` ${id}` : ''}${
+          stamp ? ` ${stamp}` : ''
+        }] ${item.content.trim().slice(0, 160)}`;
+      })
+      .join('\n');
+  }
+
   private buildSemanticDecisionHash(
     sourceText: string,
-    implicitCurrentAgent = false
+    implicitCurrentAgent = false,
+    qaContextBlock = ''
   ): string {
     const normalized = sourceText.normalize('NFKC').replace(/\s+/gu, '').trim();
+    const normalizedContext = qaContextBlock
+      .normalize('NFKC')
+      .replace(/\s+/gu, '')
+      .trim();
+    // 问答上下文参与缓存键：同一句话在"没有上文"和"正在回答离世时间"两种情况下
+    // 判定不同，不能复用脱离问答时的 not_applicable 结论。
     return createHash('sha256')
-      .update(`${implicitCurrentAgent ? 'implicit' : 'explicit'}:${normalized}`)
+      .update(
+        `${implicitCurrentAgent ? 'implicit' : 'explicit'}:${normalized}:${
+          normalizedContext || 'no_context'
+        }`
+      )
       .digest('hex');
   }
 
   private parseAcceptedSemanticDecision(
     sourceText: string,
     referenceAt: Date,
-    decision: DepartureTimeSemanticDecision
+    decision: DepartureTimeSemanticDecision,
+    answeringDepartureQuestion = false
   ): ParsedDepartureTimeAssertion | null {
     if (
       !decision.applies ||
@@ -688,6 +809,7 @@ export class PersonTemporalMemoryService {
       text: evidence,
       referenceAt,
       implicitCurrentAgent: true,
+      answeringDepartureQuestion,
     });
     // LLM 时间解析增强：规则解析失败时，优先用 LLM 输出的标准化时间重试
     if (!parsed && decision.normalizedTime?.exactDate) {

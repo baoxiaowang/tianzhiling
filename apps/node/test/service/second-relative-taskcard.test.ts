@@ -13,6 +13,7 @@ import {
   applyRecognitionJourneyObservation,
   applyRecognitionJourneyObserverUnavailable,
   buildInitialRecognitionJourney,
+  markDepartureIntervalAnswered,
   buildLegacyRecognitionJourney,
   buildSubsequentRelativeGreetingPrompt,
   formatFirstRelativeMentionCallName,
@@ -1684,5 +1685,43 @@ describe('stable first-relative classification from the creation ledger', () => 
     expect(modes).toEqual(['first_relative', 'subsequent_relative']);
     expect(earlier.firstAgentId).toBe(String(FIRST_AGENT_ID));
     expect(later.firstAgentId).toBe(String(FIRST_AGENT_ID));
+  });
+
+  it('stops asking the departure interval question once the time is recorded', () => {
+    const journey = buildInitialRecognitionJourney({ mode: 'first_relative' });
+    const departure = journey.tasks.find(
+      item => item.id === 'departure_interval'
+    );
+    expect(departure?.status).toBe('pending');
+
+    const marked = markDepartureIntervalAnswered(
+      journey,
+      new Date('2026-09-19T07:25:42.748Z')
+    );
+    expect(marked.tasks.find(item => item.id === 'departure_interval')).toMatchObject(
+      {
+        status: 'completed',
+        observationEvidence: 'departure_time_recorded',
+      }
+    );
+    // 不越权改动另一个任务
+    expect(marked.tasks.find(item => item.id === 'family_status')?.status).toBe(
+      'pending'
+    );
+    // 幂等：再次标记不改变已完成的结论
+    expect(
+      markDepartureIntervalAnswered(marked).tasks.find(
+        item => item.id === 'departure_interval'
+      )?.observationEvidence
+    ).toBe('departure_time_recorded');
+  });
+
+  it('leaves the later-relative mode untouched', () => {
+    const journey = buildInitialRecognitionJourney({
+      mode: 'subsequent_relative',
+      mentionCallName: '爸爸',
+    });
+    const marked = markDepartureIntervalAnswered(journey);
+    expect(marked).toEqual(journey);
   });
 });

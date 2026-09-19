@@ -213,6 +213,36 @@ export function hasExplicitRecognitionTaskQuestion(
   return mentionsFamily && asksAboutFamily;
 }
 
+/**
+ * 离世时间已经被记忆侧记录下来时，把 departure_interval 收尾。
+ *
+ * buildInitialRecognitionJourney 只在"建旅程那一刻"参考 hasKnownDepartureDate；
+ * 本例的日期是对话进行中才由用户回答并落库的，持久状态仍然停在 pending，于是
+ * 系统会继续泛泛追问"到底过了多久"。这里按同一语义补齐：已经记下时间就等于
+ * 用户已经回答，不再重复追问。只动这一个任务，阶段推进仍交给 planRecognitionJourneyTurn。
+ */
+export function markDepartureIntervalAnswered(
+  journey: RecognitionJourney,
+  now: Date = new Date()
+): RecognitionJourney {
+  if (journey.mode !== 'first_relative') return journey;
+  const task = journey.tasks.find(item => item.id === 'departure_interval');
+  if (!task || isTerminalTaskStatus(task.status)) return journey;
+  return {
+    ...journey,
+    tasks: journey.tasks.map(item =>
+      item.id === 'departure_interval'
+        ? {
+            ...item,
+            status: 'completed' as const,
+            completedAt: now,
+            observationEvidence: 'departure_time_recorded',
+          }
+        : item
+    ),
+  };
+}
+
 export function buildInitialRecognitionJourney(
   options: {
     hasKnownDepartureDate?: boolean;

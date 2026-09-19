@@ -186,6 +186,7 @@ import {
   buildLegacyRecognitionJourney,
   hasExplicitRecognitionTaskQuestion,
   parseRecognitionJourney,
+  markDepartureIntervalAnswered,
   planRecognitionJourneyTurn,
   RecognitionJourney,
   RecognitionJourneyMode,
@@ -195,7 +196,10 @@ import {
   SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
 } from './agents/recognition-journey';
 import { RecognitionJourneyObserverService } from './agents/recognition-journey-observer.service';
-import { PersonTemporalMemoryService } from './agents/person-temporal-memory.service';
+import {
+  PersonTemporalMemoryService,
+  PersonTemporalQaContextItem,
+} from './agents/person-temporal-memory.service';
 import {
   PreparedRelationshipOpenLoopTurn,
   RelationshipOpenLoopService,
@@ -3288,6 +3292,8 @@ export class ConversationService {
       ? (await this.findPreviousAssistantMessage(message))?.content?.trim()
       : undefined;
     const contextMessages = await this.loadBoundedDialogueContext(message);
+    const temporalQaContext =
+      await this.loadBoundedTemporalQaContext(message);
 
     const [, memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
       await Promise.all([
@@ -3303,7 +3309,11 @@ export class ConversationService {
           previousAssistantContent,
           contextMessages
         ),
-        this.extractTemporalFactsForUserMessage(message, searchableText),
+        this.extractTemporalFactsForUserMessage(
+          message,
+          searchableText,
+          temporalQaContext
+        ),
         this.captureRelationshipOpenLoop(message, searchableText).catch(
           error => {
             this.logger.warn(
@@ -3603,9 +3613,59 @@ export class ConversationService {
     }
   }
 
+  /**
+   * 时间问答用的有界材料：当前消息之前最近几条用户/助手消息，带角色、原话、
+   * 消息 ID 与时间。范围固定且很小（最多 4 条），只服务于"这句话在回答哪一问"
+   * 的判断，不作为事实证据。
+   */
+  private async loadBoundedTemporalQaContext(
+    message: MessageEntity
+  ): Promise<PersonTemporalQaContextItem[]> {
+    if (!this.messageModel?.find) return [];
+    try {
+      const recentMessages = await this.messageModel.find({
+        where: {
+          conversationId: message.conversationId,
+          isArchived: { $ne: true },
+          createdAt: { $lt: message.createdAt },
+        } as never,
+        order: { createdAt: 'DESC' },
+        take: 6,
+      });
+      return recentMessages
+        .filter(
+          item =>
+            item.id?.toString() !== message.id?.toString() &&
+            (item.role === MessageRole.user ||
+              item.role === MessageRole.assistant) &&
+            Boolean(item.content?.trim())
+        )
+        .slice(0, 4)
+        .reverse()
+        .map(item => ({
+          role:
+            item.role === MessageRole.user
+              ? ('user' as const)
+              : ('assistant' as const),
+          content: item.content?.trim() || '',
+          messageId: this.stringifyObjectId(item.id),
+          createdAt: item.createdAt,
+        }));
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] temporal qa context load skipped, conversationId=%s, messageId=%s, reason=%s',
+        this.stringifyObjectId(message.conversationId),
+        this.stringifyObjectId(message.id),
+        this.describeReplyError(error)
+      );
+      return [];
+    }
+  }
+
   private async extractTemporalFactsForUserMessage(
     message: MessageEntity,
-    searchableText: string
+    searchableText: string,
+    qaContext?: PersonTemporalQaContextItem[]
   ): Promise<MemoryFactExtractionAudit> {
     if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
       return { succeeded: true, count: 0 };
@@ -3622,6 +3682,9 @@ export class ConversationService {
           // 普通消息路径也启用隐式模式："六年多了"、"走了三年"这类
           // 不含"离开/去世"显式关键词的表达，也能被识别为离世时间信号。
           implicitCurrentAgent: true,
+          // 有界问答材料：系统实际问过的离世时间问题 + 用户随后 1-3 次回答。
+          // 只用来判断省略指代的回答（"15号"）在回答哪一问。
+          qaContext,
         });
       return { succeeded: true, count: result ? 1 : 0 };
     } catch (error) {
@@ -5964,6 +6027,15 @@ export class ConversationService {
             });
           }
         }
+      }
+
+      // 离世时间一旦已经被记录（用户在问答里答过并落库到 agent.deathDate），
+      // 就等于 departure_interval 已被回答：不再重复泛问"到底过了多久"。
+      if (options.runtime.agent?.deathDate) {
+        journey = markDepartureIntervalAnswered(
+          journey,
+          options.before.userMessage.createdAt
+        );
       }
 
       // Compare with persisted content so V1/V2 states are upgraded to V3 even

@@ -130,6 +130,12 @@ export function parseAgentDepartureTime(options: {
   text: string;
   referenceAt: Date;
   implicitCurrentAgent?: boolean;
+  /**
+   * 有界问答上下文确认本句是在回答"离世时间"问题。
+   * 只在这种情况下才放行省略指代的短回答（"15号"），因为单看这句话
+   * 既没有离世词也没有主句，无法安全地当作离世时间。
+   */
+  answeringDepartureQuestion?: boolean;
 }): ParsedDepartureTimeAssertion | null {
   const text = normalizeText(options.text);
   if (!text || !Number.isFinite(options.referenceAt.getTime())) return null;
@@ -142,7 +148,11 @@ export function parseAgentDepartureTime(options: {
 
   // P0-1: implicit 通道加信号前置门——必须有显式离世词或数字+时长信号才继续，
   // 避免"昨天他没吃饭"这类含时间词但无离世含义的句子被写成离世日期。
-  if (options.implicitCurrentAgent && !hasAgentDepartureTimeSignal(options)) {
+  if (
+    options.implicitCurrentAgent &&
+    !options.answeringDepartureQuestion &&
+    !hasAgentDepartureTimeSignal(options)
+  ) {
     return null;
   }
 
@@ -172,6 +182,12 @@ export function parseAgentDepartureTime(options: {
     parseRitualMilestone(text, options.referenceAt, isCorrection) ||
     parseFestivalDate(text, options.referenceAt, isCorrection) ||
     parsePartialGregorianDate(text, options.referenceAt, isCorrection) ||
+    parseBareDayOfMonth(
+      text,
+      options.referenceAt,
+      isCorrection,
+      options.answeringDepartureQuestion === true
+    ) ||
     parseFuzzyRelativeDuration(
       text,
       options.referenceAt,
@@ -462,6 +478,76 @@ function parsePartialGregorianDate(
     confidence: PersonTemporalAssertionConfidence.confirmed,
     resolutionCertainty: PersonTemporalResolutionCertainty.unresolved,
     derivationRule: 'explicit_gregorian_month_without_year_v1',
+  };
+}
+
+/**
+ * 只给"日号"的回答（"你15号凌晨12:23分走的"）。
+ *
+ * 任务卡问"走了之后到现在过了多久"，用户常常只回一个日号；此前没有任何规则能
+ * 接住它，整条回答被丢掉、时间也没落库。日号本身是确定的日级信息，年月则按
+ * 既有"以来源消息时间为上下文"的处理方式推导：日号不晚于来源消息当天 → 同月；
+ * 否则回退到上一个月。结果标记为 derivedExact（推导得来，而非原话明确），
+ * 原话仍完整保留在 rawText 里。已带年月或使用"上/下/这个月"的写法交给其它规则，
+ * 这里不接手，避免把相对月份算错。
+ */
+function parseBareDayOfMonth(
+  text: string,
+  referenceAt: Date,
+  isCorrection: boolean,
+  answeringDepartureQuestion = false
+): ParsedDepartureTimeAssertion | null {
+  if (/(?:上|下|这|本|当)\s*个?\s*月/.test(text)) return null;
+  // 只有在问答上下文确认时，才接受"15号"这种没有任何离世词的短回答；
+  // 且要求整句确实是简短回答，避免把无关长句里的日号当离世时间。
+  const contextualAnswer =
+    answeringDepartureQuestion && text.replace(/\s+/g, '').length <= 24;
+  const matches = collectRegexMatches(
+    text,
+    /(?:^|[^0-9年月])(3[01]|[12]\d|0?[1-9])\s*[日号]/g
+  ).filter(
+    match => contextualAnswer || isDepartureDateMatch(text, match)
+  );
+  if (!matches.length) return null;
+
+  const match = matches[matches.length - 1];
+  const marker = match[0];
+  const index = (match.index ?? -1) + marker.search(/[0-9]/);
+  if (index < 0) return null;
+  const before = text.slice(Math.max(0, index - 4), index);
+  if (/[年月]/.test(before)) return null;
+
+  const day = Number(match[1]);
+  const refYear = referenceAt.getUTCFullYear();
+  const refMonth = referenceAt.getUTCMonth() + 1;
+  const refDay = referenceAt.getUTCDate();
+  let year = refYear;
+  let month = refMonth;
+  if (day > refDay) {
+    month -= 1;
+    if (month === 0) {
+      month = 12;
+      year -= 1;
+    }
+  }
+  if (year < 1900 || day > daysInMonth(year, month)) return null;
+
+  const exactDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  return {
+    expressionKind: PersonTemporalExpressionKind.partialDate,
+    calendar: PersonTemporalCalendar.gregorian,
+    approximate: false,
+    isCorrection,
+    normalizedExactDate: exactDate,
+    normalizedStart: exactDate,
+    normalizedEnd: exactDate,
+    normalizedYear: year,
+    normalizedMonth: month,
+    normalizedDay: day,
+    precision: PersonTemporalPrecision.exactDay,
+    confidence: PersonTemporalAssertionConfidence.confirmed,
+    resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+    derivationRule: 'bare_day_of_month_reference_month_v1',
   };
 }
 

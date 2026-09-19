@@ -270,7 +270,15 @@ export class MessageEntity extends BaseEntity {
   totalTokens?: number;
 
   @Column()
-  temporalMemoryStatus?: "written" | "not_applicable";
+  /**
+   * 时间记忆的处理结论。
+   * - written：已解析并持久化。
+   * - not_applicable：模型判定与当前亲人离世时间无关（确定性结论，不再重复处理）。
+   * - unresolved：确认是在讲当前亲人的离世时间，但当前还解析不出可落库的时间
+   *   （例如只给了"15号"这类缺少年月的回答）。保留待重试，不当作"用户没回答"，
+   *   也不重复向用户追问。
+   */
+  temporalMemoryStatus?: "written" | "not_applicable" | "unresolved";
 
   @Column()
   temporalMemoryVersion?: string;

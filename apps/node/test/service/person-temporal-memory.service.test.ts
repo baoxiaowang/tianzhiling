@@ -5,7 +5,9 @@ import {
   PersonTemporalAssertionEntity,
   PersonTemporalAssertionStatus,
   PersonTemporalConflictStatus,
+  PersonTemporalPrecision,
   PersonTemporalProfileEntity,
+  PersonTemporalResolutionCertainty,
 } from '@tzl/entities';
 import { PersonTemporalMemoryService } from '../../src/service/agents/person-temporal-memory.service';
 
@@ -416,5 +418,211 @@ describe('PersonTemporalMemoryService', () => {
     expect(request.maxTokens).toBe(80);
     expect(request.prompt).toContain('差不多十个年头');
     expect(request.prompt).not.toContain('后面这一大段');
+  });
+
+  // ---- 真实案例（weapp:5f7ccd45807e）时间问答闭环 ----
+
+  it('records a day-only answer to the departure question as a derived exact day', async () => {
+    const harness = createHarness();
+    const message = createMessage('你15号凌晨12:23分走的', {
+      createdAt: new Date('2026-09-19T07:25:42.748Z'),
+    });
+
+    const result = await harness.service.recordAgentDepartureFromMessage({
+      message,
+      searchableText: message.content,
+      implicitCurrentAgent: true,
+    });
+
+    expect(result).not.toBeNull();
+    expect(harness.assertions).toHaveLength(1);
+    expect(harness.assertions[0]).toMatchObject({
+      normalizedExactDate: new Date('2026-09-15T00:00:00.000Z'),
+      normalizedYear: 2026,
+      normalizedMonth: 9,
+      normalizedDay: 15,
+      derivationRule: 'bare_day_of_month_reference_month_v1',
+      resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+      rawText: '你15号凌晨12:23分走的',
+    });
+    // 原话里的时分只保留在 rawText，不进入新的时分字段
+    expect(harness.assertions[0].rawText).toContain('12:23');
+    expect(harness.agent.deathDate).toEqual(
+      new Date('2026-09-15T00:00:00.000Z')
+    );
+    expect(message.temporalMemoryStatus).toBe('written');
+  });
+
+  it('does not derive a month from a relative-month phrasing', async () => {
+    const harness = createHarness();
+    const message = createMessage('上个月15号走的', {
+      createdAt: new Date('2026-09-19T07:25:42.748Z'),
+    });
+
+    await harness.service.recordAgentDepartureFromMessage({
+      message,
+      searchableText: message.content,
+      implicitCurrentAgent: true,
+    });
+
+    expect(harness.assertions).toHaveLength(0);
+    expect(harness.agent.deathDate).toBeUndefined();
+  });
+
+  it('marks an applicable but unparsable answer as unresolved instead of dropping it', async () => {
+    const harness = createHarness({
+      semanticResponse: {
+        a: 1,
+        s: 'current_agent',
+        t: 'assertion',
+        e: '你走的太突然了',
+        c: 0.96,
+      },
+    });
+    const message = createMessage('爷爷你走的太突然了', {
+      createdAt: new Date('2026-09-19T07:35:45.736Z'),
+    });
+
+    const result = await harness.service.recordAgentDepartureFromMessage({
+      message,
+      searchableText: message.content,
+      implicitCurrentAgent: true,
+    });
+
+    expect(result).toBeNull();
+    expect(harness.assertions).toHaveLength(0);
+    // 不伪造写成功，但也不把它当成"用户没回答"
+    expect(message.temporalMemoryStatus).toBe('unresolved');
+  });
+
+  it('keeps the answer retryable when the memory model channel is unavailable', async () => {
+    const harness = createHarness();
+    const message = createMessage('爷爷你走了过年都没有年味了', {
+      createdAt: new Date('2026-09-19T07:34:16.840Z'),
+    });
+
+    await harness.service.recordAgentDepartureFromMessage({
+      message,
+      searchableText: message.content,
+      implicitCurrentAgent: true,
+    });
+
+    expect(harness.assertions).toHaveLength(0);
+    expect(message.temporalMemoryStatus).toBe('unresolved');
+  });
+
+  it('does not let a context-free run block the same words as a contextual answer', async () => {
+    const harness = createHarness({
+      semanticResponse: { a: 0, s: 'unknown', t: 'uncertain', e: '15号', c: 0.95 },
+    });
+
+    // 没有问答上下文时，"15号"既没有离世词也没有主句，不应当被记成离世时间。
+    const bare = createMessage('15号', {
+      createdAt: new Date('2026-09-19T07:25:42.748Z'),
+    });
+    await harness.service.recordAgentDepartureFromMessage({
+      message: bare,
+      searchableText: bare.content,
+      implicitCurrentAgent: true,
+    });
+    expect(harness.assertions).toHaveLength(0);
+
+    // 同一句话出现在"走了之后到现在过了多久"的问答上下文里，就是明确的日级回答。
+    const contextual = createMessage('15号', {
+      createdAt: new Date('2026-09-19T07:25:42.748Z'),
+    });
+    await harness.service.recordAgentDepartureFromMessage({
+      message: contextual,
+      searchableText: contextual.content,
+      implicitCurrentAgent: true,
+      qaContext: [
+        {
+          role: 'assistant',
+          content: '对了，我走了之后，到现在过了多久了？',
+          messageId: 'qa-assistant-1',
+          createdAt: new Date('2026-09-19T07:25:46.000Z'),
+        },
+      ],
+    });
+
+    expect(harness.assertions).toHaveLength(1);
+    expect(harness.assertions[0]).toMatchObject({
+      normalizedExactDate: new Date('2026-09-15T00:00:00.000Z'),
+      precision: PersonTemporalPrecision.exactDay,
+      resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+    });
+    expect(contextual.temporalMemoryStatus).toBe('written');
+  });
+
+  it('records the first split answer instead of waiting for all three turns', async () => {
+    const harness = createHarness();
+    const first = createMessage('15号', {
+      createdAt: new Date('2026-09-19T07:25:42.748Z'),
+    });
+    await harness.service.recordAgentDepartureFromMessage({
+      message: first,
+      searchableText: first.content,
+      implicitCurrentAgent: true,
+      qaContext: [
+        {
+          role: 'assistant',
+          content: '对了，我走了之后，到现在过了多久了？',
+          messageId: 'qa-assistant-1',
+          createdAt: new Date('2026-09-19T07:25:20.000Z'),
+        },
+      ],
+    });
+
+    expect(harness.assertions).toHaveLength(1);
+    expect(harness.profile?.exactDate).toEqual(
+      new Date('2026-09-15T00:00:00.000Z')
+    );
+    expect(harness.agent.deathDate).toEqual(
+      new Date('2026-09-15T00:00:00.000Z')
+    );
+  });
+
+  it('keeps conversational filler from overwriting the recorded time', async () => {
+    const harness = createHarness();
+    const answer = createMessage('15号', {
+      createdAt: new Date('2026-09-19T07:25:42.748Z'),
+    });
+    await harness.service.recordAgentDepartureFromMessage({
+      message: answer,
+      searchableText: answer.content,
+      implicitCurrentAgent: true,
+      qaContext: [
+        {
+          role: 'assistant',
+          content: '对了，我走了之后，到现在过了多久了？',
+          messageId: 'qa-assistant-1',
+        },
+      ],
+    });
+
+    // 随后的称呼/应答不产生新的断言，也不覆盖已有日期。
+    for (const filler of ['爷爷', '嗯爷爷']) {
+      const message = createMessage(filler, {
+        createdAt: new Date('2026-09-19T07:25:50.000Z'),
+      });
+      const result = await harness.service.recordAgentDepartureFromMessage({
+        message,
+        searchableText: message.content,
+        implicitCurrentAgent: true,
+        qaContext: [
+          {
+            role: 'assistant',
+            content: '对了，我走了之后，到现在过了多久了？',
+            messageId: 'qa-assistant-1',
+          },
+        ],
+      });
+      expect(result).toBeNull();
+    }
+
+    expect(harness.assertions).toHaveLength(1);
+    expect(harness.agent.deathDate).toEqual(
+      new Date('2026-09-15T00:00:00.000Z')
+    );
   });
 });
