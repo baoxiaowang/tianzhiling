@@ -5,6 +5,8 @@ import {
   AgentProfileFactType,
   AgentSex,
   MongoObjectId,
+  PersonTemporalEventType,
+  PersonTemporalResolutionCertainty,
 } from '@tzl/entities';
 import { AgentMemoryProfileService } from '../../src/service/agents/agent-memory-profile.service';
 import { AgentProfileFactSummary } from '../../src/service/agents/agent-profile-fact.service';
@@ -908,5 +910,112 @@ describe('AgentMemoryProfileService', () => {
     expect(agent.memoryProfileFactSnapshot).toEqual([]);
     expect(agent.memoryProfileGenerationCount).toBe(1);
     expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a system-derived date as derived when summarizing the memory profile', async () => {
+    const agent = createAgent();
+    agent.birthday = new Date('1950-03-31T00:00:00.000Z');
+    agent.deathDate = new Date('2025-05-16T00:00:00.000Z');
+    const { service, generateText } = createService([
+      createFact('memory.factory', '爸爸年轻时在工厂做设备维修'),
+    ]);
+    service.personTemporalProfileModel = {
+      find: jest.fn().mockResolvedValue([
+        {
+          eventType: PersonTemporalEventType.birth,
+          resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+          exactDate: new Date('1950-03-31T00:00:00.000Z'),
+        },
+        {
+          eventType: PersonTemporalEventType.death,
+          resolutionCertainty: PersonTemporalResolutionCertainty.explicitExact,
+          exactDate: new Date('2025-05-16T00:00:00.000Z'),
+        },
+      ]),
+    } as any;
+
+    await service.refreshFromMemoryNow({ agent, userId: USER_ID });
+
+    const call = generateText.mock.calls[0][0];
+    // 推导出来的生日进入画像时带推导性质与不确定表述。
+    expect(call.prompt).toContain('"birthdayCertainty":"derived_exact"');
+    expect(call.prompt).toContain('"birthdayDerivation"');
+    expect(call.prompt).toContain('由来源消息时间推导而来');
+    expect(call.systemPrompt).toContain('基础身份里带 derivation 标注');
+    // 用户原话明确的离世日期不带推导性质，也不触发不确定规则。
+    expect(call.prompt).not.toContain('"deathDateCertainty"');
+    expect(call.prompt).not.toContain('"deathDateDerivation"');
+  });
+
+  it('does not mark user-stated dates as system-derived in the memory profile', async () => {
+    const agent = createAgent();
+    agent.birthday = new Date('1950-03-31T00:00:00.000Z');
+    agent.deathDate = new Date('2025-05-16T00:00:00.000Z');
+    const { service, generateText } = createService([
+      createFact('memory.factory', '爸爸年轻时在工厂做设备维修'),
+    ]);
+    service.personTemporalProfileModel = {
+      find: jest.fn().mockResolvedValue([
+        {
+          eventType: PersonTemporalEventType.birth,
+          resolutionCertainty:
+            PersonTemporalResolutionCertainty.explicitExact,
+          exactDate: new Date('1950-03-31T00:00:00.000Z'),
+        },
+        {
+          eventType: PersonTemporalEventType.death,
+          resolutionCertainty:
+            PersonTemporalResolutionCertainty.explicitExact,
+          exactDate: new Date('2025-05-16T00:00:00.000Z'),
+        },
+      ]),
+    } as any;
+
+    await service.refreshFromMemoryNow({ agent, userId: USER_ID });
+
+    const call = generateText.mock.calls[0][0];
+    expect(call.prompt).toContain('"birthday":"1950-03-31');
+    expect(call.prompt).toContain('"deathDate":"2025-05-16');
+    expect(call.prompt).not.toContain('Derivation');
+    expect(call.prompt).not.toContain('由来源消息时间推导而来');
+    expect(call.systemPrompt).not.toContain('基础身份里带 derivation 标注');
+  });
+
+  it('treats a manually overridden projected date as explicit even if truth was derived', async () => {
+    const agent = createAgent();
+    // 资料接口后来手工写入了不同的生日：兼容投影已不代表真值日期。
+    agent.birthday = new Date('1951-01-02T00:00:00.000Z');
+    const { service, generateText } = createService([
+      createFact('memory.factory', '爸爸年轻时在工厂做设备维修'),
+    ]);
+    service.personTemporalProfileModel = {
+      find: jest.fn().mockResolvedValue([
+        {
+          eventType: PersonTemporalEventType.birth,
+          resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+          exactDate: new Date('1950-03-31T00:00:00.000Z'),
+        },
+      ]),
+    } as any;
+
+    await service.refreshFromMemoryNow({ agent, userId: USER_ID });
+
+    const call = generateText.mock.calls[0][0];
+    expect(call.prompt).toContain('"birthday":"1951-01-02');
+    expect(call.prompt).not.toContain('Derivation');
+  });
+
+  it('keeps the compatibility projection when no temporal truth is available', async () => {
+    const agent = createAgent();
+    agent.birthday = new Date('1950-03-31T00:00:00.000Z');
+    const { service, generateText } = createService([
+      createFact('memory.factory', '爸爸年轻时在工厂做设备维修'),
+    ]);
+
+    await service.refreshFromMemoryNow({ agent, userId: USER_ID });
+
+    const call = generateText.mock.calls[0][0];
+    expect(call.prompt).toContain('"birthday":"1950-03-31');
+    expect(call.prompt).not.toContain('Derivation');
   });
 });
