@@ -234,3 +234,14 @@ export function parseHometownProvince(value?: string): string | undefined {
   const province = stripped.replace(/(?:省|市)?(?:人|籍贯)?$/, '').trim();
   return province || undefined;
 }
+
+/**
+ * 地域语言标签的装配口径只保留一份。
+ *
+ * 省级足以形成省级语言方向；不猜城市、不猜方言支系。放这里是为了让主聊天与后台
+ * 用同一行代码产出同一个标签，避免两边各写一遍 `<省>话` 后长期分叉。
+ */
+export function buildDialectLabel(province?: string): string | undefined {
+  const normalized = normalizeText(province);
+  return normalized ? `${normalized}话` : undefined;
+}

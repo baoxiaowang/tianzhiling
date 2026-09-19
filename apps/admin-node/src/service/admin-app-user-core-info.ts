@@ -9,15 +9,7 @@
  *
  * 事实真值不在本文件：这里只消费 service 传入的落库记录，绝不写库、绝不触发抽取。
  */
-import {
-  HOMETOWN_FACT_KEY,
-  deriveLanguageSettings,
-  parseHometownProvince,
-  selectRoleCoreEntry,
-  sourcePriority,
-  type RoleCoreSourceKind,
-  type RoleCoreSourceRef,
-} from '@tzl/shared';
+import { HOMETOWN_FACT_KEY, buildDialectLabel, deriveLanguageSettings, parseHometownProvince, selectRoleCoreEntry, sourcePriority, type RoleCoreSourceKind, type RoleCoreSourceRef } from '@tzl/shared';
 
 export type { RoleCoreSourceKind };
 
@@ -545,7 +537,7 @@ function buildLanguageSection(input: CoreInfoInput): CoreLanguageSection {
         ? {
             province,
             // 与主聊天保持一致：省级标签由程序拼成「<省>话」，方言支系仍不猜。
-            languageLabel: `${province}话`,
+            languageLabel: buildDialectLabel(province),
             source: factSourceRef(hometownFact),
           }
         : undefined,

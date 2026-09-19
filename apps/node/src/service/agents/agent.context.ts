@@ -19,6 +19,7 @@ import {
   PersonTemporalResolutionCertainty,
 } from '@tzl/entities';
 import {
+  buildDialectLabel,
   deriveLanguageSettings,
   HOMETOWN_FACT_KEY,
   parseHometownProvince,
@@ -447,7 +448,7 @@ export function buildCoreLanguageSettings(options: {
     hometown: province
       ? {
           province,
-          languageLabel: `${province}话`,
+          languageLabel: buildDialectLabel(province),
           source: {
             kind: 'user_explicit',
             messageId: hometownFact?.sourceMessageId?.toString?.(),
