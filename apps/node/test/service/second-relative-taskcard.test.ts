@@ -1081,6 +1081,51 @@ describe('conversation service second-relative flow (persisted state)', () => {
     expect(owner.mentionCallName).toBe('我的爸爸');
   });
 
+  it('uses the corrected first-relative address from the shared identity contract', async () => {
+    const agentService = new AgentService();
+    (agentService as any).logger = { info() {}, warn() {}, error() {} };
+    (agentService as any).freeChatAgentEligibilityService = {
+      resolveRecognitionJourneyOwnership: async () => ({
+        mode: 'subsequent_relative',
+        firstAgentId: String(FIRST_AGENT_ID),
+        firstAgent: Object.assign(new AgentEntity(), {
+          id: FIRST_AGENT_ID,
+          iCallAgent: '我的爸爸',
+          name: '爸爸',
+        }),
+      }),
+    };
+    (agentService as any).agentProfileFactService = {
+      listFactsForPrompt: async () => [
+        {
+          type: 'relationship',
+          key: 'relationship.preferred_agent_name',
+          value: '当前用户偏好称呼当前角色为老爷子',
+          polarity: 'positive',
+          confidence: 'confirmed',
+          priority: 3,
+          status: 'active',
+        },
+      ],
+    };
+    const agent = Object.assign(new AgentEntity(), {
+      id: AGENT_ID,
+      createdUserId: USER_ID,
+      name: '妈妈',
+    });
+
+    const owner = await (
+      agentService as any
+    ).resolveOwnerRecognitionJourneyOwnership({
+      agent,
+      userId: USER_ID,
+      shared: false,
+    });
+
+    expect(owner.mode).toBe('subsequent_relative');
+    expect(owner.mentionCallName).toBe('老爷子');
+  });
+
   it('fix4: a temporary ownership failure writes no state and recovers on a later turn', async () => {
     const harness = createConversationHarness({
       mode: 'subsequent_relative',

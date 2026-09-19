@@ -47,7 +47,10 @@ import { AuthenticatedUserPayload } from '../interface';
 import { PostImageService } from './post-image.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { AgentCreateGuideService } from './agents/agent-create-guide.service';
+import { AgentProfileFactService } from './agents/agent-profile-fact.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
+import { buildAgentIdentityContract } from './agents/agent-identity-contract';
+import type { AgentIdentityContract } from './agents/agent-identity-contract';
 import { AgentMemoryInheritanceService } from './agents/agent-memory-inheritance.service';
 import { WechatPayService } from './wechat-pay.service';
 import { MessengerService } from './agents/messenger.service';
@@ -160,6 +163,9 @@ export class AgentService {
 
   @Inject()
   departureDurationService: DepartureDurationService;
+
+  @Inject()
+  agentProfileFactService: AgentProfileFactService;
 
   async interviewAgentCreation(
     _auth: AuthenticatedUserPayload,
@@ -1003,6 +1009,41 @@ export class AgentService {
   }
 
   /**
+   * Shared identity contract for the current effective address. Address
+   * priority (corrected fact over entity default) stays in
+   * buildAgentIdentityContract; on a fact read failure we fall back to the
+   * entity default instead of inventing another priority chain here.
+   */
+  private async resolveAgentIdentityContract(options: {
+    agent: AgentEntity | null;
+    userId: MongoObjectId;
+  }): Promise<AgentIdentityContract> {
+    const agent = options.agent;
+    if (!agent) {
+      return buildAgentIdentityContract({ agent: null });
+    }
+    try {
+      const profileFacts =
+        agent.id &&
+        typeof this.agentProfileFactService?.listFactsForPrompt === 'function'
+          ? await this.agentProfileFactService.listFactsForPrompt({
+              userId: options.userId,
+              agentId: agent.id,
+              limit: 16,
+            })
+          : [];
+      return buildAgentIdentityContract({ agent, profileFacts });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent] identity contract lookup failed, fallback to entity default, agentId=%s reason=%s',
+        this.stringifyObjectId(agent.id),
+        error instanceof Error ? error.message : String(error)
+      );
+      return buildAgentIdentityContract({ agent });
+    }
+  }
+
+  /**
    * Only owner-created relatives can use the later-relative mode; shared
    * conversations and different accounts must not borrow the owner's account
    * classification or call name. Shared/cross-account always keeps the released
@@ -1040,8 +1081,18 @@ export class AgentService {
         return { resolved: true, mode: 'first_relative' };
       }
       const firstRelative = ownership.firstAgent;
+      // 与 conversation.service 的 first_relative 一致：优先用统一 identity
+      // 契约的当前有效称呼（identity.agent.preferredName 即用户更正后的
+      // relationship.preferred_agent_name），无更正时退回实体 iCallAgent/name。
+      const firstIdentity = await this.resolveAgentIdentityContract({
+        agent: firstRelative ?? null,
+        userId: options.userId,
+      });
       const rawCallName =
-        firstRelative?.iCallAgent?.trim() || firstRelative?.name?.trim() || '';
+        firstIdentity.agent.preferredName?.trim() ||
+        firstRelative?.iCallAgent?.trim() ||
+        firstRelative?.name?.trim() ||
+        '';
       return {
         resolved: true,
         mode: 'subsequent_relative',
