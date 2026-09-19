@@ -42,6 +42,13 @@ export interface AgentPersonaProfile {
   questionStyle?: string;
   humorStyle?: string;
   languageProfile?: AgentPersonaLanguageProfile;
+  /**
+   * 逐维度来源：记录该维度当前采用值来自哪个导入批次及其样本量置信。
+   * 样本量置信是启发值，不是校准后的语义准确率；弱批次不得整体覆盖可靠旧值。
+   */
+  languageProfileSources?: Partial<
+    Record<keyof AgentPersonaLanguageProfile, { batchId?: string; confidence?: number }>
+  >;
   departedTransformation?: AgentDepartedTransformation;
   highEqStrategies?: string[];
   evidenceSummary?: string[];

@@ -1522,10 +1522,12 @@ export class ConversationChatImportService {
     const previous = agent.personaProfile || {};
     const confidence =
       stats.messageCount >= 30 && stats.dayCount >= 2 ? 0.82 : 0.48;
-    agent.personaProfile = {
-      ...previous,
-      version: 'wechat_import_style_v1',
-      languageProfile: {
+    const previousConfidence =
+      typeof previous.confidence === 'number' ? previous.confidence : 0;
+    // 新批次强于（或等于）既有结果时才允许改写已采用的维度；否则只补空维度。
+    // 样本量置信只是启发值，弱批次整块覆盖会把可靠旧结果冲掉。
+    const incomingStronger = confidence >= previousConfidence;
+    const candidateLanguage = {
         sentenceLength:
           this.readGeneratedString(generated.sentenceLength) ||
           `多为${stats.lowerLength}至${stats.upperLength}字的消息`,
@@ -1553,7 +1555,35 @@ export class ConversationChatImportService {
           (stats.shortMessageRatio > 0.65
             ? '习惯连续发送短消息'
             : '长短句交替'),
-      },
+    };
+    const dimensionSources = {
+      ...(previous.languageProfileSources || {}),
+    };
+    const mergedLanguage: Partial<typeof candidateLanguage> = {};
+    for (const dimension of Object.keys(
+      candidateLanguage
+    ) as Array<keyof typeof candidateLanguage>) {
+      const incoming = candidateLanguage[dimension];
+      const existing = previous.languageProfile?.[dimension];
+      if (!incoming) {
+        if (existing) mergedLanguage[dimension] = existing;
+        continue;
+      }
+      if (!existing || incomingStronger) {
+        mergedLanguage[dimension] = incoming;
+        dimensionSources[dimension] = {
+          batchId: this.stringifyObjectId(batch.id),
+          confidence,
+        };
+      } else {
+        mergedLanguage[dimension] = existing;
+      }
+    }
+    agent.personaProfile = {
+      ...previous,
+      version: 'wechat_import_style_v1',
+      languageProfile: mergedLanguage,
+      languageProfileSources: dimensionSources,
       evidenceSummary: this.readGeneratedStringArray(generated.evidenceSummary)
         .length
         ? this.readGeneratedStringArray(generated.evidenceSummary)
@@ -1565,7 +1595,7 @@ export class ConversationChatImportService {
               ? [`常见句尾：${stats.commonEndings.join('、')}`]
               : []),
           ],
-      confidence,
+      confidence: Math.max(previousConfidence, confidence),
     };
     agent.updatedAt = new Date();
     await this.agentModel.save(agent);
