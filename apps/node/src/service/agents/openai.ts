@@ -105,6 +105,17 @@ export interface OpenAIModelCallAttribution {
   providerAttempts: number;
   embeddings: number;
   visionCompletions: number;
+  /**
+   * 可选的 per-call usage sink。只在 `generateMemoryText`（记忆抽取通道）拿到
+   * 真实 usage 时触发，供调用方把 token/缓存命中落到记忆任务上；缺失 usage
+   * 不触发，不用 `|| 0` 造数。聊天生成不走这里（避免误记到记忆任务）。
+   */
+  onModelUsage?: (usage: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    cachedPromptTokens?: number;
+  }) => void;
 }
 
 export interface OpenAITextRequest {
@@ -771,9 +782,22 @@ export class OpenAIService {
     const content =
       typeof message?.content === 'string' ? message.content.trim() : '';
     const reasoning = this.extractReasoning(message);
+    // per-task 计量 sink：只在 provider 真返回 usage 时触发一次，缺失就不触发，
+    // 不用 || 0 造数（"无法计量"与"0 命中"必须可分）。sink 由调用方（记忆任务
+    // 消费者）注入，这里只负责透传，不在热路径 await。
+    if (response.usage) {
+      const store = this.modelCallAttributionInstance?.getStore();
+      store?.onModelUsage?.({
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        totalTokens: response.usage.total_tokens,
+        cachedPromptTokens: pickCachedTokens(response.usage),
+      });
+    }
     // 记忆链路缓存命中埋点：此前只有 open-item / memory-decision 打点，
     // 角色事实抽取（2024 字符固定系统提示）从未被计量，导致"缓存是否命中"
     // 只能靠估算。开启 MEMORY_CACHE_STATS=1 即可拿到真实 cached_tokens。
+    // 注意：字段缺失时日志打印 0，读日志要结合 pickCachedTokens 的存在性语义。
     logMemoryCacheStats(this.logger, {
       kind: 'memory-text',
       model: body.model,

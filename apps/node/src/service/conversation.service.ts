@@ -2240,6 +2240,11 @@ export class ConversationService {
       embeddings: 0,
       visionCompletions: 0,
     };
+    // 记忆侧 per-task token 落库：generateMemoryText 拿到真实 usage 时回调，
+    // recordModelUsage 内部 try/catch 永不抛，所以 fire-and-forget，不进热路径。
+    attribution.onModelUsage = usage => {
+      void this.memoryPipelineTaskService?.recordModelUsage(task.id, usage);
+    };
     let outcome: 'completed' | 'skipped' | 'failed' = 'failed';
     const memoryModel = this.memoryValueService?.openAIService;
     const memoryAttribution = memoryModel?.createModelCallAttribution?.();
