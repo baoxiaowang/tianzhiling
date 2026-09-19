@@ -6,6 +6,7 @@ import { RedisService } from '@midwayjs/redis';
 import { MongoRepository } from 'typeorm';
 import { createHash } from 'crypto';
 import { AppError } from '../common/errors';
+import { isRetryableTranscriptionError } from '../common/asr-utils';
 import {
   AgentEntity,
   AgentShareMemberEntity,
@@ -1302,7 +1303,7 @@ export class ConversationService {
           workerStartedAt.getTime() - queueStartedAt.getTime()
         );
         if (queueWaitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
-          this.logger.error(
+          this.logger.warn(
             '[conversation-reply] slow queue wait, conversationId=%s, userId=%s, waitMs=%s, jobId=%s, traceId=%s',
             data.conversationId,
             data.userId,
@@ -5023,7 +5024,7 @@ export class ConversationService {
           : '';
       const replyTruncated = this.checkAssistantCompletionTruncated(response);
       if (replyTruncated) {
-        this.logger.error(
+        this.logger.warn(
           '[conversation] primary assistant completion truncated by token limit'
         );
       }
@@ -5121,7 +5122,7 @@ export class ConversationService {
             : '';
         const replyTruncated = this.checkAssistantCompletionTruncated(response);
         if (replyTruncated) {
-          this.logger.error(
+          this.logger.warn(
             '[conversation] recovery assistant completion truncated by token limit'
           );
         }
@@ -8814,6 +8815,7 @@ export class ConversationService {
     mediaObjectKey?: string;
     mediaMimeType?: string;
   }): Promise<string | undefined> {
+    const objectKey = payload.mediaObjectKey || '';
     // DashScope qwen3-asr-flash 需要可公网访问的音频 URL，内联 base64 data URL 不被接受。
     const audioUrl =
       payload.mediaUrl?.trim() ||
@@ -8822,12 +8824,16 @@ export class ConversationService {
     if (!audioUrl) {
       this.logger.error(
         '[conversation] voice transcription skipped: no accessible audio URL, objectKey=%s',
-        payload.mediaObjectKey || ''
+        objectKey
       );
       return undefined;
     }
 
+    let attempts = 0;
+    let reason = 'unknown';
+
     for (let attempt = 0; attempt < 2; attempt++) {
+      attempts = attempt + 1;
       try {
         const transcript = await this.openAIService.createTranscription({
           audioUrl,
@@ -8835,31 +8841,41 @@ export class ConversationService {
         const content = transcript.trim();
 
         if (content) {
+          if (attempt > 0) {
+            this.logger.warn(
+              '[conversation] voice transcription succeeded on retry, objectKey=%s, attempt=%d/2',
+              objectKey,
+              attempts
+            );
+          }
           return content;
         }
 
-        this.logger.error(
-          '[conversation] voice transcription returned empty content, objectKey=%s, attempt=%d',
-          payload.mediaObjectKey || '',
-          attempt + 1
-        );
-        // 重试前等待 500ms
+        reason = 'empty_content';
+        // 空内容可能是瞬时问题，等 500ms 再试一次。
         if (attempt === 0) {
           await new Promise(resolve => setTimeout(resolve, 500));
         }
       } catch (error) {
-        this.logger.error(
-          '[conversation] voice transcription request failed, objectKey=%s, attempt=%d/2, reason=%s',
-          payload.mediaObjectKey || '',
-          attempt + 1,
-          this.describeReplyError(error)
-        );
-        // 重试前等待 800ms
-        if (attempt === 0) {
+        reason = this.describeReplyError(error);
+        // 「音频格式非法」这类 4xx 是确定性失败：重试没有意义，只会多打一条日志、
+        // 多等一次退避。只有 5xx / 超时 / 限流等瞬时故障才值得重试。
+        if (attempt === 0 && isRetryableTranscriptionError(error)) {
           await new Promise(resolve => setTimeout(resolve, 800));
+          continue;
         }
+        break;
       }
     }
+
+    // 用户上传了无法识别的音频属于客户端数据问题，不是服务故障：记一条 WARN 汇总
+    // （WARN 只进 midway-app.log），不再让每次尝试各写一条 ERROR 进错误日志。
+    this.logger.warn(
+      '[conversation] voice transcription failed, objectKey=%s, attempts=%d/2, reason=%s',
+      objectKey,
+      attempts,
+      reason
+    );
 
     return undefined;
   }
@@ -10457,7 +10473,7 @@ export class ConversationService {
           : '';
       const replyTruncated = this.checkAssistantCompletionTruncated(response);
       if (replyTruncated) {
-        this.logger.error(
+        this.logger.warn(
           '[conversation] bubble reflow completion truncated by token limit'
         );
       }

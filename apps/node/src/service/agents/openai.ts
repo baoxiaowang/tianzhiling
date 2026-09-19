@@ -911,7 +911,9 @@ export class OpenAIService {
 
       return transcript;
     } catch (error) {
-      this.logger.error(
+      // 调用方（transcribeVoiceForConversation）会按是否可重试决定重试，
+      // 并统一汇总一条 WARN；这里只留一行调用级上下文，不再重复写 ERROR。
+      this.logger.warn(
         '[openai] transcription request failed, model=%s, audioUrl=%s, reason=%s',
         model,
         audioUrl,
