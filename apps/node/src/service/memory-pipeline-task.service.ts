@@ -43,6 +43,16 @@ const MEMORY_PIPELINE_BATCHED_KINDS = new Set<MemoryPipelineTaskKind>([
   MemoryPipelineTaskKind.structuredMemory,
 ]);
 
+/**
+ * P2-1：只对真正会做 embedding 的索引类任务按 sourceHash 去重。
+ * 抽取类（structured_memory）是"一批一次调用"，语义不同，不在此列。
+ * 只纳入 semanticIndex（线上 ~12.5k/天 的主力）；personSemanticIndex 属遗留低量
+ * 通道，刻意不扩大去重范围。原话词门槛不在这里，也不因去重收紧。
+ */
+const MEMORY_PIPELINE_SOURCE_HASH_DEDUP_KINDS = new Set<MemoryPipelineTaskKind>([
+  MemoryPipelineTaskKind.semanticIndex,
+]);
+
 /** 队列解析失败后的冷却时间：避免每条消息都尝试新建队列。 */
 const QUEUE_RESOLVE_COOLDOWN_MS = 30_000;
 
@@ -75,6 +85,15 @@ export interface MemoryTaskExecutionStart {
   task: MemoryPipelineTaskEntity | null;
   deferredReason?: MemoryTaskDeferReason;
   nextEligibleAt?: Date;
+}
+
+/** P2-2：一次记忆侧模型调用的 token 用量（OpenAI 兼容 usage）。 */
+export interface MemoryTaskModelUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  /** usage.prompt_tokens_details.cached_tokens；provider 未返回时不要传。 */
+  cachedPromptTokens?: number;
 }
 
 /**
@@ -793,6 +812,70 @@ export class MemoryPipelineTaskService {
     );
   }
 
+  /**
+   * P2-2：把一次记忆侧模型调用的用量累计到任务文档（复用既有集合，不新增集合，
+   * 也不依赖只保留当天的日志）。
+   *
+   * - `$inc` 累加，不覆盖；旧文档缺这些字段时 Mongo 会按增量创建。
+   * - cachedPromptTokens 只有 provider 真返回缓存字段时才传；不传则完全不写，
+   *   从而区分"0 命中"与"该通道无法计量缓存"。
+   * - 计量是旁路：非法入参直接忽略，DB 异常只 warn，绝不打断记忆流水线。
+   * - 约定的调用方式（执行路径接线）：
+   *   `await this.memoryPipelineTaskService.recordModelUsage(String(task.id), {
+   *      promptTokens, completionTokens, totalTokens, cachedPromptTokens })`
+   *   每次模型调用后调用一次；`modelCalls` 自动 +1。
+   */
+  async recordModelUsage(
+    taskId: string | MongoObjectId,
+    usage: MemoryTaskModelUsage = {}
+  ): Promise<void> {
+    const id = taskId == null ? '' : String(taskId).trim();
+    if (!id || !MongoObjectId.isValid(id)) return;
+
+    const promptTokens = this.normalizeUsageTokens(usage.promptTokens);
+    const completionTokens = this.normalizeUsageTokens(usage.completionTokens);
+    const totalTokens =
+      this.normalizeUsageTokens(usage.totalTokens) ??
+      (promptTokens !== undefined || completionTokens !== undefined
+        ? (promptTokens || 0) + (completionTokens || 0)
+        : undefined);
+    const cachedPromptTokens = this.normalizeUsageTokens(
+      usage.cachedPromptTokens
+    );
+
+    const increments: Record<string, number> = { modelCalls: 1 };
+    if (promptTokens !== undefined) increments.promptTokens = promptTokens;
+    if (completionTokens !== undefined) {
+      increments.completionTokens = completionTokens;
+    }
+    if (totalTokens !== undefined) increments.totalTokens = totalTokens;
+    if (cachedPromptTokens !== undefined) {
+      increments.cachedPromptTokens = cachedPromptTokens;
+    }
+
+    try {
+      await this.taskModel.updateOne(
+        { _id: new MongoObjectId(id) } as never,
+        {
+          $inc: increments,
+          $set: { updatedAt: new Date() },
+        } as never
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[memory-pipeline] record model usage failed, taskId=%s, reason=%s',
+        id,
+        this.describeError(error)
+      );
+    }
+  }
+
+  private normalizeUsageTokens(value?: number): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : undefined;
+  }
+
   private async ensureTask(
     message: MessageEntity,
     searchableText: string,
@@ -806,6 +889,26 @@ export class MemoryPipelineTaskService {
     const existing = await this.taskModel.findOne({ where });
     if (existing) return existing;
 
+    const sourceHash = createHash('sha256')
+      .update(searchableText)
+      .digest('hex');
+
+    // P2-1：同内容在途索引任务直接复用，不再新建、不再重复 embedding。
+    const inFlight = await this.findInFlightSourceHashTasks(
+      message,
+      kind,
+      sourceHash
+    );
+    if (inFlight.length) {
+      this.logger?.info?.(
+        '[memory-pipeline] source hash dedup hit, kind=%s, conversationId=%s, existingTaskId=%s',
+        kind,
+        String(message.conversationId),
+        String(inFlight[0].id)
+      );
+      return inFlight[0];
+    }
+
     const now = new Date();
     const task = new MemoryPipelineTaskEntity();
     Object.assign(task, {
@@ -817,7 +920,7 @@ export class MemoryPipelineTaskService {
       conversationId: message.conversationId,
       userId: message.userId,
       agentId: message.agentId,
-      sourceHash: createHash('sha256').update(searchableText).digest('hex'),
+      sourceHash,
       attemptCount: 0,
       nextAttemptAt: now,
       scheduleClass: MemoryPipelineTaskScheduleClass.realtime,
@@ -825,12 +928,108 @@ export class MemoryPipelineTaskService {
       createdAt: now,
       updatedAt: now,
     });
+    let stored: MemoryPipelineTaskEntity;
     try {
-      return await this.taskModel.save(task);
+      stored = await this.taskModel.save(task);
     } catch (error) {
       const concurrentlyCreated = await this.taskModel.findOne({ where });
       if (concurrentlyCreated) return concurrentlyCreated;
       throw error;
+    }
+
+    // 并发兜底：两个请求同时通过上面的预检时会各自落库。回查同内容在途任务，
+    // 只保留最早的一条，删掉自己刚建、尚未入队也尚无副作用的重复草稿。
+    // （生产 synchronize=false，无法靠唯一索引原子约束，这里做确定性的收敛。）
+    const siblings = await this.findInFlightSourceHashTasks(
+      message,
+      kind,
+      sourceHash
+    );
+    const oldest = siblings[0];
+    if (oldest && String(oldest.id) !== String(stored.id)) {
+      await this.removeRedundantDraftTask(stored);
+      return oldest;
+    }
+    return stored;
+  }
+
+  /**
+   * P2-1：查找"同内容、同归属、同会话"且仍在途（pending/processing）的索引任务。
+   *
+   * 为什么这样限定范围（sourceHash 只是 sha256(规范化文本)，本身不含任何维度）：
+   * - 查询同时带上 userId + agentId + conversationId + kind + pipelineVersion，
+   *   所以"同一文本在不同用户 / 不同小使者 / 不同会话"绝不会被误判为可去重；
+   * - 只对仍在途的同内容任务去重：已经跑完的任务不会永久拦住以后同内容的真实新
+   *   消息，避免把"不同时间说的同一句话"当成重复；
+   * - 只跳过重复 embedding，不删除任何存量向量索引，也不改原话词门槛。
+   */
+  private async findInFlightSourceHashTasks(
+    message: MessageEntity,
+    kind: MemoryPipelineTaskKind,
+    sourceHash: string
+  ): Promise<MemoryPipelineTaskEntity[]> {
+    if (!MEMORY_PIPELINE_SOURCE_HASH_DEDUP_KINDS.has(kind)) return [];
+    if (!message?.userId || !message?.agentId || !message?.conversationId) {
+      return [];
+    }
+    try {
+      const rows = await this.taskModel.find({
+        where: {
+          kind,
+          pipelineVersion: MEMORY_PIPELINE_VERSION,
+          sourceHash,
+          userId: message.userId,
+          agentId: message.agentId,
+          conversationId: message.conversationId,
+          status: {
+            $in: [
+              MemoryPipelineTaskStatus.pending,
+              MemoryPipelineTaskStatus.processing,
+            ],
+          },
+        } as never,
+      });
+      // 结果集很小，直接在内存里按 createdAt + ObjectId 定序，避免依赖 Mongo 排序。
+      return rows
+        .slice()
+        .sort((a, b) => this.compareTaskRecency(a, b));
+    } catch (error) {
+      // 去重查询失败不能让消息索引失败：退回"照常新建"路径。
+      this.logger?.warn?.(
+        '[memory-pipeline] source hash dedup lookup failed, kind=%s, reason=%s',
+        kind,
+        this.describeError(error)
+      );
+      return [];
+    }
+  }
+
+  private compareTaskRecency(
+    a: MemoryPipelineTaskEntity,
+    b: MemoryPipelineTaskEntity
+  ): number {
+    const aTime = a.createdAt?.getTime?.() ?? 0;
+    const bTime = b.createdAt?.getTime?.() ?? 0;
+    if (aTime !== bTime) return aTime - bTime;
+    return String(a.id).localeCompare(String(b.id));
+  }
+
+  private async removeRedundantDraftTask(
+    task: MemoryPipelineTaskEntity
+  ): Promise<void> {
+    try {
+      // 只删自己刚建、仍 pending、零尝试的草稿；一旦被 worker 领取就不动它。
+      await this.taskModel.deleteOne({
+        _id: task.id,
+        status: MemoryPipelineTaskStatus.pending,
+        attemptCount: 0,
+      } as never);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[memory-pipeline] redundant dedup task cleanup failed, taskId=%s, reason=%s',
+        String(task.id),
+        this.describeError(error)
+      );
     }
   }
 

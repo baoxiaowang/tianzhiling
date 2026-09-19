@@ -87,6 +87,13 @@ export class ChatTraceEntity extends BaseEntity {
   @Column()
   totalTokens: number;
 
+  /**
+   * 前缀缓存命中的 prompt token 汇总（来自 span 的 cachedPromptTokens）。
+   * 旧数据无值属正常；按天命中率查询需区分"命中为 0"与"通道未返回该字段"。
+   */
+  @Column()
+  cachedPromptTokens?: number;
+
   @Column()
   tokensByStage: ChatTraceStageTokens;
 

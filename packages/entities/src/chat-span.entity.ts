@@ -73,6 +73,14 @@ export class ChatSpanEntity extends BaseEntity {
   @Column()
   totalTokens?: number;
 
+  /**
+   * 前缀缓存命中的 prompt token（OpenAI 兼容 usage.prompt_tokens_details.cached_tokens）。
+   * 旧数据无值属正常：读侧/聚合按"字段缺失"处理，不能当成 0 命中。
+   * 仅当 provider 真的返回该字段时才写入。
+   */
+  @Column()
+  cachedPromptTokens?: number;
+
   @Column()
   resultCode?: string;
 

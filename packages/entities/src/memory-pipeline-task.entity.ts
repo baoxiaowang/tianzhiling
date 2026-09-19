@@ -70,6 +70,28 @@ export class MemoryPipelineTaskEntity extends BaseEntity {
   @Column()
   sourceHash: string;
 
+  /**
+   * 记忆侧 token 计量（P2-2）：任务执行期间累计的模型调用与 token，
+   * 由 MemoryPipelineTaskService.recordModelUsage 按次 `$inc`。
+   * 这是既有集合上的最小新增，用于按天/按 kind 聚合；旧文档缺这些字段属正常，
+   * `$sum`/`$ifNull` 聚合天然容错。cachedPromptTokens 只有 provider 真的返回
+   * `usage.prompt_tokens_details.cached_tokens` 时才会写入，缺失≠0 命中。
+   */
+  @Column()
+  modelCalls?: number;
+
+  @Column()
+  promptTokens?: number;
+
+  @Column()
+  completionTokens?: number;
+
+  @Column()
+  totalTokens?: number;
+
+  @Column()
+  cachedPromptTokens?: number;
+
   @Column()
   attemptCount: number;
 

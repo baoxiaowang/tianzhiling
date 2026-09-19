@@ -92,6 +92,12 @@ export interface ChatSpanRecorder {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    /**
+     * OpenAI 兼容 usage.prompt_tokens_details.cached_tokens。
+     * 只有 provider 真返回时才传；不传表示该通道/该次调用无法计量缓存命中，
+     * 不会被当成 0 命中写入。
+     */
+    cachedPromptTokens?: number;
   }): void;
   setResultCode(resultCode?: string): void;
   markDiscarded(): void;
@@ -188,6 +194,8 @@ export class ChatTraceService {
           promptTokens: 0,
           completionTokens: 0,
           totalTokens: 0,
+          // cachedPromptTokens 故意不初始化：缺失表示"该 trace 没有任何一次调用
+          // 返回过缓存字段"，与"返回了 0 命中"必须可区分（命中率查询依赖它）。
           tokensByStage: {},
           createdAt: now,
         },
@@ -566,6 +574,9 @@ export class ChatTraceService {
         span.totalTokens =
           this.normalizeCount(usage.totalTokens) ??
           (span.promptTokens || 0) + (span.completionTokens || 0);
+        // 只有 provider 真返回缓存字段时才写；否则保持 undefined，避免把
+        // "通道无法计量"误记成"0 命中"。
+        span.cachedPromptTokens = this.normalizeCount(usage.cachedPromptTokens);
       },
       setResultCode: resultCode => {
         span.resultCode = resultCode?.trim().slice(0, 80) || undefined;
@@ -617,6 +628,17 @@ export class ChatTraceService {
       (total, span) => total + (span.totalTokens || 0),
       0
     );
+    // 缓存命中与"未观测"必须可区分：只有至少一个 span 真的带回了缓存字段，
+    // 才把 cachedPromptTokens 汇入 trace；否则 trace 上保持缺失。
+    const cachedObserved = spans.some(
+      span => typeof span.cachedPromptTokens === 'number'
+    );
+    const cachedPromptTokens = cachedObserved
+      ? spans.reduce(
+          (total, span) => total + (span.cachedPromptTokens || 0),
+          0
+        )
+      : undefined;
     const stageTokens = spans.reduce<Record<string, number>>((result, span) => {
       if (span.totalTokens) {
         result[`tokensByStage.${span.stage}`] =
@@ -633,6 +655,7 @@ export class ChatTraceService {
           promptTokens,
           completionTokens,
           totalTokens,
+          ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
           ...stageTokens,
         },
         $set: { updatedAt: new Date() },

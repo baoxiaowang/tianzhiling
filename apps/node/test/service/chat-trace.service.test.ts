@@ -89,6 +89,80 @@ describe('ChatTraceService', () => {
     ).toBe(true);
   });
 
+  it('aggregates cached prompt tokens and tolerates spans written before token fields existed', async () => {
+    const { service, savedBatches, traceUpdates } = createService();
+    const traceId = service.createTraceId();
+
+    await service.runWithTrace(traceId, async () => {
+      // 旧数据：早于 token 字段落地的 span 完全没有 token 字段。
+      service.recordCompletedSpan({
+        stage: ChatTraceStage.contextLoad,
+        operation: 'context.build.legacy',
+        startedAt: new Date(Date.now() - 5),
+      });
+      await service.withSpan(
+        ChatTraceStage.generate,
+        'generate.primary',
+        recorder => {
+          recorder.setModelUsage({
+            model: 'doubao-character',
+            promptTokens: 4000,
+            completionTokens: 25,
+            totalTokens: 4025,
+            cachedPromptTokens: 1500,
+          });
+          return Promise.resolve();
+        }
+      );
+    });
+
+    const generation = flattenSavedBatches(savedBatches).find(
+      span => span.operation === 'generate.primary'
+    );
+    expect(generation?.cachedPromptTokens).toBe(1500);
+
+    const aggregate = traceUpdates.find(
+      item => item.update.$inc?.cachedPromptTokens !== undefined
+    );
+    expect(aggregate?.update.$inc).toMatchObject({
+      totalModelCalls: 1,
+      promptTokens: 4000,
+      completionTokens: 25,
+      totalTokens: 4025,
+      cachedPromptTokens: 1500,
+    });
+    // 旧 span 无 token 时不能出现 NaN。
+    expect(Number.isFinite(aggregate?.update.$inc?.totalTokens)).toBe(true);
+  });
+
+  it('leaves cache fields unset when the provider reports no cache details', async () => {
+    const { service, savedBatches, traceUpdates } = createService();
+
+    await service.runWithTrace(service.createTraceId(), () =>
+      service.withSpan(
+        ChatTraceStage.generate,
+        'generate.primary',
+        recorder => {
+          recorder.setModelUsage({
+            model: 'provider-without-cache-details',
+            promptTokens: 100,
+            completionTokens: 10,
+            totalTokens: 110,
+          });
+          return Promise.resolve();
+        }
+      )
+    );
+
+    expect(flattenSavedBatches(savedBatches)[0].cachedPromptTokens).toBeUndefined();
+    // 未观测到缓存字段时 trace 上也不写 cachedPromptTokens，区别于"命中 0"。
+    expect(
+      traceUpdates.some(
+        item => item.update.$inc?.cachedPromptTokens !== undefined
+      )
+    ).toBe(false);
+  });
+
   it('records failed stages without swallowing the business error', async () => {
     const { service, savedBatches } = createService();
     const error = Object.assign(new Error('provider timeout'), {
