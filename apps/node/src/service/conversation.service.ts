@@ -916,6 +916,27 @@ export class ConversationService {
         pageConversations.map(item => item.id)
       ),
     ]);
+    // 自有会话（非共享）复用统一 identity 契约产出当前有效称呼；共享会话的
+    // 称呼来自会话/共享成员 ACL，不是 agent 实体可推导的，保持原有会话级读取。
+    const identityContracts = await this.resolveIdentityContractMap({
+      userId,
+      agents: pageConversations
+        .map(conversation => {
+          const agent = agentsById.get(
+            this.stringifyObjectId(conversation.agentId)
+          );
+          if (!agent || this.isSharedConversationFor(conversation, agent)) {
+            return null;
+          }
+          return {
+            key: this.stringifyObjectId(conversation.id),
+            agent,
+          };
+        })
+        .filter(
+          (item): item is { key: string; agent: AgentEntity } => Boolean(item)
+        ),
+    });
     const summaries = pageConversations.map(conversation => {
       const agent = agentsById.get(
         this.stringifyObjectId(conversation.agentId)
@@ -923,7 +944,12 @@ export class ConversationService {
       const latestMessage = latestMessagesByConversationId.get(
         this.stringifyObjectId(conversation.id)
       );
-      return this.buildConversationSummary(conversation, agent, latestMessage);
+      return this.buildConversationSummary(
+        conversation,
+        agent,
+        latestMessage,
+        identityContracts.get(this.stringifyObjectId(conversation.id))
+      );
     });
 
     const items = summaries.sort((left, right) => {
@@ -1865,6 +1891,9 @@ export class ConversationService {
     const messengerTaskPlan = isMessenger
       ? await this.buildMessengerMemoryTaskPlan(runtime)
       : undefined;
+    // 复用统一 identity 契约，避免 bootstrap 展示实体旧称呼、persona 展示更正后称呼。
+    const identity = await this.resolveRuntimeIdentityContract(runtime);
+    const displayAddress = this.displayAddresses(agent, identity);
 
     return {
       agent: agent
@@ -1875,8 +1904,8 @@ export class ConversationService {
               agent.avatar?.trim() || ''
             ),
             sex: agent.sex ?? 0,
-            agentCallMe: agent.agentCallMe?.trim() || '',
-            iCallAgent: agent.iCallAgent?.trim() || '',
+            agentCallMe: displayAddress.agentCallsUser,
+            iCallAgent: displayAddress.userCallsAgent,
             hasUnreadAgentHomeGuide: Boolean(
               agent.profileCompletionGuideCreatedAt &&
                 !agent.agentHomeGuideSeenAt
@@ -6110,8 +6139,20 @@ export class ConversationService {
       if (ownership.mode !== 'subsequent_relative') {
         return { resolved: true, mode: 'first_relative' };
       }
+      // 第一位亲人的称呼同样走统一 identity 契约；契约没有更正时再退回
+      // iCallAgent/name，保持原有兜底语义。
+      const firstIdentity = ownership.firstAgent
+        ? await this.resolveIdentityContractForAgent({
+            userId: runtime.conversation.userId,
+            agent: ownership.firstAgent,
+          })
+        : undefined;
+      const firstDisplayAddress = this.displayAddresses(
+        ownership.firstAgent,
+        firstIdentity
+      );
       const rawCallName =
-        ownership.firstAgent?.iCallAgent?.trim() ||
+        firstDisplayAddress.userCallsAgent ||
         ownership.firstAgent?.name?.trim() ||
         '';
       return {
@@ -6738,33 +6779,132 @@ export class ConversationService {
   private async resolveRuntimeIdentityContract(
     runtime: ReplyRuntime
   ): Promise<AgentIdentityContract> {
-    const userId = runtime.conversation.userId;
-    const agentId = runtime.conversation.agentId;
+    return this.resolveIdentityContractForAgent({
+      userId: runtime.conversation.userId,
+      agent: runtime.agent,
+    });
+  }
+
+  /** Builds one agent's contract from the shared inputs; entity default on read failure. */
+  private async resolveIdentityContractForAgent(options: {
+    userId: MongoObjectId;
+    agent: AgentEntity | null;
+  }): Promise<AgentIdentityContract> {
+    const agent = options.agent;
+    if (!agent) {
+      return buildAgentIdentityContract({ agent: null });
+    }
+
     const identityService = this.userIdentityMemoryService;
     const factService = this.agentProfileFactService;
     try {
       const [userIdentity, profileFacts] = await Promise.all([
         typeof identityService?.getUserIdentity === 'function'
-          ? identityService.getUserIdentity(userId)
+          ? identityService.getUserIdentity(options.userId)
           : Promise.resolve(null),
-        typeof factService?.listFactsForPrompt === 'function'
-          ? factService.listFactsForPrompt({ userId, agentId, limit: 16 })
+        agent.id && typeof factService?.listFactsForPrompt === 'function'
+          ? factService.listFactsForPrompt({
+              userId: options.userId,
+              agentId: agent.id,
+              limit: 16,
+            })
           : Promise.resolve([]),
       ]);
 
-      return buildAgentIdentityContract({
-        agent: runtime.agent,
-        userIdentity,
-        profileFacts,
-      });
+      return buildAgentIdentityContract({ agent, userIdentity, profileFacts });
     } catch (error) {
-      // 读事实失败时退回实体默认称呼，不能让恢复/图片路径因读库失败而中断。
-      this.logger.warn(
+      // 读事实失败时退回实体默认称呼，不能让恢复/图片/列表路径因读库失败而中断。
+      this.logger?.warn?.(
         '[conversation] identity contract lookup failed, fallback to agent defaults, reason=%s',
         this.describeReplyError(error)
       );
-      return buildAgentIdentityContract({ agent: runtime.agent });
+      return buildAgentIdentityContract({ agent });
     }
+  }
+
+  /**
+   * Batch form for list paths: one user-identity read and one fact read per
+   * distinct agent, so listing conversations stays bounded instead of issuing
+   * one full lookup per conversation.
+   */
+  private async resolveIdentityContractMap(options: {
+    userId: MongoObjectId;
+    agents: Array<{ key: string; agent: AgentEntity }>;
+  }): Promise<Map<string, AgentIdentityContract>> {
+    const contracts = new Map<string, AgentIdentityContract>();
+    if (!options.agents.length) return contracts;
+
+    const identityService = this.userIdentityMemoryService;
+    const factService = this.agentProfileFactService;
+    try {
+      const userIdentity =
+        typeof identityService?.getUserIdentity === 'function'
+          ? await identityService.getUserIdentity(options.userId)
+          : null;
+      await Promise.all(
+        options.agents.map(async item => {
+          const profileFacts =
+            item.agent.id &&
+            typeof factService?.listFactsForPrompt === 'function'
+              ? await factService.listFactsForPrompt({
+                  userId: options.userId,
+                  agentId: item.agent.id,
+                  limit: 16,
+                })
+              : [];
+          contracts.set(
+            item.key,
+            buildAgentIdentityContract({
+              agent: item.agent,
+              userIdentity,
+              profileFacts,
+            })
+          );
+        })
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] identity contract batch lookup failed, fallback to agent defaults, reason=%s',
+        this.describeReplyError(error)
+      );
+      for (const item of options.agents) {
+        contracts.set(item.key, buildAgentIdentityContract({ agent: item.agent }));
+      }
+    }
+    return contracts;
+  }
+
+  /**
+   * Effective display addresses for the client-facing paths. The correction
+   * value comes from the identity contract (identity.*.preferredName); the
+   * entity field is kept as the "unset" value so the legacy empty-string and
+   * description fallbacks keep working. No new priority chain is introduced:
+   * the correction-over-default rule is the contract's own projection.
+   */
+  private displayAddresses(
+    agent: AgentEntity | null | undefined,
+    identity?: AgentIdentityContract
+  ): { agentCallsUser: string; userCallsAgent: string } {
+    return {
+      agentCallsUser:
+        identity?.user.preferredName?.trim() || agent?.agentCallMe?.trim() || '',
+      userCallsAgent:
+        identity?.agent.preferredName?.trim() || agent?.iCallAgent?.trim() || '',
+    };
+  }
+
+  private isSharedConversationFor(
+    conversation: ConversationEntity,
+    agent?: AgentEntity | null
+  ): boolean {
+    return (
+      conversation.accessRole === 'shared' ||
+      Boolean(
+        agent?.createdUserId &&
+          this.stringifyObjectId(agent.createdUserId) !==
+            this.stringifyObjectId(conversation.userId)
+      )
+    );
   }
 
   private async buildLightweightReplyMessages(options: {
@@ -8642,15 +8782,12 @@ export class ConversationService {
   private buildConversationSummary(
     conversation: ConversationEntity,
     agent?: AgentEntity | null,
-    latestMessage?: MessageEntity | null
+    latestMessage?: MessageEntity | null,
+    identity?: AgentIdentityContract
   ): ConversationSummary {
-    const isSharedConversation =
-      conversation.accessRole === 'shared' ||
-      Boolean(
-        agent?.createdUserId &&
-          this.stringifyObjectId(agent.createdUserId) !==
-            this.stringifyObjectId(conversation.userId)
-      );
+    const isSharedConversation = this.isSharedConversationFor(conversation, agent);
+    // 自有会话用统一 identity 契约；共享会话的称呼来自会话级 ACL，无 agent 契约。
+    const displayAddress = this.displayAddresses(agent, identity);
 
     return {
       id: this.stringifyObjectId(conversation.id),
@@ -8660,12 +8797,14 @@ export class ConversationService {
         agent?.avatar?.trim() || ''
       ),
       agentSex: agent?.sex ?? 0,
-      agentCallMe: isSharedConversation
-        ? conversation.agentCallsUser?.trim() || ''
-        : agent?.agentCallMe?.trim() || '',
-      iCallAgent: isSharedConversation
-        ? conversation.userCallsAgent?.trim() || agent?.name?.trim() || ''
-        : agent?.iCallAgent?.trim() || '',
+      agentCallMe:
+        isSharedConversation && !identity
+          ? conversation.agentCallsUser?.trim() || ''
+          : displayAddress.agentCallsUser,
+      iCallAgent:
+        isSharedConversation && !identity
+          ? conversation.userCallsAgent?.trim() || agent?.name?.trim() || ''
+          : displayAddress.userCallsAgent,
       agentIsDefault: Boolean(
         agent?.isDefault &&
           agent.createdUserId &&
@@ -8673,7 +8812,7 @@ export class ConversationService {
             this.stringifyObjectId(conversation.userId)
       ),
       agentAccessRole: isSharedConversation ? 'shared' : 'owner',
-      preview: this.buildPreview(agent, latestMessage),
+      preview: this.buildPreview(agent, latestMessage, identity),
       isMessenger: Boolean(agent?.messengerOfAgentId),
       updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
       createdAt: conversation.createdAt?.toISOString?.() ?? '',
@@ -8682,7 +8821,8 @@ export class ConversationService {
 
   private buildPreview(
     agent?: AgentEntity | null,
-    latestMessage?: MessageEntity | null
+    latestMessage?: MessageEntity | null,
+    identity?: AgentIdentityContract
   ): string {
     if (latestMessage?.type === MessageType.voice) {
       const label = this.buildVoicePreviewLabel(latestMessage);
@@ -8706,8 +8846,9 @@ export class ConversationService {
       return '该联系人资料暂不可用';
     }
 
-    const iCallAgent = agent.iCallAgent?.trim();
-    const agentCallMe = agent.agentCallMe?.trim();
+    const displayAddress = this.displayAddresses(agent, identity);
+    const iCallAgent = displayAddress.userCallsAgent;
+    const agentCallMe = displayAddress.agentCallsUser;
 
     if (iCallAgent && agentCallMe) {
       return `你称呼他为${iCallAgent}，他会叫你${agentCallMe}`;
@@ -12209,6 +12350,9 @@ export class ConversationService {
       agent.name?.trim() ||
       '';
 
+    // 故意不改走 identity 契约：这里是从共享成员 ACL 构造 runtime.agent 的输入
+    // 适配器，契约随后读取它的输出；在此调用契约会形成循环，且共享会话没有
+    // 可推导的 per-viewer 事实。契约之上的更正优先仍由 buildAgentIdentityContract 处理。
     return {
       ...agent,
       agentCallMe: agentCallsUser,

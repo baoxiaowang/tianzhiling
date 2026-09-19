@@ -181,3 +181,95 @@ describe('role-core identity convergence in remaining conversation paths', () =>
     ).resolves.toContain('身份参考：当前角色是爷爷');
   });
 });
+
+describe('role-core identity convergence in residual client paths', () => {
+  const correctedFacts = () => [
+    activeFact(
+      'relationship.preferred_user_name',
+      '当前用户希望当前角色称呼其为湾呐'
+    ),
+    activeFact(
+      'relationship.preferred_agent_name',
+      '当前用户偏好称呼当前角色为老爷子'
+    ),
+  ];
+
+  it('uses corrected addresses in chat bootstrap metadata', async () => {
+    const service = buildService(correctedFacts());
+    const runtime = createRuntime();
+    (service as any).createReplyRuntime = jest
+      .fn()
+      .mockResolvedValue(runtime);
+    (service as any).resolveCurrentChatQuota = jest
+      .fn()
+      .mockResolvedValue({ isVip: true });
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+    } as never;
+
+    const metadata = await service.getChatBootstrapMetadata(
+      { sub: USER_ID } as never,
+      CONVERSATION_ID
+    );
+
+    expect(metadata.agent).toMatchObject({
+      agentCallMe: '湾呐',
+      iCallAgent: '老爷子',
+    });
+  });
+
+  it('uses corrected addresses in conversation list summary and preview', async () => {
+    const service = buildService(correctedFacts());
+    const runtime = createRuntime();
+    service.conversationModel = {
+      find: jest.fn().mockResolvedValue([runtime.conversation]),
+    } as never;
+    service.agentModel = {
+      find: jest.fn().mockResolvedValue([runtime.agent]),
+    } as never;
+    service.messageModel = {
+      aggregate: jest.fn().mockReturnValue({
+        toArray: jest.fn().mockResolvedValue([]),
+      }),
+      findOne: jest.fn().mockResolvedValue(null),
+    } as never;
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+      resolveAgentAvatarForResponse: jest.fn((value: string) => value),
+    } as never;
+    service.messengerService = {
+      revealEligibleMessengersForUser: jest.fn().mockResolvedValue(undefined),
+    } as never;
+
+    const result = await service.listConversations({ sub: USER_ID } as never);
+
+    expect(result.items[0]).toMatchObject({
+      agentCallMe: '湾呐',
+      iCallAgent: '老爷子',
+      preview: '你称呼他为老爷子，他会叫你湾呐',
+    });
+  });
+
+  it('uses the corrected address for the first relative mention', async () => {
+    const service = buildService(correctedFacts());
+    const runtime = createRuntime();
+    service.freeChatAgentEligibilityService = {
+      resolveRecognitionJourneyOwnership: jest.fn().mockResolvedValue({
+        resolution: 'resolved',
+        mode: 'subsequent_relative',
+        firstAgent: runtime.agent,
+      }),
+    } as never;
+
+    const ownership = await (
+      service as any
+    ).resolveConversationRecognitionJourneyOwnership(runtime);
+
+    expect(ownership).toMatchObject({
+      resolved: true,
+      mode: 'subsequent_relative',
+      mentionCallName: '老爷子',
+    });
+  });
+});
+
