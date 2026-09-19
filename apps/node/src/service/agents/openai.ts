@@ -15,7 +15,7 @@ import { extractTranscriptionContent } from '../../common/asr-utils';
 import { AppError } from '../../common/errors';
 import { describeErrorForLog, truncateForLog } from '../../common/log-utils';
 import { ChatTraceService } from '../chat-trace.service';
-import { logMemoryCacheStats } from '../memory/memory-cache-stats';
+import { logMemoryCacheStats, pickCachedTokens } from '../memory/memory-cache-stats';
 
 export interface OpenAIServiceConfig {
   enabled?: boolean;
@@ -353,6 +353,18 @@ export class OpenAIService {
           promptTokens: response.usage?.prompt_tokens,
           completionTokens: response.usage?.completion_tokens,
           totalTokens: response.usage?.total_tokens,
+          cachedPromptTokens: pickCachedTokens(response.usage),
+        });
+        // 缓存命中埋点（默认关闭，仅 MEMORY_CACHE_STATS=1 时打一行日志，不额外
+        // 产生模型调用）。chat_span 在生产可能因 CHAT_TRACE_ENABLED=false 变成
+        // noop recorder，所以缓存命中不能只靠 span 落库，这里复用同一开关直出
+        // 日志，才能实测豆包/Ark 到底返不返回 cached_tokens。
+        // 注意：extractMemoryCacheStats 在字段缺失时打印 0；读日志要结合
+        // pickCachedTokens 的"存在性"语义，别把"通道不返回该字段"当成"0 命中"。
+        logMemoryCacheStats(this.logger, {
+          kind: 'chat-completion',
+          model: response.model || primaryBody.model,
+          usage: response.usage,
         });
         recorder.setResultCode(
           response.choices?.[0]?.finish_reason || 'completed'

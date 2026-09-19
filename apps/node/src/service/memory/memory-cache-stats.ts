@@ -29,14 +29,35 @@ export function isMemoryCacheStatsEnabled(): boolean {
   return process.env.MEMORY_CACHE_STATS === '1';
 }
 
+/**
+ * 存在性感知的缓存命中取值。
+ *
+ * 两种供应商字段都不存在时返回 `undefined`，表示"该通道不返回缓存字段，
+ * 无法计量"，调用方应据此**不写**缓存字段，而不是写成 0；至少一个字段
+ * 存在时才取 max，此时 0 才是真实的"0 命中"。
+ */
+export function pickCachedTokens(usage?: unknown): number | undefined {
+  const value = (usage ?? {}) as UsageLike;
+  const hasDetails =
+    value.prompt_tokens_details != null &&
+    value.prompt_tokens_details.cached_tokens != null;
+  const hasHitField = value.prompt_cache_hit_tokens != null;
+  if (!hasDetails && !hasHitField) {
+    return undefined;
+  }
+  return Math.max(
+    Number(value.prompt_tokens_details?.cached_tokens) || 0,
+    Number(value.prompt_cache_hit_tokens) || 0
+  );
+}
+
 export function extractMemoryCacheStats(usage?: unknown): MemoryCacheStats {
   const value = (usage ?? {}) as UsageLike;
   const promptTokens = Number(value.prompt_tokens) || 0;
   const completionTokens = Number(value.completion_tokens) || 0;
-  const cachedFromDetails =
-    Number(value.prompt_tokens_details?.cached_tokens) || 0;
-  const cachedFromHit = Number(value.prompt_cache_hit_tokens) || 0;
-  const cachedTokens = Math.max(cachedFromDetails, cachedFromHit);
+  // 这里只做日志聚合，字段缺失时按 0 打印；要区分"缺失"与"0 命中"请用
+  // pickCachedTokens()（返回 undefined 表示缺失）。
+  const cachedTokens = pickCachedTokens(value) ?? 0;
   const cacheMissTokens =
     Number(value.prompt_cache_miss_tokens) ||
     Math.max(promptTokens - cachedTokens, 0);
