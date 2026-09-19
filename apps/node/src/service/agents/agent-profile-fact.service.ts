@@ -10,6 +10,7 @@ import {
   AgentProfileFactStatus,
   AgentProfileFactType,
   AgentEntity,
+  MemoryGovernance,
   MessageEntity,
   MongoObjectId,
 } from '@tzl/entities';
@@ -183,6 +184,11 @@ interface UpsertProfileFactInput
   sourceMessageIds?: MongoObjectId[];
   sourceFeedbackId?: MongoObjectId;
   sourceText?: string;
+  /**
+   * 来源消息的发生时间（MessageEntity.createdAt）。称呼类事实用它做乱序保护：
+   * 后到达但发生更早的消息不得覆盖更晚发生的新称呼。导入路径不传该值。
+   */
+  sourceOccurredAt?: Date;
   trustedSource: boolean;
   forceCandidate?: boolean;
 }
@@ -194,6 +200,28 @@ interface ExtractedProfileFact {
 }
 
 const DEFAULT_FACT_LIMIT = 32;
+/**
+ * 性格类事实的确定性容量上限。提示词只约束“最多 3–5 条”，这里取区间上限 5：
+ * 与提示词一致、尽量保留用户已明确描述的性格，同时把超出的条目降为 candidate
+ * 而不是丢弃，也不为了凑数补写。用户明确更正（user_corrected）的条目不受挤压。
+ */
+const MAX_ACTIVE_PERSONALITY_FACTS = 5;
+/** 性格事实的规范键前缀（抽取提示词要求模型统一使用）。 */
+const PERSONALITY_FACT_KEY_PREFIX = 'style.personality.';
+/** 无规范前缀时，用性格描述词兜底识别历史/自由键的性格条目。 */
+const PERSONALITY_VALUE_SIGNAL =
+  /(?:性格|脾气|为人|个性|话少|话多|嘴硬|心软|内向|外向|温和|爽快|慢性子|急性子)/;
+/** 这些 style 键有各自语义，不属于“性格容量”范围。 */
+const NON_PERSONALITY_STYLE_KEY_PREFIXES = [
+  'style.preference.',
+  'style.feedback.',
+  'style.update.',
+  'style.mode.',
+  'style.segment.',
+  'profile_source.',
+];
+/** 更正覆盖后保留旧断言用的派生键标记。 */
+const SUPERSEDED_FACT_KEY_MARKER = '.superseded.';
 const VISUAL_APPEARANCE_KEY_PREFIX = 'visual.appearance.';
 const VISUAL_APPEARANCE_TRAIT_KINDS = new Set<AgentVisualAppearanceTraitKind>([
   'hair_color',
@@ -381,6 +409,7 @@ export class AgentProfileFactService {
         userId: options.message.userId,
         agentId: options.message.agentId,
         sourceMessageId: options.message.id,
+        sourceOccurredAt: options.message.createdAt,
         sourceText,
         trustedSource:
           !extracted.forceCandidate &&
@@ -467,6 +496,7 @@ export class AgentProfileFactService {
           userId: options.message.userId,
           agentId: options.parentAgent.id,
           sourceMessageId: options.message.id,
+          sourceOccurredAt: options.message.createdAt,
           sourceText,
           trustedSource: true,
         });
@@ -611,6 +641,9 @@ export class AgentProfileFactService {
       fact.sourceMessageId = remaining[0];
       if (!remaining.length) {
         fact.status = AgentProfileFactStatus.archived;
+        this.stampFactGovernance(fact, {
+          reason: '导入聊天来源消息已移除，该事实归档',
+        });
         archivedCount += 1;
       }
       fact.updatedAt = now;
@@ -833,6 +866,9 @@ export class AgentProfileFactService {
       if (!sourceText) {
         if (existing && existing.status !== AgentProfileFactStatus.archived) {
           existing.status = AgentProfileFactStatus.archived;
+          this.stampFactGovernance(existing, {
+            reason: `资料字段「${field}」被清空，该事实归档`,
+          });
           existing.updatedAt = new Date();
           await this.factModel.save(existing);
         }
@@ -894,6 +930,11 @@ export class AgentProfileFactService {
 
     for (const fact of matched) {
       fact.status = AgentProfileFactStatus.archived;
+      this.stampFactGovernance(fact, {
+        reason: target
+          ? `用户明确要求不再保留与「${target}」有关的记忆`
+          : '用户明确要求忘记最近提到的记忆',
+      });
       fact.updatedAt = now;
       await this.factModel.save(fact);
     }
@@ -1254,7 +1295,7 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。籍贯：只有用户明确说当前角色是某地人（如“爷爷是山东人”“老家在山东”）才抽取，用 key=origin.hometown，值写成“当前角色的籍贯是XX省”，省级即可，不猜城市、不猜方言。用户本人的籍贯不是当前角色的事实；只是在某地住过、工作过、去旅游或待过都不等于籍贯；明确否定、转述或主体不明时禁止抽取。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。主体归属：只输出当前角色（用户正在对话的逝去亲人）本人的稳定事实。用户本人的处境（工作、收入、养育、健康、情绪）和用户其他亲属（母亲、爷奶、叔伯舅姨等）的近况，不是当前角色的事实，禁止输出。第三人称提到的人（“我妈妈”“爷爷奶奶”）默认不属于当前角色，除非用户明确表示其与当前角色同一人，或明确说是双方共同经历。时间性质：带时间的表达先判断这件事指什么；不得把时间短语（如“元旦迎新的日子”）单独作为事实输出，离开/纪念的时间锚点归时间记忆处理。表达性质：纯思念、寒暄、疑问、愿望、祈使、假设不输出；具体纪念或触发情境只有原话给出明确场景时才保留，并写清场景，不得仅凭情绪强度生成思念触发类标签。称呼要求：只有用户明确、持久地要求改变称呼（“以后叫我X”“以后都叫你X”“叫我X就行”）才写 relationship.preferred_user_name（值“当前用户希望当前角色称呼其为X”）或 relationship.preferred_agent_name（值“当前用户偏好称呼当前角色为X”）；“爸爸叫我X”这类第三人称说法不是当前用户的要求，禁止写成 preferred；“我以前还叫你X”只登记别名 identity.alias.confirmed.<短哈希>，值“当前角色别名或昵称是X”，不得覆盖当前默认称呼。表达偏好：用户明确、持久地要求改变表达方式（“以后别说一大段”“别总在最后问我问题”）才写 style.preference.<维度>，维度用 verbosity/closing_question/preachy/tone/other，值“用户对表达方式的长期要求：原话”；带“今天/这次/先”的当下要求不写。性格：只在用户明确描述性格、或多次重复出现同一具体表达倾向时采用，写成“话少，常用具体事情关心人”这类具体倾向，最多 3 到 5 条，超出留候选；不从一次行为推完整人格，不从籍贯推性格。核心家人重大状态：只有用户明确说已离世、明确离婚或断联、目前独居或长期异地等会影响安慰与建议的状态才作为家人事实，并区分稳定历史与可能变化的状态（后者按“上次提到”理解）；未证实的称谓（例如“婆婆”是否就是“奶奶”）保留歧义，不得合并成同一个人。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。籍贯：只有用户明确说当前角色是某地人（如“爷爷是山东人”“老家在山东”）才抽取，用 key=origin.hometown，值写成“当前角色的籍贯是XX省”，省级即可，不猜城市、不猜方言。用户本人的籍贯不是当前角色的事实；只是在某地住过、工作过、去旅游或待过都不等于籍贯；明确否定、转述或主体不明时禁止抽取。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。主体归属：只输出当前角色（用户正在对话的逝去亲人）本人的稳定事实。用户本人的处境（工作、收入、养育、健康、情绪）和用户其他亲属（母亲、爷奶、叔伯舅姨等）的近况，不是当前角色的事实，禁止输出。第三人称提到的人（“我妈妈”“爷爷奶奶”）默认不属于当前角色，除非用户明确表示其与当前角色同一人，或明确说是双方共同经历。时间性质：带时间的表达先判断这件事指什么；不得把时间短语（如“元旦迎新的日子”）单独作为事实输出，离开/纪念的时间锚点归时间记忆处理。表达性质：纯思念、寒暄、疑问、愿望、祈使、假设不输出；具体纪念或触发情境只有原话给出明确场景时才保留，并写清场景，不得仅凭情绪强度生成思念触发类标签。称呼要求：只有用户明确、持久地要求改变称呼（“以后叫我X”“以后都叫你X”“叫我X就行”）才写 relationship.preferred_user_name（值“当前用户希望当前角色称呼其为X”）或 relationship.preferred_agent_name（值“当前用户偏好称呼当前角色为X”）；“爸爸叫我X”这类第三人称说法不是当前用户的要求，禁止写成 preferred；“我以前还叫你X”只登记别名 identity.alias.confirmed.<短哈希>，值“当前角色别名或昵称是X”，不得覆盖当前默认称呼。表达偏好：用户明确、持久地要求改变表达方式（“以后别说一大段”“别总在最后问我问题”）才写 style.preference.<维度>，维度用 verbosity/closing_question/preachy/tone/other，值“用户对表达方式的长期要求：原话”；带“今天/这次/先”的当下要求不写。性格：只在用户明确描述性格、或多次重复出现同一具体表达倾向时采用，写成“话少，常用具体事情关心人”这类具体倾向，key 统一用 style.personality.短标签，最多 3 到 5 条，超出留候选（程序侧也会按该前缀做容量控制）；不从一次行为推完整人格，不从籍贯推性格。核心家人重大状态：只有用户明确说已离世、明确离婚或断联、目前独居或长期异地等会影响安慰与建议的状态才作为家人事实，并区分稳定历史与可能变化的状态（后者按“上次提到”理解）；未证实的称谓（例如“婆婆”是否就是“奶奶”）保留歧义，不得合并成同一个人。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',
@@ -1852,6 +1893,14 @@ export class AgentProfileFactService {
     const fact = existing ?? new AgentProfileFactEntity();
     const previousValue = existing?.value?.trim();
     const sameValue = existing?.value?.trim() === input.value.trim();
+    const nextSourceIdStr = this.stringifyObjectId(input.sourceMessageId);
+    const isPreferredNameKey =
+      input.key === USER_PREFERRED_NAME_FACT_KEY ||
+      input.key === AGENT_PREFERRED_NAME_FACT_KEY;
+    // 明确更正（模型标注 user_corrected，或原话含纠正结构）优先于来源时间。
+    const incomingIsExplicitCorrection =
+      input.confidence === AgentProfileFactConfidence.userCorrected ||
+      this.isCorrectionText(input.sourceText || '');
     const sourceMessageIds = this.appendSourceMessageId(
       existing?.sourceMessageIds,
       existing?.sourceMessageId,
@@ -1860,7 +1909,6 @@ export class AgentProfileFactService {
     );
 
     // P1-1: supportCount 幂等——同来源不重复递增（避免任务重试/重复"记住"把未验证候选升为 active）
-    const nextSourceIdStr = this.stringifyObjectId(input.sourceMessageId);
     const sourceAlreadyExists =
       nextSourceIdStr &&
       sourceMessageIds.some(
@@ -1897,6 +1945,29 @@ export class AgentProfileFactService {
       canonicalNameReplacementIsAllowed &&
       (effectiveTrustedSource || (sameValue && nextSupportCount >= 2));
 
+    // 称呼乱序保护：来源发生时间更晚的称呼赢；后到达但发生更早的消息不得覆盖。
+    // 明确更正不受时间顺序限制（用户改口永远优先）；同一来源重放保持幂等。
+    // 旧数据没有来源时间时保持原行为。
+    if (existing && isPreferredNameKey) {
+      const sameSourceReplay =
+        !!nextSourceIdStr &&
+        this.stringifyObjectId(existing.latestSourceMessageId) ===
+          nextSourceIdStr;
+      if (sameSourceReplay) {
+        return existing;
+      }
+      if (!sameValue && !incomingIsExplicitCorrection) {
+        const previousOccurredAt = this.readSourceOccurredAt(existing);
+        if (
+          previousOccurredAt &&
+          input.sourceOccurredAt &&
+          input.sourceOccurredAt.getTime() < previousOccurredAt.getTime()
+        ) {
+          return existing;
+        }
+      }
+    }
+
     if (existing && !sameValue && !shouldActivate) {
       fact.sourceMessageIds = sourceMessageIds;
       fact.conflictingValues = this.appendConflictingValue(
@@ -1914,6 +1985,21 @@ export class AgentProfileFactService {
 
     if (existing && !sameValue && isCanonicalName && shouldActivate) {
       await this.saveSupersededRealNameHistory(input, existing, now);
+    }
+
+    // 明确更正覆盖已采用事实时，先把旧断言落成 archived 记录并写入真实 reason，
+    // 使后台能读到库中原句（canonical key 仍由新值覆盖，读侧不读 archived）。
+    if (
+      existing &&
+      !sameValue &&
+      shouldActivate &&
+      incomingIsExplicitCorrection &&
+      existing.status === AgentProfileFactStatus.active &&
+      !isCanonicalName &&
+      !existing.key.includes(SUPERSEDED_FACT_KEY_MARKER) &&
+      !existing.key.startsWith('wechat_import.')
+    ) {
+      await this.saveSupersededAssertion(input, existing, now);
     }
 
     fact.userId = input.userId;
@@ -1953,11 +2039,25 @@ export class AgentProfileFactService {
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
+    // 称呼类事实记录来源发生时间，供后续乱序判定（复用 governance.sourceOccurredAt）。
+    if (isPreferredNameKey && input.sourceOccurredAt) {
+      this.stampFactGovernance(fact, {
+        sourceOccurredAt: input.sourceOccurredAt,
+      });
+    }
+
     // #17 并发原子化：同一 (userId, agentId, key) 的并发写入由唯一索引兜底。
     // 两个请求同时发现"不存在"时会有一个撞唯一键，这里收敛重试一次：
     // 重试时 findOne 必然能读到并发写入的记录，走合并分支，不再重复插入。
     try {
-      return await this.factModel.save(fact);
+      const savedFact = await this.factModel.save(fact);
+      if (this.isPersonalityFact(input.type, input.key, input.value)) {
+        await this.enforcePersonalityFactCapacity(
+          input.userId,
+          input.agentId
+        );
+      }
+      return savedFact;
     } catch (error) {
       if (retryAttempt >= 1 || !this.isDuplicateKeyError(error)) throw error;
       return this.upsertFact(input, retryAttempt + 1);
@@ -1969,6 +2069,167 @@ export class AgentProfileFactService {
     const message =
       error instanceof Error ? error.message : String(error || '');
     return code === 11000 || /E11000|duplicate key/i.test(message);
+  }
+
+  /**
+   * 明确更正把旧断言覆盖时，先落一条 archived 的派生记录保存旧值与原因，
+   * 让后台能读到库中原句（governance.reason），而不是按 confidence/status 合成。
+   * 旧值在 canonical key 上仍被新值覆盖，读侧不读 archived，因此不影响当前采用值。
+   */
+  private async saveSupersededAssertion(
+    input: UpsertProfileFactInput,
+    existing: AgentProfileFactEntity,
+    now: Date
+  ): Promise<void> {
+    const supersededKey = `${existing.key}${SUPERSEDED_FACT_KEY_MARKER}${this.hashKey(
+      `${existing.value}|${input.value}`
+    )}`;
+    const reason = `用户明确更正：原事实「${existing.value}」被「${input.value}」覆盖`;
+    const sourceOccurredAt = this.readSourceOccurredAt(existing);
+    // 同一“旧值→新值”重复更正时按键幂等更新，避免撞唯一索引。
+    const stored = await this.factModel.findOne({
+      where: {
+        userId: input.userId,
+        agentId: input.agentId,
+        key: supersededKey,
+      },
+    });
+    if (stored) {
+      stored.status = AgentProfileFactStatus.archived;
+      stored.updatedAt = now;
+      this.stampFactGovernance(stored, { reason, sourceOccurredAt });
+      await this.factModel.save(stored);
+      return;
+    }
+
+    const superseded = new AgentProfileFactEntity();
+    superseded.userId = input.userId;
+    superseded.agentId = input.agentId;
+    superseded.type = existing.type;
+    superseded.key = supersededKey;
+    superseded.value = existing.value;
+    superseded.polarity = existing.polarity;
+    superseded.confidence = existing.confidence;
+    superseded.status = AgentProfileFactStatus.archived;
+    superseded.priority = existing.priority;
+    superseded.sourceMessageId = existing.sourceMessageId;
+    superseded.sourceMessageIds = existing.sourceMessageIds;
+    superseded.sourceText = existing.sourceText;
+    superseded.supportCount = existing.supportCount;
+    superseded.assertionPolicy =
+      existing.assertionPolicy ??
+      this.resolveAssertionPolicy(existing.type, existing.key);
+    superseded.createdAt = existing.createdAt ?? now;
+    superseded.updatedAt = now;
+    this.stampFactGovernance(superseded, { reason, sourceOccurredAt });
+    await this.factModel.save(superseded);
+  }
+
+  /**
+   * 把归档原因/来源发生时间写进既有 governance 字段（不新增平行字段）。
+   * 非 memory_value 治理记录只保证 reason/sourceOccurredAt/revision 有值，
+   * version 等治理字段保持原样；governed 查询按 version 过滤，不会误读这些戳记。
+   */
+  private stampFactGovernance(
+    fact: AgentProfileFactEntity,
+    patch: { reason?: string; sourceOccurredAt?: Date }
+  ): void {
+    const current = fact.governance as Partial<MemoryGovernance> | undefined;
+    const next: Partial<MemoryGovernance> = { ...(current || {}) };
+    if (patch.reason) next.reason = patch.reason;
+    if (patch.sourceOccurredAt) {
+      next.sourceOccurredAt = patch.sourceOccurredAt.toISOString();
+    }
+    next.revision =
+      (typeof current?.revision === 'number' ? current.revision : 0) + 1;
+    fact.governance = next as MemoryGovernance;
+  }
+
+  private readSourceOccurredAt(
+    fact: AgentProfileFactEntity
+  ): Date | undefined {
+    const raw = (fact.governance as Partial<MemoryGovernance> | undefined)
+      ?.sourceOccurredAt;
+    if (!raw) return undefined;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+
+  private isPersonalityFact(
+    type: AgentProfileFactType,
+    key: string,
+    value: string
+  ): boolean {
+    if (type !== AgentProfileFactType.style) return false;
+    if (
+      NON_PERSONALITY_STYLE_KEY_PREFIXES.some(prefix => key.startsWith(prefix))
+    ) {
+      return false;
+    }
+    if (key.startsWith(PERSONALITY_FACT_KEY_PREFIX)) return true;
+    return PERSONALITY_VALUE_SIGNAL.test(value || '');
+  }
+
+  /**
+   * 性格容量确定性控制：active 最多 MAX_ACTIVE_PERSONALITY_FACTS 条，超出的降为
+   * candidate（保留不丢弃、不补写）；user_corrected 不受挤压；同优先级时已采用的
+   * 旧条目优先于新条目，避免第 6 条同等优先级事实把已采用项挤掉。
+   */
+  private async enforcePersonalityFactCapacity(
+    userId: MongoObjectId,
+    agentId: MongoObjectId
+  ): Promise<void> {
+    const facts = await this.factModel.find({
+      where: {
+        userId,
+        agentId,
+        type: AgentProfileFactType.style,
+      } as never,
+      order: { priority: 'DESC', createdAt: 'ASC' },
+      take: DEFAULT_FACT_LIMIT,
+    });
+    const active = facts.filter(
+      fact =>
+        fact.status === AgentProfileFactStatus.active &&
+        this.isPersonalityFact(fact.type, fact.key, fact.value)
+    );
+    if (active.length <= MAX_ACTIVE_PERSONALITY_FACTS) return;
+    const exempt = active.filter(
+      fact => fact.confidence === AgentProfileFactConfidence.userCorrected
+    );
+    const ranked = active
+      .filter(
+        fact => fact.confidence !== AgentProfileFactConfidence.userCorrected
+      )
+      .sort((left, right) => this.comparePersonalityFacts(left, right));
+    const keep = new Set(
+      [...exempt, ...ranked]
+        .slice(0, MAX_ACTIVE_PERSONALITY_FACTS)
+        .map(fact => this.stringifyObjectId(fact.id))
+    );
+    for (const fact of ranked) {
+      if (keep.has(this.stringifyObjectId(fact.id))) continue;
+      fact.status = AgentProfileFactStatus.candidate;
+      await this.factModel.save(fact);
+    }
+  }
+
+  private comparePersonalityFacts(
+    left: AgentProfileFactEntity,
+    right: AgentProfileFactEntity
+  ): number {
+    const priorityDiff =
+      this.normalizePriority(right.priority) -
+      this.normalizePriority(left.priority);
+    if (priorityDiff !== 0) return priorityDiff;
+    const supportDiff =
+      Math.max(right.supportCount ?? 1, 1) -
+      Math.max(left.supportCount ?? 1, 1);
+    if (supportDiff !== 0) return supportDiff;
+    const createdDiff =
+      (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0);
+    if (createdDiff !== 0) return createdDiff;
+    return left.key.localeCompare(right.key);
   }
 
   private async saveSupersededRealNameHistory(
@@ -2266,7 +2527,7 @@ export class AgentProfileFactService {
         .filter(Boolean),
       updatedAt: fact.updatedAt,
     };
-    if (fact.governance?.subjectRef.startsWith('user:')) {
+    if (fact.governance?.subjectRef?.startsWith('user:')) {
       summary.value = `用户本人：${value}`;
       if (summary.key.startsWith('identity.'))
         summary.key = `user.${summary.key}`;
