@@ -713,13 +713,16 @@ function isTerminalTaskStatus(status: RecognitionTaskStatus): boolean {
   return ['completed', 'skipped', 'expired'].includes(status);
 }
 
-function shouldObserveTaskResponse(
+export function shouldObserveTaskResponse(
   taskId: RecognitionTaskId,
   query: string
 ): boolean {
   if (!query) return false;
   if (taskId === 'departure_interval') {
-    return /(?:[0-9零〇一二两三四五六七八九十百]+\s*(?:年|个?月|天|日)|很久|没多久|不久|好多年|十几年|几十年|一阵子|一段时间)(?:了|啦|吧|左右|多)?/u.test(
+    // 回答"哪一天走的/走了多久"可以只给日号（"15号"）或钟点（"凌晨12:23分"），
+    // 只认 年/月/天/日 会让这类回答根本进不了观察点，任务永远完不成。
+    // 这里只负责"值得交给观察器判断"，是否真的在回答由模型决定。
+    return /(?:[0-9零〇一二两三四五六七八九十百]+\s*(?:年|个?月|天|日|号)|[0-9]{1,2}\s*[:：]\s*[0-9]{1,2}|凌晨|早上|上午|中午|下午|晚上|很久|没多久|不久|好多年|十几年|几十年|一阵子|一段时间)(?:了|啦|吧|左右|多)?/u.test(
       query
     );
   }

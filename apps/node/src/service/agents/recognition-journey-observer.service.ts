@@ -126,7 +126,17 @@ export class RecognitionJourneyObserverService {
         typeof content === 'string' ? content : '',
         greetingCheckpoint
       );
-      if (!observation) return { status: 'unavailable' };
+      if (!observation) {
+        // 解析/枚举校验失败此前是静默返回 unavailable，导致线上只看到
+        // observerUnavailableCount 上升却查不到原因。这里留下一条有界 warn，
+        // 只记录长度与 finish_reason，不落原始内容。
+        this.logger?.warn?.(
+          '[recognition-journey] semantic observation unparsed, finishReason=%s, contentLength=%s',
+          response.choices?.[0]?.finish_reason || 'unknown',
+          typeof content === 'string' ? content.length : 0
+        );
+        return { status: 'unavailable' };
+      }
       return {
         status: 'observed',
         observation,

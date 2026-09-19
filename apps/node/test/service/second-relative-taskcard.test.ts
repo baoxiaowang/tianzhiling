@@ -14,6 +14,7 @@ import {
   applyRecognitionJourneyObserverUnavailable,
   buildInitialRecognitionJourney,
   markDepartureIntervalAnswered,
+  shouldObserveTaskResponse,
   buildLegacyRecognitionJourney,
   buildSubsequentRelativeGreetingPrompt,
   formatFirstRelativeMentionCallName,
@@ -1723,5 +1724,24 @@ describe('stable first-relative classification from the creation ledger', () => 
     });
     const marked = markDepartureIntervalAnswered(journey);
     expect(marked).toEqual(journey);
+  });
+
+  it('routes day-only and clock-only departure answers to the observation checkpoint', () => {
+    // 真实案例：用户回答"你15号凌晨12:23分走的"，此前的正则会把它判为
+    // "没有回答"，答案根本进不了观察点，任务永远完不成。
+    expect(
+      shouldObserveTaskResponse('departure_interval', '你15号凌晨12:23分走的')
+    ).toBe(true);
+    expect(shouldObserveTaskResponse('departure_interval', '15号')).toBe(true);
+    expect(
+      shouldObserveTaskResponse('departure_interval', '凌晨十二点走的')
+    ).toBe(true);
+    // 既有写法不回退
+    expect(
+      shouldObserveTaskResponse('departure_interval', '走了三年了')
+    ).toBe(true);
+    expect(
+      shouldObserveTaskResponse('departure_interval', '爷爷')
+    ).toBe(false);
   });
 });
