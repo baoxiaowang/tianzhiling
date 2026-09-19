@@ -1713,16 +1713,25 @@ export class AgentContextService {
       ? '\n不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。'
       : '';
 
+    // 前缀缓存：稳定段只放"同一会话内逐字不变"的内容（全局常量 + 会话级身份/画像/
+    // 时间事实/连续性摘要），每轮会变化的内容（时间戳与联系间隔、回归轮材料、场景
+    // 指导、证据与候选、本轮简要）统一放到任务段尾部。主模型原则是全局常量，此前
+    // 落在每轮变化的时间块之后而整段无法命中缓存，现上移到稳定段末尾。
+    const mainModelPrinciplesPrompt = buildMainModelConversationPrinciplesPrompt({
+      explicitClose:
+        replyBrief?.experiencePlan.shortTurnKind === 'explicit_close',
+    });
     const stableParts = [
       '# 稳定系统层',
       companionCorePrompt,
       basePrompt + doubaoAdaptation,
       persona?.prompt,
+      sessionContinuityPrompt,
+      mainModelPrinciplesPrompt,
+      // 会话级但偶尔变化（时间事实/连续性摘要）放稳定段末尾：它们更新时只会
+      // 让更少的后续内容重新计费。
       buildTemporalProfilePromptSection(temporalProfiles),
       plan.includeContinuity ? continuitySummaryPrompt : '',
-      sessionContinuityPrompt,
-      conversationReturnContextPrompt,
-      returnTurnMaterialPrompt,
     ];
 
     const conversationReadingPrompt =
@@ -1786,6 +1795,10 @@ export class AgentContextService {
     });
     const taskParts = [
       '# 本轮任务层',
+      // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
+      // 证据与本地候选、本轮简要），统一后置，保证稳定段逐字不变。
+      conversationReturnContextPrompt,
+      returnTurnMaterialPrompt,
       conversationReadingPrompt,
       initiativeResource.prompt,
       deliberateLongReplyPrompt,
@@ -1995,11 +2008,13 @@ export class AgentContextService {
         ]
       : [];
 
+    // `# 本轮理解原则` 的通用结论（以本轮原话和上下文为准、自主判断问题/情绪/人物
+    // 指代、辅助信号不是回复计划、不得覆盖本轮纠正/否定）已由稳定段的
+    // `# 最小核心原则` 与 `# 主模型自主理解` 逐轮给出；这里只保留按场景才需要的
+    // 连续输入/图片指引，不再重复渲染同一结论。
     return [
       ...consecutiveInputGuidance,
       ...this.buildImageInputGuidance(currentQuery),
-      '# 本轮理解原则',
-      '以当前用户原话和完整上下文为准，自主判断真正的问题、情绪与人物指代。辅助信号不是回复计划，不得覆盖本轮事实、否定、纠正或话题转移。',
     ].join('\n');
   }
 
@@ -2158,10 +2173,6 @@ export class AgentContextService {
 
     return [
       '# 本轮回复任务',
-      buildMainModelConversationPrinciplesPrompt({
-        explicitClose:
-          replyBrief.experiencePlan.shortTurnKind === 'explicit_close',
-      }),
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
       '# 世界与证据公共政策',
@@ -3874,7 +3885,8 @@ export class AgentContextService {
     return [
       '# 对话连续性摘要',
       summary,
-      '摘要只用于理解此前聊到哪里，不是事实证据。涉及人物、关系、现实事件和共同记忆时，仍必须由本轮证据包中的“可陈述”证据支持。',
+      // "摘要只用于理解此前聊到哪里、不是事实证据"的边界约束由稳定段
+      // `# 会话连续感` 逐轮给出，这里不再重复渲染同一结论。
     ].join('\n');
   }
 

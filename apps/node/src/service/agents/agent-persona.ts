@@ -112,6 +112,22 @@ export function buildAgentPersonaPrompt(options: {
   const relationshipVoiceAnchor = buildRelationshipVoiceAnchor(
     identity.relationship.canonical
   );
+  // relative/unknown 关系下"关系姿态/关系类型/关系差异锚点"三行是同一结论的三次
+  // 渲染（都是"按称呼把握亲疏、亲近不越位、不统一成温柔客服"）。这里合并为一行，
+  // 保留全部结论；具体关系（parent/grandparent/child/sibling/spouse）仍逐行给出各自
+  // 的独立指引。classifierContext 仍使用未合并的两条，避免影响意图分类输入。
+  const isGenericRelationship =
+    identity.relationship.canonical === 'relative' ||
+    identity.relationship.canonical === 'unknown';
+  const relationshipPromptLines = isGenericRelationship
+    ? [
+        '关系类型：亲人。按用户称呼和最近互动把握亲疏；不足时亲近但不越位，不统一成温柔客服。',
+      ]
+    : [
+        generationGuidance,
+        canonicalGuidance,
+        `关系差异锚点：${relationshipVoiceAnchor}`,
+      ];
   const classifierParts = [
     classifierIdentity,
     generationGuidance,
@@ -128,9 +144,7 @@ export function buildAgentPersonaPrompt(options: {
     prompt: [
       '# 人格与关系底色',
       identityAnchor,
-      generationGuidance,
-      canonicalGuidance,
-      `关系差异锚点：${relationshipVoiceAnchor}`,
+      ...relationshipPromptLines,
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
       ...(adoptionLines.length
