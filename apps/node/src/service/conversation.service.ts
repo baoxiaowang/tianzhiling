@@ -70,6 +70,7 @@ import { AgentMemoryProfileService } from './agents/agent-memory-profile.service
 import { MemoryValueService } from './agents/memory-value.service';
 import { buildAgentPersonaPrompt } from './agents/agent-persona';
 import { buildAgentIdentityContract } from './agents/agent-identity-contract';
+import type { AgentIdentityContract } from './agents/agent-identity-contract';
 import {
   AgentProfileFactService,
   AgentVisualAppearanceObservation,
@@ -5135,13 +5136,14 @@ export class ConversationService {
       const isTimeoutRecovery = this.isGenerationTimeoutError(initialError);
 
       try {
-        const recoveryMessages = this.buildMinimalGenerationRecoveryMessages({
-          runtime,
-          userQuery: before.searchableText,
-          contextMessages: context.messages,
-          replyBrief,
-          evidence: contextEvidence,
-        });
+        const recoveryMessages =
+          await this.buildMinimalGenerationRecoveryMessages({
+            runtime,
+            userQuery: before.searchableText,
+            contextMessages: context.messages,
+            replyBrief,
+            evidence: contextEvidence,
+          });
         this.chatTraceService?.recordArtifact({
           stage: ChatTraceStage.promptBuild,
           kind: ChatTraceArtifactKind.actualContext,
@@ -6727,6 +6729,44 @@ export class ConversationService {
     return verified;
   }
 
+  /**
+   * Single source of the current effective address for every path in this
+   * service: gather the same inputs and reuse the shared identity contract,
+   * instead of re-reading AgentEntity.agentCallMe/iCallAgent directly.
+   * Address priority itself stays in buildAgentIdentityContract.
+   */
+  private async resolveRuntimeIdentityContract(
+    runtime: ReplyRuntime
+  ): Promise<AgentIdentityContract> {
+    const userId = runtime.conversation.userId;
+    const agentId = runtime.conversation.agentId;
+    const identityService = this.userIdentityMemoryService;
+    const factService = this.agentProfileFactService;
+    try {
+      const [userIdentity, profileFacts] = await Promise.all([
+        typeof identityService?.getUserIdentity === 'function'
+          ? identityService.getUserIdentity(userId)
+          : Promise.resolve(null),
+        typeof factService?.listFactsForPrompt === 'function'
+          ? factService.listFactsForPrompt({ userId, agentId, limit: 16 })
+          : Promise.resolve([]),
+      ]);
+
+      return buildAgentIdentityContract({
+        agent: runtime.agent,
+        userIdentity,
+        profileFacts,
+      });
+    } catch (error) {
+      // 读事实失败时退回实体默认称呼，不能让恢复/图片路径因读库失败而中断。
+      this.logger.warn(
+        '[conversation] identity contract lookup failed, fallback to agent defaults, reason=%s',
+        this.describeReplyError(error)
+      );
+      return buildAgentIdentityContract({ agent: runtime.agent });
+    }
+  }
+
   private async buildLightweightReplyMessages(options: {
     runtime: ReplyRuntime;
     currentTurnMessages: MessageEntity[];
@@ -6736,21 +6776,7 @@ export class ConversationService {
     systemPromptCharacters: number;
     historyMessageCount: number;
   }> {
-    const [userIdentity, profileFacts] = await Promise.all([
-      this.userIdentityMemoryService?.getUserIdentity(
-        options.runtime.conversation.userId
-      ) || Promise.resolve(null),
-      this.agentProfileFactService?.listFactsForPrompt({
-        userId: options.runtime.conversation.userId,
-        agentId: options.runtime.conversation.agentId,
-        limit: 16,
-      }) || Promise.resolve([]),
-    ]);
-    const identity = buildAgentIdentityContract({
-      agent: options.runtime.agent,
-      userIdentity,
-      profileFacts,
-    });
+    const identity = await this.resolveRuntimeIdentityContract(options.runtime);
     const categoryLabel: Record<LightweightReplyCategory, string> = {
       good_night: '晚安或休息收尾',
       greeting: '日常问候',
@@ -7311,15 +7337,16 @@ export class ConversationService {
         ] as ChatCompletionMessageParam[]);
   }
 
-  private buildMinimalGenerationRecoveryMessages(options: {
+  private async buildMinimalGenerationRecoveryMessages(options: {
     runtime: ReplyRuntime;
     userQuery: string;
     contextMessages: ChatCompletionMessageParam[];
     replyBrief: ReplyBrief;
     evidence: AgentEvidenceItem[];
-  }): ChatCompletionMessageParam[] {
-    const agentName = options.runtime.agent?.name?.trim() || 'TA';
-    const agentCallsUser = options.runtime.agent?.agentCallMe?.trim() || '我';
+  }): Promise<ChatCompletionMessageParam[]> {
+    const identity = await this.resolveRuntimeIdentityContract(options.runtime);
+    const agentName = identity.agent.displayName || 'TA';
+    const agentCallsUser = identity.addresses.agentCallsUser || '我';
     const recentMessages = options.contextMessages
       .filter(
         message =>
@@ -7340,6 +7367,7 @@ export class ConversationService {
     }));
     const persona = buildAgentPersonaPrompt({
       agent: options.runtime.agent,
+      identityContract: identity,
     });
     const systemPrompt = [
       '# 天之灵主回复恢复',
@@ -7480,18 +7508,20 @@ export class ConversationService {
     generationAttemptTraces: AssistantGenerationAttemptTrace[];
   }): Promise<ProcessReplyResult | undefined> {
     try {
+      const fallbackMessages =
+        await this.buildMinimalGenerationRecoveryMessages({
+          runtime: options.runtime,
+          userQuery: options.userQuery,
+          contextMessages: options.messages,
+          replyBrief: options.replyBrief,
+          evidence: [],
+        });
       const response = await this.openAIService.createChatCompletion(
         {
           temperature: 0.3,
           topP: 0.9,
           max_tokens: 200,
-          messages: this.buildMinimalGenerationRecoveryMessages({
-            runtime: options.runtime,
-            userQuery: options.userQuery,
-            contextMessages: options.messages,
-            replyBrief: options.replyBrief,
-            evidence: [],
-          }),
+          messages: fallbackMessages,
           trace: {
             stage: ChatTraceStage.generate,
             operation: 'generate.secondaryFallback',
@@ -9193,7 +9223,7 @@ export class ConversationService {
 
       imageContent.push({
         type: 'text',
-        text: this.buildImageIdentityReference(runtime, visualMemories),
+        text: await this.buildImageIdentityReference(runtime, visualMemories),
       });
 
       const response = await this.openAIService.createVisionChatCompletion({
@@ -9264,16 +9294,17 @@ export class ConversationService {
     }
   }
 
-  private buildImageIdentityReference(
+  private async buildImageIdentityReference(
     runtime: ReplyRuntime,
     visualMemories: Array<{
       value: string;
       status?: string;
       supportCount?: number;
     }>
-  ): string {
-    const agentName = runtime.agent?.name?.trim() || '当前角色';
-    const agentAddress = runtime.agent?.iCallAgent?.trim();
+  ): Promise<string> {
+    const identity = await this.resolveRuntimeIdentityContract(runtime);
+    const agentName = identity.agent.displayName || '当前角色';
+    const agentAddress = identity.addresses.userCallsAgent;
     const lines = [
       `身份参考：当前角色是${agentName}${
         agentAddress && agentAddress !== agentName
