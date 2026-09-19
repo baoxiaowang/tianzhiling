@@ -6878,8 +6878,10 @@ export class ConversationService {
    * Effective display addresses for the client-facing paths. The correction
    * value comes from the identity contract (identity.*.preferredName); the
    * entity field is kept as the "unset" value so the legacy empty-string and
-   * description fallbacks keep working. No new priority chain is introduced:
-   * the correction-over-default rule is the contract's own projection.
+   * description fallbacks keep working. Do not switch this to identity.addresses.*:
+   * its '你'/'亲人' canonical fallbacks would make the list preview always take
+   * the address branch and change the public '' values already seen by released
+   * mini-program clients.
    */
   private displayAddresses(
     agent: AgentEntity | null | undefined,
