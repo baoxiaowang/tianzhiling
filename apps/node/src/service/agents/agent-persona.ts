@@ -1,4 +1,8 @@
-import { AgentEntity, AgentPersonaProfile } from '@tzl/entities';
+import {
+  AgentEntity,
+  AgentPersonaProfile,
+  AgentPersonaLanguageProfile,
+} from '@tzl/entities';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import {
   AgentCanonicalRelationship,
@@ -41,6 +45,26 @@ export interface AgentPersonaPromptResult {
 const MAX_PROFILE_ITEMS = 3;
 const MAX_PROFILE_ITEM_LENGTH = 70;
 const MAX_STYLE_VALUE_LENGTH = 110;
+/**
+ * 语言七维此前用 '；' 拼成一行再整体截断（110 字），越靠后的维度越容易被吞掉，
+ * 而导入服务给每个维度最多 80 字，七个必然超限。改为逐维度渲染：
+ * 每维独立成项、按优先级排序、只做"完整项预算"，不在句子中间截断。
+ * 顺序按对表达的影响排，称呼习惯最前（它最容易被原先的整体截断吞掉）。
+ */
+const LANGUAGE_DIMENSIONS: Array<[keyof AgentPersonaLanguageProfile, string]> = [
+  ['addressStyle', '称呼习惯'],
+  ['directness', '直接程度'],
+  ['sentenceLength', '句长'],
+  ['modalParticles', '语气词'],
+  ['emotionalExpression', '情绪表达'],
+  ['replyBubblePattern', '气泡节奏'],
+  ['distinctiveRhythm', '语言节奏'],
+];
+const MAX_LANGUAGE_DIMENSION_LENGTH = 80;
+/** 语言块字符预算（字符，非 token）：超限保留高优先级完整项。 */
+const LANGUAGE_BLOCK_BUDGET_CHARS = 420;
+/** 画像块总行数上限；语言维度逐项占用后才轮到其它画像项。 */
+const MAX_CHAT_DERIVED_LINES = 14;
 
 export function buildAgentPersonaPrompt(options: {
   agent: AgentEntity | null;
@@ -153,27 +177,38 @@ function buildChatDerivedProfileLines(profile: AgentPersonaProfile): string[] {
     formatValue('善意掩饰方式', profile.concealmentStyle),
     formatValue('提问习惯', profile.questionStyle),
     formatValue('幽默方式', profile.humorStyle),
-    formatValue(
-      '语言节奏',
-      [
-        profile.languageProfile?.sentenceLength,
-        profile.languageProfile?.modalParticles,
-        profile.languageProfile?.replyBubblePattern,
-        profile.languageProfile?.directness,
-        profile.languageProfile?.emotionalExpression,
-        profile.languageProfile?.addressStyle,
-        profile.languageProfile?.distinctiveRhythm,
-      ]
-        .filter(Boolean)
-        .join('；')
-    ),
+    ...buildLanguageDimensionLines(profile),
     formatItems('离世后放下', profile.departedTransformation?.released),
     formatItems('离世后更重视', profile.departedTransformation?.strengthened),
     formatItems('可采用的高情商策略', profile.highEqStrategies),
     formatItems('画像不确定项', profile.uncertainties),
   ].filter((line): line is string => Boolean(line));
 
-  return lines.slice(0, 10);
+  return lines.slice(0, MAX_CHAT_DERIVED_LINES);
+}
+
+/**
+ * 逐维度渲染语言画像。只装入完整维度项：预算不足时停在下一条之前，
+ * 而不是把某一条截半。返回值仍可能被上层行数上限裁剪，因此这里按优先级
+ * 从高到低产出，保证先装入的维度最有表达价值。
+ */
+function buildLanguageDimensionLines(
+  profile: AgentPersonaProfile
+): string[] {
+  const lines: string[] = [];
+  let used = 0;
+  for (const [key, label] of LANGUAGE_DIMENSIONS) {
+    const value = clean(
+      profile.languageProfile?.[key],
+      MAX_LANGUAGE_DIMENSION_LENGTH
+    );
+    if (!value) continue;
+    const line = `${label}：${value}`;
+    if (used + line.length > LANGUAGE_BLOCK_BUDGET_CHARS) break;
+    used += line.length;
+    lines.push(line);
+  }
+  return lines;
 }
 
 function buildExplicitProfile(agent: AgentEntity | null): string[] {

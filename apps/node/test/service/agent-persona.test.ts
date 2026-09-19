@@ -104,4 +104,84 @@ describe('buildAgentPersonaPrompt', () => {
     expect(result.prompt).toContain('先接住姐姐说的重点');
     expect(result.prompt).toContain('多说几句把回应表达完整');
   });
+
+  it('renders every language dimension as its own item instead of one truncated line', () => {
+    const agent = {
+      name: '爷爷',
+      sex: AgentSex.man,
+      iCallAgent: '爷爷',
+      agentCallMe: '湾呐',
+      personaProfile: {
+        version: 'wechat_import_style_v1',
+        languageProfile: {
+          sentenceLength: '句子偏短',
+          modalParticles: '常用语气词',
+          replyBubblePattern: '常拆两条',
+          directness: '直接',
+          emotionalExpression: '含蓄',
+          addressStyle: '称呼用户为湾呐',
+          distinctiveRhythm: '语速慢',
+        },
+      },
+    } as unknown as AgentEntity;
+
+    const { prompt } = buildAgentPersonaPrompt({ agent });
+
+    // 七维逐一成项，末尾维度不再被整体截断吞掉
+    for (const label of [
+      '称呼习惯',
+      '直接程度',
+      '句长',
+      '语气词',
+      '情绪表达',
+      '气泡节奏',
+      '语言节奏',
+    ]) {
+      expect(prompt).toContain(`${label}：`);
+    }
+    expect(prompt).toContain('称呼习惯：称呼用户为湾呐');
+    expect(prompt).toContain('语言节奏：语速慢');
+  });
+
+  it('never renders a half-truncated language dimension when the budget is exceeded', () => {
+    // 用不重复的汉字填充，避免内容清洗规则对连续重复字符做归一
+    const filler = '甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥'.repeat(4).slice(0, 62);
+    const long = (tag: string) => `${tag}${filler}`;
+    const values = {
+      sentenceLength: long('句长'),
+      modalParticles: long('语气词'),
+      replyBubblePattern: long('气泡'),
+      directness: long('直接'),
+      emotionalExpression: long('情绪'),
+      addressStyle: long('称呼'),
+      distinctiveRhythm: long('节奏'),
+    };
+    const agent = {
+      name: '爷爷',
+      sex: AgentSex.man,
+      iCallAgent: '爷爷',
+      agentCallMe: '湾呐',
+      personaProfile: { version: 'wechat_import_style_v1', languageProfile: values },
+    } as unknown as AgentEntity;
+
+    const { prompt } = buildAgentPersonaPrompt({ agent });
+
+    // 最高优先级的称呼习惯必须在；且任一被装入的维度都是完整值，不得只出现半句。
+    expect(prompt).toContain(`称呼习惯：${values.addressStyle}`);
+    const labels: Array<[string, string]> = [
+      ['称呼习惯', values.addressStyle],
+      ['直接程度', values.directness],
+      ['句长', values.sentenceLength],
+      ['语气词', values.modalParticles],
+      ['情绪表达', values.emotionalExpression],
+      ['气泡节奏', values.replyBubblePattern],
+      ['语言节奏', values.distinctiveRhythm],
+    ];
+    for (const [label, value] of labels) {
+      const start = prompt.indexOf(`${label}：`);
+      if (start < 0) continue; // 整项未装入是允许的
+      // 装入的必须是完整值：半句截断会让整值不再出现
+      expect(prompt).toContain(value);
+    }
+  });
 });

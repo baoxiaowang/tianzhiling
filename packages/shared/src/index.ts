@@ -10,5 +10,6 @@ export * from './media';
 export * from './order';
 export * from './post';
 export * from './response';
+export * from './role-core-memory';
 export * from './voice-package';
 export * from './voice-timbre';

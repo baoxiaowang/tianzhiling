@@ -2,7 +2,7 @@ import {
   deriveLanguageSettings,
   selectRoleCoreEntry,
   sourcePriority,
-} from '../../src/service/agents/role-core-memory';
+} from '@tzl/shared';
 
 describe('role core memory: hometown derived language setting', () => {
   const hometownSource = {
