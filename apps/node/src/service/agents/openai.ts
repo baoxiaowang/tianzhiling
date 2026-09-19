@@ -15,6 +15,7 @@ import { extractTranscriptionContent } from '../../common/asr-utils';
 import { AppError } from '../../common/errors';
 import { describeErrorForLog, truncateForLog } from '../../common/log-utils';
 import { ChatTraceService } from '../chat-trace.service';
+import { logMemoryCacheStats } from '../memory/memory-cache-stats';
 
 export interface OpenAIServiceConfig {
   enabled?: boolean;
@@ -758,6 +759,14 @@ export class OpenAIService {
     const content =
       typeof message?.content === 'string' ? message.content.trim() : '';
     const reasoning = this.extractReasoning(message);
+    // 记忆链路缓存命中埋点：此前只有 open-item / memory-decision 打点，
+    // 角色事实抽取（2024 字符固定系统提示）从未被计量，导致"缓存是否命中"
+    // 只能靠估算。开启 MEMORY_CACHE_STATS=1 即可拿到真实 cached_tokens。
+    logMemoryCacheStats(this.logger, {
+      kind: 'memory-text',
+      model: body.model,
+      usage: response.usage,
+    });
     this.logger?.info?.(
       '[openai] memory provider request, model=%s, promptChars=%s, contentChars=%s',
       body.model,

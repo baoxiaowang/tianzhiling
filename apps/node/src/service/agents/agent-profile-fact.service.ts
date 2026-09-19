@@ -83,6 +83,40 @@ interface ExtractProfileFactsOptions {
   }>;
 }
 
+/**
+ * 一批结构化抽取的输入项。与单条路径同构，只是把"一次一条"合成"一次一批"。
+ */
+export interface ExtractProfileFactsBatchEntry {
+  message: MessageEntity;
+  searchableText: string;
+  explicitlyConfirmed?: boolean;
+  previousAssistantContent?: string;
+  contextMessages?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }>;
+}
+
+/** 批量抽取按 messageId 归属的落库结果。 */
+export interface ExtractProfileFactsBatchResult {
+  messageId: string;
+  /** 该条消息本轮写入/更新的事实条数。 */
+  total: number;
+  facts: AgentProfileFactSummary[];
+}
+
+interface PreparedBatchEntry {
+  entry: ExtractProfileFactsBatchEntry;
+  sourceText: string;
+  /** 空文本、遗忘指令：整条跳过，不写也不调模型。 */
+  skipped: boolean;
+  /** 纯问句：只保留规则校验过的姓名类事实，不调模型。 */
+  questionOnly: boolean;
+  /** 无事实信号：只走规则抽取，不调模型。 */
+  skipLLM: boolean;
+  fallbackFacts: AgentProfileFactSummary[];
+}
+
 interface ExtractMessengerProfileFactsOptions {
   message: MessageEntity;
   searchableText: string;
@@ -304,6 +338,14 @@ const HISTORICAL_AGENT_ALIAS_PATTERNS = [
   ),
 ];
 
+/**
+ * 角色事实抽取的固定系统提示。抽成模块常量有两个原因：
+ * 1) 批量抽取必须与单条抽取逐字相同，稳定前缀才能命中服务端前缀缓存；
+ * 2) 避免在批/单两条路径各维护一份 2024 字符的提示而悄悄漂移。
+ */
+export const ROLE_FACT_EXTRACTION_SYSTEM_PROMPT =
+  '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。籍贯：只有用户明确说当前角色是某地人（如“爷爷是山东人”“老家在山东”）才抽取，用 key=origin.hometown，值写成“当前角色的籍贯是XX省”，省级即可，不猜城市、不猜方言。用户本人的籍贯不是当前角色的事实；只是在某地住过、工作过、去旅游或待过都不等于籍贯；明确否定、转述或主体不明时禁止抽取。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。主体归属：只输出当前角色（用户正在对话的逝去亲人）本人的稳定事实。用户本人的处境（工作、收入、养育、健康、情绪）和用户其他亲属（母亲、爷奶、叔伯舅姨等）的近况，不是当前角色的事实，禁止输出。第三人称提到的人（“我妈妈”“爷爷奶奶”）默认不属于当前角色，除非用户明确表示其与当前角色同一人，或明确说是双方共同经历。时间性质：带时间的表达先判断这件事指什么；不得把时间短语（如“元旦迎新的日子”）单独作为事实输出，离开/纪念的时间锚点归时间记忆处理。表达性质：纯思念、寒暄、疑问、愿望、祈使、假设不输出；具体纪念或触发情境只有原话给出明确场景时才保留，并写清场景，不得仅凭情绪强度生成思念触发类标签。称呼要求：只有用户明确、持久地要求改变称呼（“以后叫我X”“以后都叫你X”“叫我X就行”）才写 relationship.preferred_user_name（值“当前用户希望当前角色称呼其为X”）或 relationship.preferred_agent_name（值“当前用户偏好称呼当前角色为X”）；“爸爸叫我X”这类第三人称说法不是当前用户的要求，禁止写成 preferred；“我以前还叫你X”只登记别名 identity.alias.confirmed.<短哈希>，值“当前角色别名或昵称是X”，不得覆盖当前默认称呼。表达偏好：用户明确、持久地要求改变表达方式（“以后别说一大段”“别总在最后问我问题”）才写 style.preference.<维度>，维度用 verbosity/closing_question/preachy/tone/other，值“用户对表达方式的长期要求：原话”；带“今天/这次/先”的当下要求不写。性格：只在用户明确描述性格、或多次重复出现同一具体表达倾向时采用，写成“话少，常用具体事情关心人”这类具体倾向，key 统一用 style.personality.短标签，最多 3 到 5 条，超出留候选（程序侧也会按该前缀做容量控制）；不从一次行为推完整人格，不从籍贯推性格。核心家人重大状态：只有用户明确说已离世、明确离婚或断联、目前独居或长期异地等会影响安慰与建议的状态才作为家人事实，并区分稳定历史与可能变化的状态（后者按“上次提到”理解）；未证实的称谓（例如“婆婆”是否就是“奶奶”）保留歧义，不得合并成同一个人。';
+
 export const AGENT_PROFILE_MEMORY_SOURCE_CONFIG: Record<
   AgentProfileMemorySourceField,
   {
@@ -381,12 +423,30 @@ export class AgentProfileFactService {
       contextMessages: options.contextMessages,
     });
 
+    return this.persistExtractedFacts({
+      message: options.message,
+      sourceText,
+      extractedFacts,
+      explicitlyConfirmed: options.explicitlyConfirmed,
+    });
+  }
+
+  /**
+   * 单条写入路径，抽出来给批量路径复用，保证两条路径的校验、信任级别与
+   * user identity 联动完全一致（批量为的是少发固定提示，不是为了降低门槛）。
+   */
+  private async persistExtractedFacts(params: {
+    message: MessageEntity;
+    sourceText: string;
+    extractedFacts: ExtractedProfileFact[];
+    explicitlyConfirmed?: boolean;
+  }): Promise<AgentProfileFactSummary[]> {
     let userIdentityWriteSucceeded = false;
     try {
       if (this.userIdentityMemoryService) {
         await this.userIdentityMemoryService.recordFromUserMessage(
-          options.message,
-          sourceText
+          params.message,
+          params.sourceText
         );
         userIdentityWriteSucceeded = true;
       }
@@ -397,7 +457,7 @@ export class AgentProfileFactService {
       );
     }
 
-    for (const extracted of extractedFacts) {
+    for (const extracted of params.extractedFacts) {
       if (
         userIdentityWriteSucceeded &&
         this.isGlobalUserIdentityFactKey(extracted.fact.key)
@@ -406,21 +466,257 @@ export class AgentProfileFactService {
       }
       await this.upsertFact({
         ...extracted.fact,
-        userId: options.message.userId,
-        agentId: options.message.agentId,
-        sourceMessageId: options.message.id,
-        sourceOccurredAt: options.message.createdAt,
-        sourceText,
+        userId: params.message.userId,
+        agentId: params.message.agentId,
+        sourceMessageId: params.message.id,
+        sourceOccurredAt: params.message.createdAt,
+        sourceText: params.sourceText,
         trustedSource:
           !extracted.forceCandidate &&
-          (options.explicitlyConfirmed === true ||
-            isExplicitRememberRequest(sourceText) ||
+          (params.explicitlyConfirmed === true ||
+            isExplicitRememberRequest(params.sourceText) ||
             extracted.trustedSource),
         forceCandidate: extracted.forceCandidate,
       });
     }
 
-    return extractedFacts.map(item => item.fact);
+    return params.extractedFacts.map(item => item.fact);
+  }
+
+  /**
+   * 一批用户消息一次模型调用完成角色事实抽取。
+   *
+   * - 固定系统提示只发一次（与单条路径逐字相同）；
+   * - 输出要求每条事实带 messageId，程序只接受属于本批次的 messageId，
+   *   归属不明/不属于本批的一律丢弃（不靠猜、不靠 sourceText 反推）；
+   * - 解析失败、输出截断或调用异常时整体回退到逐条单条路径（有界：一轮，
+   *   单条路径自身不再重试批量）；
+   * - 只有一条消息需要模型时直接走单条，不为"批"而批。
+   */
+  async extractAndUpsertBatchFromUserMessages(
+    entries: ExtractProfileFactsBatchEntry[]
+  ): Promise<ExtractProfileFactsBatchResult[]> {
+    if (!entries.length) return [];
+
+    const prepared = entries.map(
+      (entry): PreparedBatchEntry => this.prepareBatchEntry(entry)
+    );
+    const llmEntries = prepared.filter(entry => !entry.skipped && !entry.skipLLM);
+
+    let llmFactsByMessageId = new Map<string, AgentProfileFactSummary[]>();
+    let batchFailed = false;
+    if (llmEntries.length === 1) {
+      const only = llmEntries[0];
+      llmFactsByMessageId.set(
+        this.stringifyObjectId(only.entry.message.id),
+        await this.extractFactsWithLLM(only.sourceText, {
+          previousAssistantContent: only.entry.previousAssistantContent,
+          contextMessages: only.entry.contextMessages,
+        })
+      );
+    } else if (llmEntries.length > 1) {
+      const batch = await this.extractBatchFactsWithLLM(llmEntries);
+      if (batch) {
+        llmFactsByMessageId = batch;
+      } else {
+        batchFailed = true;
+      }
+    }
+
+    if (batchFailed) {
+      // 回退：逐条重跑完整单条路径（规则 + 单条模型），保证一批失败不丢记忆。
+      this.logger?.warn?.(
+        '[agent-profile-fact] batch extraction degraded to per-message, size=%s',
+        llmEntries.length
+      );
+      const fallbackResults: ExtractProfileFactsBatchResult[] = [];
+      for (const entry of entries) {
+        fallbackResults.push(await this.extractSingleBatchFallback(entry));
+      }
+      return fallbackResults;
+    }
+
+    const results: ExtractProfileFactsBatchResult[] = [];
+    for (const item of prepared) {
+      const messageId = this.stringifyObjectId(item.entry.message.id);
+      if (item.skipped) {
+        results.push({ messageId, total: 0, facts: [] });
+        continue;
+      }
+      const llmFacts = item.skipLLM
+        ? []
+        : (llmFactsByMessageId.get(messageId) || []).filter(
+            fact => !this.shouldRejectBroadFamilyQuestionFact(fact, item.sourceText)
+          );
+      const extractedFacts = item.questionOnly
+        ? item.fallbackFacts
+            .filter(fact => isNameMemoryFactKey(fact.key))
+            .map(fact => ({ fact, trustedSource: true }))
+        : this.finalizeExtractedFacts(
+            item.fallbackFacts,
+            llmFacts,
+            item.sourceText
+          );
+      const facts = await this.persistExtractedFacts({
+        message: item.entry.message,
+        sourceText: item.sourceText,
+        extractedFacts,
+        explicitlyConfirmed: item.entry.explicitlyConfirmed,
+      });
+      results.push({ messageId, total: facts.length, facts });
+    }
+    return results;
+  }
+
+  private prepareBatchEntry(
+    entry: ExtractProfileFactsBatchEntry
+  ): PreparedBatchEntry {
+    const sourceText = this.normalizeSourceText(entry.searchableText);
+    const skipped = !sourceText || isForgetMemoryRequest(sourceText);
+    if (skipped) {
+      return {
+        entry,
+        sourceText,
+        skipped: true,
+        questionOnly: false,
+        skipLLM: true,
+        fallbackFacts: [],
+      };
+    }
+    const fallbackFacts = this.extractFactsWithRules(sourceText, {
+      previousAssistantContent: entry.previousAssistantContent,
+      contextMessages: entry.contextMessages,
+    });
+    const questionOnly = this.isQuestionOnly(sourceText);
+    const skipLLM =
+      questionOnly ||
+      (!isExplicitRememberRequest(sourceText) &&
+        !this.hasFactualSignal(sourceText));
+    return {
+      entry,
+      sourceText,
+      skipped: false,
+      questionOnly,
+      skipLLM,
+      fallbackFacts,
+    };
+  }
+
+  /** 批量回退：复用单条入口（含 active/影子分支与全部校验），有界不递归。 */
+  private async extractSingleBatchFallback(
+    entry: ExtractProfileFactsBatchEntry
+  ): Promise<ExtractProfileFactsBatchResult> {
+    const messageId = this.stringifyObjectId(entry.message.id);
+    try {
+      const facts = await this.extractAndUpsertFromUserMessage({
+        message: entry.message,
+        searchableText: entry.searchableText,
+        explicitlyConfirmed: entry.explicitlyConfirmed,
+        previousAssistantContent: entry.previousAssistantContent,
+        contextMessages: entry.contextMessages,
+      });
+      return { messageId, total: facts.length, facts };
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent-profile-fact] per-message fallback failed, messageId=%s reason=%s',
+        messageId,
+        error instanceof Error ? error.message : String(error)
+      );
+      return { messageId, total: 0, facts: [] };
+    }
+  }
+
+  /**
+   * 一次模型调用抽取整批。返回 null 表示批量不可用，调用方回退逐条。
+   * 系统提示与单条路径共用同一常量，保证逐字稳定（前缀缓存前提）。
+   */
+  private async extractBatchFactsWithLLM(
+    entries: PreparedBatchEntry[]
+  ): Promise<Map<string, AgentProfileFactSummary[]> | null> {
+    if (!this.openAIService?.isEnabled?.()) {
+      return null;
+    }
+    const allowedIds = new Set(
+      entries.map(entry => this.stringifyObjectId(entry.entry.message.id))
+    );
+    const payload = entries.map(entry => ({
+      messageId: this.stringifyObjectId(entry.entry.message.id),
+      text: entry.sourceText,
+    }));
+
+    try {
+      const result = await this.openAIService.generateMemoryText({
+        temperature: 0,
+        topP: 0.1,
+        reasoningSplit: false,
+        maxTokens: Math.min(600 * entries.length, 4000),
+        systemPrompt: ROLE_FACT_EXTRACTION_SYSTEM_PROMPT,
+        prompt: [
+          '来源：批量用户消息',
+          '下面是同一批次的多条用户消息，每条带 messageId。逐条独立抽取，不要把不同消息的事实混在一起。',
+          '输出严格 JSON 数组，每个事实必须额外带 messageId 字段，取值为该事实所属用户消息的 messageId，必须与输入中的 messageId 完全一致；无法确定属于哪条消息就不要输出该事实。',
+          `消息列表：${JSON.stringify(payload)}`,
+        ].join('\n'),
+      });
+      if (result.response?.choices?.[0]?.finish_reason === 'length') {
+        // 输出被截断：不解析半截 JSON，直接回退逐条（有界，一轮）。
+        this.logger?.warn?.(
+          '[agent-profile-fact] batch extraction truncated, size=%s',
+          entries.length
+        );
+        return null;
+      }
+      return this.parseBatchLLMFacts(result.content, allowedIds);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent-profile-fact] batch llm extraction failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+      return null;
+    }
+  }
+
+  /**
+   * 批量结果解析。硬解析失败抛错（触发回退）；messageId 不属于本批次的事实
+   * 直接丢弃。绝不用 sourceText 反推归属——历史上正是这么归错的。
+   */
+  private parseBatchLLMFacts(
+    value: string,
+    allowedIds: Set<string>
+  ): Map<string, AgentProfileFactSummary[]> {
+    const jsonText = this.extractJsonArrayText(value);
+    if (!jsonText) {
+      throw new Error('Batch memory extraction returned invalid JSON');
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      throw new Error('Batch memory extraction returned invalid JSON');
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error('Batch memory extraction returned a non-array result');
+    }
+
+    const byId = new Map<string, AgentProfileFactSummary[]>();
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
+      const rawMessageId = (item as Record<string, unknown>).messageId;
+      const messageId =
+        typeof rawMessageId === 'string' ? rawMessageId.trim() : '';
+      if (!messageId || !allowedIds.has(messageId)) continue;
+      const fact = this.normalizeLLMFact(item);
+      if (!fact) continue;
+      const list = byId.get(messageId) || [];
+      list.push(fact);
+      byId.set(messageId, list);
+    }
+    // 模型返回了内容却一条都没带合法 messageId，说明它没有遵守归属协议。
+    // 这不是"本批没有事实"，而是格式失败：回退逐条，避免静默丢掉整批事实。
+    if (parsed.length > 0 && byId.size === 0) {
+      throw new Error('Batch memory extraction missing messageId on every fact');
+    }
+    return byId;
   }
 
   /**
@@ -993,6 +1289,22 @@ export class AgentProfileFactService {
     const llmFacts = skipLLM
       ? []
       : await this.extractFactsWithLLM(sourceText, options);
+
+    return this.finalizeExtractedFacts(fallbackFacts, llmFacts, sourceText, {
+      fromFeedback: options.fromFeedback,
+    });
+  }
+
+  /**
+   * 规则事实 + 模型事实的合并、来源校验与信任级别判定。
+   * 单条与批量两条路径共用，保证批量不降低抽取质量门槛。
+   */
+  private finalizeExtractedFacts(
+    fallbackFacts: AgentProfileFactSummary[],
+    llmFacts: AgentProfileFactSummary[],
+    sourceText: string,
+    options: { fromFeedback?: boolean } = {}
+  ): ExtractedProfileFact[] {
     const validatedLLMFacts = llmFacts.filter(fact =>
       this.isValidatedFactForSource(fact.key, fact.value, sourceText)
     );
@@ -1294,8 +1606,7 @@ export class AgentProfileFactService {
         topP: 0.1,
         reasoningSplit: false,
         maxTokens: 600,
-        systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。籍贯：只有用户明确说当前角色是某地人（如“爷爷是山东人”“老家在山东”）才抽取，用 key=origin.hometown，值写成“当前角色的籍贯是XX省”，省级即可，不猜城市、不猜方言。用户本人的籍贯不是当前角色的事实；只是在某地住过、工作过、去旅游或待过都不等于籍贯；明确否定、转述或主体不明时禁止抽取。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。主体归属：只输出当前角色（用户正在对话的逝去亲人）本人的稳定事实。用户本人的处境（工作、收入、养育、健康、情绪）和用户其他亲属（母亲、爷奶、叔伯舅姨等）的近况，不是当前角色的事实，禁止输出。第三人称提到的人（“我妈妈”“爷爷奶奶”）默认不属于当前角色，除非用户明确表示其与当前角色同一人，或明确说是双方共同经历。时间性质：带时间的表达先判断这件事指什么；不得把时间短语（如“元旦迎新的日子”）单独作为事实输出，离开/纪念的时间锚点归时间记忆处理。表达性质：纯思念、寒暄、疑问、愿望、祈使、假设不输出；具体纪念或触发情境只有原话给出明确场景时才保留，并写清场景，不得仅凭情绪强度生成思念触发类标签。称呼要求：只有用户明确、持久地要求改变称呼（“以后叫我X”“以后都叫你X”“叫我X就行”）才写 relationship.preferred_user_name（值“当前用户希望当前角色称呼其为X”）或 relationship.preferred_agent_name（值“当前用户偏好称呼当前角色为X”）；“爸爸叫我X”这类第三人称说法不是当前用户的要求，禁止写成 preferred；“我以前还叫你X”只登记别名 identity.alias.confirmed.<短哈希>，值“当前角色别名或昵称是X”，不得覆盖当前默认称呼。表达偏好：用户明确、持久地要求改变表达方式（“以后别说一大段”“别总在最后问我问题”）才写 style.preference.<维度>，维度用 verbosity/closing_question/preachy/tone/other，值“用户对表达方式的长期要求：原话”；带“今天/这次/先”的当下要求不写。性格：只在用户明确描述性格、或多次重复出现同一具体表达倾向时采用，写成“话少，常用具体事情关心人”这类具体倾向，key 统一用 style.personality.短标签，最多 3 到 5 条，超出留候选（程序侧也会按该前缀做容量控制）；不从一次行为推完整人格，不从籍贯推性格。核心家人重大状态：只有用户明确说已离世、明确离婚或断联、目前独居或长期异地等会影响安慰与建议的状态才作为家人事实，并区分稳定历史与可能变化的状态（后者按“上次提到”理解）；未证实的称谓（例如“婆婆”是否就是“奶奶”）保留歧义，不得合并成同一个人。',
+        systemPrompt: ROLE_FACT_EXTRACTION_SYSTEM_PROMPT,
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',

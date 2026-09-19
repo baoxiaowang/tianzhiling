@@ -2340,11 +2340,35 @@ export class ConversationService {
       if (!validMessages.length) return 'skipped';
 
       // 抽取类任务在 active 灰度下用一次模型调用覆盖整批，失败再逐条回退。
+      const memoryValueActive =
+        this.memoryValueService?.active(validMessages[0].userId) === true;
       if (
         task.kind === MemoryPipelineTaskKind.structuredMemory &&
-        this.memoryValueService?.active(validMessages[0].userId)
+        memoryValueActive
       ) {
         return this.executeBatchStructuredMemory(validMessages);
+      }
+
+      // 生产默认 memoryValue=off，真正跑的是 legacy 角色事实抽取。它此前按
+      // "每条消息一次调用"执行，把 2024 字符固定系统提示重发 N 次；这里同样
+      // 合并为一次调用（结果按 messageId 归属），失败回退到下面的逐条循环。
+      // 仅在完全 off（无影子写入、未开启跳过写入）时启用批量，避免改变
+      // shadow 审计与 CHAT_SKIP_MEMORY_WRITE 的既有语义。
+      if (
+        task.kind === MemoryPipelineTaskKind.structuredMemory &&
+        this.memoryValueService?.enabled(validMessages[0].userId) !== true &&
+        process.env.CHAT_SKIP_MEMORY_WRITE !== 'true' &&
+        this.agentProfileFactService &&
+        typeof this.agentProfileFactService
+          .extractAndUpsertBatchFromUserMessages === 'function'
+      ) {
+        const anchorAgent = await this.findAgentById(
+          validMessages[validMessages.length - 1].agentId
+        );
+        // 小使者访谈走的是另一套第三人称提示词与归属规则，不纳入本批。
+        if (anchorAgent && !anchorAgent.messengerOfAgentId) {
+          return this.executeBatchLegacyStructuredMemory(validMessages);
+        }
       }
 
       let anyCompleted = false;
@@ -2468,6 +2492,53 @@ export class ConversationService {
       }
       return anyCompleted ? 'completed' : 'skipped';
     }
+  }
+
+  /**
+   * legacy（memoryValue=off）结构化记忆的批量入口：角色事实抽取一次模型调用
+   * 覆盖整批，其余逐条增强（亲属/用户本人/时间/情绪/未了结）保持原样。
+   * 批量失败时 agent-profile-fact 内部会自行回退逐条，这里不再重复回退。
+   */
+  private async executeBatchLegacyStructuredMemory(
+    messages: MessageEntity[]
+  ): Promise<'completed' | 'skipped'> {
+    const entries = messages
+      .map(message => ({
+        message,
+        text: this.buildSearchableTextFromMessage(message),
+      }))
+      .filter(entry => Boolean(entry.text));
+    if (!entries.length) return 'skipped';
+
+    const batchResults =
+      (await this.agentProfileFactService?.extractAndUpsertBatchFromUserMessages?.(
+        entries.map(entry => ({
+          message: entry.message,
+          searchableText: entry.text,
+        }))
+      )) || [];
+    const auditByMessageId = new Map(
+      batchResults.map(result => [result.messageId, result.total])
+    );
+
+    let anyCompleted = false;
+    for (const entry of entries) {
+      const messageId = this.stringifyObjectId(entry.message.id);
+      const profileFactCount = auditByMessageId.get(messageId) ?? 0;
+      try {
+        await this.enrichUserMessageForReply(entry.message, entry.text, {
+          profileFactAudit: { succeeded: true, count: profileFactCount },
+        });
+        anyCompleted = true;
+      } catch (error) {
+        this.logger.warn(
+          '[memory-pipeline] batch legacy enrichment failed, messageId=%s error=%s',
+          messageId,
+          this.describeReplyError(error)
+        );
+      }
+    }
+    return anyCompleted ? 'completed' : 'skipped';
   }
 
   private async processSingleMemoryPipelineMessage(
@@ -3312,7 +3383,14 @@ export class ConversationService {
 
   private async enrichUserMessageForReply(
     message: MessageEntity,
-    searchableText: string
+    searchableText: string,
+    options: {
+      /**
+       * 批量路径已经一次性完成角色事实抽取时传入，避免这里再逐条调用一次
+       * 固定系统提示；其余逐条增强（亲属/用户本人/时间/情绪/未了结）不变。
+       */
+      profileFactAudit?: MemoryFactExtractionAudit;
+    } = {}
   ): Promise<void> {
     if (message.type === MessageType.image) {
       return;
@@ -3332,13 +3410,15 @@ export class ConversationService {
         // writer. New structured facts have one owner: agent_profile_fact or
         // the account-level person/temporal stores.
         Promise.resolve({ succeeded: true, count: 0 }),
-        this.extractProfileFactsForUserMessage(
-          message,
-          searchableText,
-          false,
-          previousAssistantContent,
-          contextMessages
-        ),
+        options.profileFactAudit
+          ? Promise.resolve(options.profileFactAudit)
+          : this.extractProfileFactsForUserMessage(
+              message,
+              searchableText,
+              false,
+              previousAssistantContent,
+              contextMessages
+            ),
         this.extractTemporalFactsForUserMessage(
           message,
           searchableText,

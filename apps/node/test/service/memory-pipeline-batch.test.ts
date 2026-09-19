@@ -131,6 +131,65 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
       expect(enrichCallArgs.sort()).toEqual(messageIds.sort());
     });
 
+    it('uses one legacy batch extraction call when the batch extractor is available', async () => {
+      const service = setupConversationService();
+      const messages = [
+        makeMessage('665000000000000000000015', '我今年58岁', 1),
+        makeMessage('665000000000000000000016', '我以前是木匠', 2),
+        makeMessage('665000000000000000000017', '小时候住老房子', 3),
+      ];
+      const messageIds = messages.map(m => String(m.id));
+
+      service.messageModel = {
+        find: jest.fn().mockResolvedValue(messages),
+        findOne: jest.fn(),
+      };
+      service.findAgentById = jest.fn(async () => {
+        const a = new AgentEntity();
+        Object.assign(a, { id: agentId, createdUserId: userId });
+        return a;
+      });
+      // memoryValue=off：走 legacy 角色事实抽取。
+      service.memoryValueService = {
+        enabled: jest.fn(() => false),
+        active: jest.fn(() => false),
+      };
+      const extractBatch = jest.fn(
+        async (entries: Array<{ message: MessageEntity }>) =>
+          entries.map((entry, index) => ({
+            messageId: String(entry.message.id),
+            total: index + 1,
+            facts: [],
+          }))
+      );
+      service.agentProfileFactService = {
+        extractAndUpsertBatchFromUserMessages: extractBatch,
+      };
+      const enrich = jest.fn(
+        async (
+          _message: MessageEntity,
+          _text: string,
+          _options?: { profileFactAudit?: { succeeded: boolean; count: number } }
+        ) => undefined
+      );
+      service.enrichUserMessageForReply = enrich;
+
+      const task = makeTask(MemoryPipelineTaskKind.structuredMemory, messageIds);
+      const result = await service.executeMemoryPipelineTask(task);
+
+      expect(result).toBe('completed');
+      // 整批只调用一次批量抽取（内部只发一次固定系统提示）。
+      expect(extractBatch).toHaveBeenCalledTimes(1);
+      expect(extractBatch.mock.calls[0][0]).toHaveLength(3);
+      // 其余逐条增强不变，且每条都带上批量审计，不再各自调固定提示。
+      expect(enrich).toHaveBeenCalledTimes(3);
+      for (const call of enrich.mock.calls) {
+        expect(call[2]).toEqual({
+          profileFactAudit: { succeeded: true, count: expect.any(Number) },
+        });
+      }
+    });
+
     it('tries batch LLM extraction first when memoryValueService is active', async () => {
       const service = setupConversationService();
       const messages = [

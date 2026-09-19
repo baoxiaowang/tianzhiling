@@ -409,11 +409,6 @@ export class RelativeMemoryExtractorService {
         systemPrompt: [
           '你是独立的账户人物记忆抽取器，不生成聊天回复。只输出JSON。',
           '只抽取用户明确陈述或纠正的现实亲友信息；疑问、否定、猜测、角色虚构不写入。',
-          context.messengerParent
-            ? '这是小使者访谈。指定AI亲人本人的事实由另一个存储器负责，本次people中必须排除该人，只抽取用户本人以外的其他亲友。'
-            : context.boundAgent
-            ? '本次对话对象是当前AI亲人本人，它不属于用户的其他亲友，必须排除；只抽取用户本人以外的其他亲友。'
-            : '',
           '只抽取用户本人以外的亲友；不要抽取用户本人的处境（工作、收入、养育、健康、情绪）。',
           '同一人物输出一项。referenceName是原话中的称呼；正式姓名与昵称分开。保留用户在原话中的称谓，不要把它映射成另一种亲属关系（如把“大爸爸/二爸/幺爹”改成父亲/叔叔），也不要判断多个称谓是否同一人；未被用户明确证实为同一人的两个称谓（如“婆婆”和“奶奶”）不得合并。',
           'personCallsUser只在该亲友被明确说明如何称呼用户时填写（如“爸爸叫我湾呐”）。它属于这位亲友对用户的称呼，绝不是当前对话角色对用户的称呼，不得影响当前角色的默认称呼；转述、疑问、否定不填。',
@@ -423,7 +418,17 @@ export class RelativeMemoryExtractorService {
           '日期只抄原话可确定的年月日，不推测缺失值。不能形成结构化日期的模糊离世时间，可作为life_event事实保留原意。',
           'occurredAt只在原话给出可确定的完整日期(YYYY-MM-DD)时填写，表示事件发生时间；不要把消息时间当作事件时间。健康、成长、教育、工作、照护等写facts。',
           '{"people":[{"referenceName":"","realName":"","aliases":[],"personCallsUser":"","relationToUser":"","lifeStage":"unknown|newborn|infant|toddler|preschool|school_age|adolescent|adult|older_adult","sex":"male|female|unknown","dates":[{"eventType":"birth|expected_birth|death","date":"YYYY-MM-DD","year":0,"month":0,"day":0,"calendar":"gregorian|lunar|unknown","correction":false}],"facts":[{"domain":"health|growth|education|work|care|relationship|life_event|preference|routine|other","key":"稳定短键","value":"原话事实","status":"current|resolved|historical|uncertain","occurredAt":""}]}]}',
-        ].join('\n'),
+          // 会随请求变化的模式说明放在最后：前面所有规则逐字稳定，服务端前缀
+          // 缓存才能让"小使者访谈/普通对话"两种模式共享同一段长前缀；此前它
+          // 插在第 3 行，稳定前缀只剩前两句（<64 token），永远不命中缓存。
+          context.messengerParent
+            ? '这是小使者访谈。指定AI亲人本人的事实由另一个存储器负责，本次people中必须排除该人，只抽取用户本人以外的其他亲友。'
+            : context.boundAgent
+            ? '本次对话对象是当前AI亲人本人，它不属于用户的其他亲友，必须排除；只抽取用户本人以外的其他亲友。'
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
         prompt: [
           context.messengerParent
             ? `需排除的指定AI亲人：${this.parentReferences(
