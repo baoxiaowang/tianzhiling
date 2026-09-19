@@ -31,6 +31,12 @@ export interface UserKnownPersonPromptProfile {
   realName?: string;
   aliases: string[];
   relationToUser?: string;
+  /**
+   * How this other person addresses the user (e.g. 爸爸 calls the user 湾呐).
+   * It is the other person's usage, not the current role's address; readers
+   * must not copy it into the current role's default address.
+   */
+  personCallsUser?: string;
 }
 
 export interface KnownPersonDeclaration {
@@ -527,6 +533,9 @@ export class UserIdentityMemoryService {
         realName: person.realName?.trim() || undefined,
         aliases: this.unique(person.aliases || []),
         relationToUser: person.relationToUser?.trim() || undefined,
+        ...(person.personCallsUser?.trim()
+          ? { personCallsUser: person.personCallsUser.trim() }
+          : {}),
       }));
   }
 
@@ -915,6 +924,87 @@ export class UserIdentityMemoryService {
     return matches.length === 1 ? matches[0] : null;
   }
 
+  /**
+   * Resolves the single known person with one relation and no stronger anchor.
+   * Returns null when the relation is missing or ambiguous, so a bare mention
+   * never silently merges into the wrong person.
+   */
+  async resolveKnownPersonByRelation(options: {
+    userId: MongoObjectId;
+    relationToUser: string;
+  }): Promise<UserKnownPersonEntity | null> {
+    const relation = normalizeRelation(options.relationToUser || '');
+    if (!relation) return null;
+    const people = await this.knownPersonModel.find({
+      where: {
+        userId: options.userId,
+        status: UserKnownPersonStatus.active,
+      },
+      order: { updatedAt: 'DESC' },
+      take: 128,
+    });
+    const matches = people.filter(
+      person => normalizeRelation(person.relationToUser || '') === relation
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  /**
+   * Records the name another family member uses for the user. This is a fact
+   * about that other person's usage only: it never writes the current role's
+   * own address (agentCallMe / relationship.preferred_*). The program only
+   * validates source, target and idempotency; whether the statement exists is
+   * decided by the extractor model.
+   */
+  async setPersonCallsUser(options: {
+    userId: MongoObjectId;
+    personId: MongoObjectId;
+    personCallsUser: string;
+    sourceAgentId?: MongoObjectId;
+    sourceMessageId?: MongoObjectId;
+    /** Current AI role; a person linked to it is not an "other family member". */
+    excludeLinkedAgentId?: MongoObjectId;
+  }): Promise<UserKnownPersonEntity | null> {
+    const name = normalizePersonCallsUser(options.personCallsUser);
+    if (!name) return null;
+
+    const person = await this.knownPersonModel.findOne({
+      where: {
+        _id: options.personId,
+        userId: options.userId,
+        status: UserKnownPersonStatus.active,
+      },
+    } as never);
+    if (!person) return null;
+    if (
+      options.excludeLinkedAgentId &&
+      person.linkedAgentId &&
+      person.linkedAgentId.toString() ===
+        options.excludeLinkedAgentId.toString()
+    ) {
+      return null;
+    }
+
+    const sameSource = Boolean(
+      options.sourceMessageId &&
+        person.personCallsUserSourceMessageId &&
+        person.personCallsUserSourceMessageId.toString() ===
+          options.sourceMessageId.toString()
+    );
+    if (sameSource && person.personCallsUser === name) return person;
+    if (!options.sourceMessageId && person.personCallsUser === name) {
+      return person;
+    }
+
+    person.personCallsUser = name;
+    if (options.sourceMessageId) {
+      person.personCallsUserSourceMessageId = options.sourceMessageId;
+    }
+    person.updatedAt = new Date();
+    await this.knownPersonModel.save(person);
+    return person;
+  }
+
   async resolveKnownPersonMention(options: {
     userId: MongoObjectId;
     mention: string;
@@ -1088,6 +1178,16 @@ function normalizePersonName(value?: string): string | undefined {
     return undefined;
   }
   return name;
+}
+
+/** Format/safety check only; whether the address applies is the model's call. */
+function normalizePersonCallsUser(value?: string): string | undefined {
+  const name = (value || '')
+    .replace(/\s+/g, '')
+    .replace(/[，,。！？!?；;：:、"'“”]/g, '')
+    .trim();
+  if (!name || name.length > 12) return undefined;
+  return /^[\u4e00-\u9fa5A-Za-z·]+$/.test(name) ? name : undefined;
 }
 
 function normalizeRelation(value: string): string {

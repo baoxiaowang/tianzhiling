@@ -48,6 +48,8 @@ interface ExtractedRelativeMemory {
   realName?: string;
   aliases?: string[];
   relationToUser?: string;
+  /** Name this other family member uses for the user (e.g. 爸爸叫我湾呐). */
+  personCallsUser?: string;
   lifeStage?: UserRelativeLifeStage;
   sex?: UserRelativeSex;
   dates?: Array<{
@@ -154,6 +156,7 @@ export class RelativeMemoryExtractorService {
         )
         .slice(0, 8);
       const referenceName = this.cleanName(item.referenceName);
+      const personCallsUser = item.personCallsUser?.trim();
       if (
         excludedParentReferences.length > 0 &&
         this.isMessengerParent(
@@ -187,6 +190,15 @@ export class RelativeMemoryExtractorService {
               relation
             )
           : 0;
+      // “爸爸叫我湾呐”只有一个称谓、没有姓名时，上面的引用解析会落空；
+      // 若该关系在本账户下唯一，就挂到这个人名下，不主张合并任何未证实称谓。
+      if (!person && personCallsUser && relationCount === 1) {
+        person =
+          (await this.userIdentityMemoryService.resolveKnownPersonByRelation?.({
+            userId: message.userId,
+            relationToUser: relation,
+          })) || null;
+      }
       if (person && linkedAgentId && !person.linkedAgentId) {
         person =
           await this.userIdentityMemoryService.upsertKnownPersonDeclaration({
@@ -224,6 +236,23 @@ export class RelativeMemoryExtractorService {
           });
       }
       if (!person) continue;
+
+      // 其他家人对用户的称呼只写到这个人名下；当前角色（boundAgent/
+      // messengerParent）本人被上面的 isMessengerParent 排除，且写入前还会
+      // 再做一次 linkedAgentId 目标校验，绝不改动当前角色的默认称呼。
+      if (personCallsUser) {
+        const addressUpdated =
+          await this.userIdentityMemoryService.setPersonCallsUser?.({
+            userId: message.userId,
+            personId: person.id,
+            personCallsUser,
+            sourceAgentId: message.agentId,
+            sourceMessageId: message.id,
+            excludeLinkedAgentId:
+              context.messengerParent?.id || boundAgent?.id,
+          });
+        if (addressUpdated) written += 1;
+      }
 
       await this.userRelativeProfileService.setProfileState({
         userId: message.userId,
@@ -386,12 +415,14 @@ export class RelativeMemoryExtractorService {
             ? '本次对话对象是当前AI亲人本人，它不属于用户的其他亲友，必须排除；只抽取用户本人以外的其他亲友。'
             : '',
           '只抽取用户本人以外的亲友；不要抽取用户本人的处境（工作、收入、养育、健康、情绪）。',
-          '同一人物输出一项。referenceName是原话中的称呼；正式姓名与昵称分开。保留用户在原话中的称谓，不要把它映射成另一种亲属关系（如把“大爸爸/二爸/幺爹”改成父亲/叔叔），也不要判断多个称谓是否同一人。',
+          '同一人物输出一项。referenceName是原话中的称呼；正式姓名与昵称分开。保留用户在原话中的称谓，不要把它映射成另一种亲属关系（如把“大爸爸/二爸/幺爹”改成父亲/叔叔），也不要判断多个称谓是否同一人；未被用户明确证实为同一人的两个称谓（如“婆婆”和“奶奶”）不得合并。',
+          'personCallsUser只在该亲友被明确说明如何称呼用户时填写（如“爸爸叫我湾呐”）。它属于这位亲友对用户的称呼，绝不是当前对话角色对用户的称呼，不得影响当前角色的默认称呼；转述、疑问、否定不填。',
           '同一人物可有多个事实，按命题分别放入facts；每个事实用能区分命题的稳定短键（如work.pension、work.busy、plan.mid_autumn_visit），不同事实不得共用同一个key互相覆盖。',
           '疑问、否定、假设、祈愿不写成已发生的事实；愿望与计划写status=uncertain并保留原意。“团聚/重逢”类问句不得写成已经团聚；关系称谓本身若明确可记，但未明确说某人已故时不要写成已故事实。',
+          '核心常驻状态只在原话明确时抽取，并使用稳定键：已离世写life_event.deceased（status=historical，必须绑定原话指明的那个人；“下面团圆了吗”这类问句不证明任何人已故）；明确离婚或断联写relationship.divorced或relationship.no_contact（status=current）；目前独居写routine.live_alone（status=current）；长期异地写work.long_distance（status=current）。current只表示“上次提到”，不得当成长期不变；状态改变时沿用同一domain+key，让旧状态自然降为历史。',
           '日期只抄原话可确定的年月日，不推测缺失值。不能形成结构化日期的模糊离世时间，可作为life_event事实保留原意。',
           'occurredAt只在原话给出可确定的完整日期(YYYY-MM-DD)时填写，表示事件发生时间；不要把消息时间当作事件时间。健康、成长、教育、工作、照护等写facts。',
-          '{"people":[{"referenceName":"","realName":"","aliases":[],"relationToUser":"","lifeStage":"unknown|newborn|infant|toddler|preschool|school_age|adolescent|adult|older_adult","sex":"male|female|unknown","dates":[{"eventType":"birth|expected_birth|death","date":"YYYY-MM-DD","year":0,"month":0,"day":0,"calendar":"gregorian|lunar|unknown","correction":false}],"facts":[{"domain":"health|growth|education|work|care|relationship|life_event|preference|routine|other","key":"稳定短键","value":"原话事实","status":"current|resolved|historical|uncertain","occurredAt":""}]}]}',
+          '{"people":[{"referenceName":"","realName":"","aliases":[],"personCallsUser":"","relationToUser":"","lifeStage":"unknown|newborn|infant|toddler|preschool|school_age|adolescent|adult|older_adult","sex":"male|female|unknown","dates":[{"eventType":"birth|expected_birth|death","date":"YYYY-MM-DD","year":0,"month":0,"day":0,"calendar":"gregorian|lunar|unknown","correction":false}],"facts":[{"domain":"health|growth|education|work|care|relationship|life_event|preference|routine|other","key":"稳定短键","value":"原话事实","status":"current|resolved|historical|uncertain","occurredAt":""}]}]}',
         ].join('\n'),
         prompt: [
           context.messengerParent
