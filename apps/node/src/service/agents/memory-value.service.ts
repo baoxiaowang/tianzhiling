@@ -1720,6 +1720,8 @@ export class MemoryValueService {
             ? PersonTemporalEventType.death
             : d.date.event === 'expected_birth'
             ? PersonTemporalEventType.expectedBirth
+            : d.date.event === 'birthday_observance'
+            ? PersonTemporalEventType.birthdayObservance
             : PersonTemporalEventType.birth,
         year,
         month,

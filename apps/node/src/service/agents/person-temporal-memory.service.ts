@@ -393,7 +393,67 @@ export class PersonTemporalMemoryService {
       derivationRule: assertion.derivationRule || 'person_date_semantic_v1',
     };
     await this.applyAssertionToProfile({ assertion, parsed, profile });
+
+    // 兼容投影：person_temporal 是唯一真值，AgentEntity 上的日期只是投影。
+    // 只有"完整到日"的真实出生日期才回写；年度生日（不知道出生年份）不回写，
+    // 否则会伪造一个年份落进 Date 字段。
+    await this.projectBirthdayToAgent({
+      subjectType: options.subjectType,
+      subjectId: options.subjectId,
+      userId: options.message.userId,
+      eventType: options.eventType,
+      exactDate: assertion.normalizedExactDate,
+      year,
+      month,
+      day,
+      isCorrection: Boolean(options.isCorrection),
+    });
+
     return profile;
+  }
+
+  private async projectBirthdayToAgent(options: {
+    subjectType: PersonTemporalSubjectType;
+    subjectId: MongoObjectId;
+    userId: MongoObjectId;
+    eventType: PersonTemporalEventType;
+    exactDate?: Date;
+    year?: number;
+    month?: number;
+    day?: number;
+    isCorrection?: boolean;
+  }): Promise<void> {
+    if (
+      options.subjectType !== PersonTemporalSubjectType.agent ||
+      options.eventType !== PersonTemporalEventType.birth ||
+      !options.year ||
+      !options.month ||
+      !options.day
+    ) {
+      return;
+    }
+    const ownedAgent = await this.agentModel.findOne({
+      where: {
+        _id: options.subjectId,
+        createdUserId: options.userId,
+      } as never,
+    });
+    if (!ownedAgent) return;
+    const projected = new Date(
+      Date.UTC(options.year, options.month - 1, options.day)
+    );
+    if (Number.isNaN(projected.getTime())) return;
+    if (
+      ownedAgent.birthday &&
+      !options.isCorrection &&
+      this.sameDate(ownedAgent.birthday, projected)
+    ) {
+      return;
+    }
+    if (ownedAgent.birthday && !options.isCorrection) return;
+    ownedAgent.birthday = projected;
+    ownedAgent.updatedAt = new Date();
+    await this.agentModel.save(ownedAgent);
   }
 
   async listProfilesForPrompt(options: {

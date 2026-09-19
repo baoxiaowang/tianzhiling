@@ -32,7 +32,11 @@ export interface MemoryValueDecision {
   protected: boolean;
   salience: 1 | 2 | 3;
   date?: {
-    event: 'birth' | 'death' | 'expected_birth';
+    /**
+     * birthday_observance：只知道"每年按哪天过生日"、不知道出生年份的年度生日。
+     * 与 birth 分开，避免下游把年度纪念日当成完整出生日期（不能伪造年份）。
+     */
+    event: 'birth' | 'death' | 'expected_birth' | 'birthday_observance';
     year?: number;
     month?: number;
     day?: number;
@@ -657,7 +661,7 @@ export const MEMORY_VALUE_PROMPT = [
   '正式姓名须明确无歧义：当前亲人使用key=identity.real_name、value="当前角色正式姓名是具体姓名"；用户使用key=user.identity.real_name、value="用户正式姓名是具体姓名"。称呼、昵称与正式姓名分开，不从提问或否定提取。',
   '用户正式姓名提案还必须提供identity:{realName:"原话中的正式姓名"}；明确的账户通用别名可用identity:{aliases:["原话中的别名"]}。身份字段仅填姓名本身，不填说明句。需要结合问答判断姓名时，由你判断，程序不再用正则重新理解原话；专属亲人的称呼不要写成账户通用别名。',
   '事实拆分以独立用途为准，不把同一事件拆成泛化碎片。不要输出用户未说的长期病史、关系或心理特征。',
-  'date仅用于出生、离世、预产期的日期线索，其他事实（包括年龄和普通往事）必须省略date。date:{event:birth|death|expected_birth,year,month,day,expression}。expression必须逐字截取用户证据，不得改写。year/month/day仅填写用户明确说出的日历数字；相对时间不填日历数字，程序负责计算。referenceAt只是消息时间，绝不是事件日期。模糊时间保留模糊性，不自行换算准确日期。',
+  'date仅用于出生、离世、预产期、年度生日的日期线索，其他事实（包括年龄和普通往事）必须省略date。date:{event:birth|death|expected_birth|birthday_observance,year,month,day,expression}。用户只说“每年按哪天过生日”而没说出生年份时用birthday_observance，不得补造年份。expression必须逐字截取用户证据，不得改写。year/month/day仅填写用户明确说出的日历数字；相对时间不填日历数字，程序负责计算。referenceAt只是消息时间，绝不是事件日期。模糊时间保留模糊性，不自行换算准确日期。',
   '只输出JSON对象{"newPeople":[],"mentionedPeople":[],"decisions":[]}，最多6个新人物；确实没有任何稳定事实或待确认信息时才返回空数组（先完成上一条的逐条盘点再决定）。',
   '每项字段：subjectRef,participants,kind(person|relationship|event|temporal),type(identity|relationship|age|occupation|family|preference|correction|promise|keepsake|style|memory|taboo),key(稳定短键),value,retention(discard|session|durable|core),certainty(explicit|context_resolved|uncertain),timeKind(current|historical|stable|plan|wish),validUntil(ISO时间或省略),operation(add|merge|replace|conflict|noop|archive),targetId(修改时必填),reason(简短保存或放弃原因),evidence:[{messageId,quote}],protected(布尔),salience(1-3)。',
   '严格遵守字段枚举，不得自造type如health_state/pride/wish；健康可选memory，情感关系可选relationship，愿望可选promise配合timeKind=wish。value与reason使用中文，protected不可遗漏。',
@@ -1354,7 +1358,12 @@ export function parseMemoryValueOutput(
     if (d.date) {
       if (
         d.kind !== 'temporal' ||
-        !['birth', 'death', 'expected_birth'].includes(d.date.event)
+        ![
+          'birth',
+          'death',
+          'expected_birth',
+          'birthday_observance',
+        ].includes(d.date.event)
       )
         throw new Error('MEMORY_VALUE_DATE');
       for (const k of ['year', 'month', 'day'] as const) {
