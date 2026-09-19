@@ -310,13 +310,46 @@ export function buildAgentIdentityPrompt(
     aliases: identity.user.aliases,
     preferredName: identity.user.preferredName || '未设置',
   };
-  const knownPeople = (identity.knownPeople || []).map(person => ({
-    id: person.id,
-    preferredName: person.preferredName || '未设置',
-    realName: person.realName || '未知',
-    aliases: person.aliases,
-    relationToUser: person.relationToUser || '未确认',
-  }));
+  // 其他家人对用户的称呼只归属到“与当前角色关系下可用”的具体人物：
+  // 用亲人档案（已按 agentId 作用域）匹配 personId，未匹配的 user_known_person
+  // 不渲染，避免为共享角色泄漏与当前角色无关的私有家庭情况；该信息也绝不并入 user.aliases。
+  const relativeById = new Map(
+    (identity.relatives || []).map(relative => [relative.id, relative])
+  );
+  const knownPeople = (identity.knownPeople || []).map(person => {
+    const relative = relativeById.get(person.id);
+    const personCallsUser = relative
+      ? clean(person.personCallsUser, 24)
+      : '';
+    return {
+      id: person.id,
+      preferredName: person.preferredName || '未设置',
+      realName: person.realName || '未知',
+      aliases: person.aliases,
+      relationToUser: person.relationToUser || '未确认',
+      ...(personCallsUser ? { personCallsUser } : {}),
+    };
+  });
+  const personAddressLines = (identity.knownPeople || [])
+    .map(person => {
+      const relative = relativeById.get(person.id);
+      if (!relative) return '';
+      const called = clean(person.personCallsUser, 24);
+      if (!called) return '';
+      const label =
+        clean(relative.preferredName, 24) ||
+        clean(relative.realName, 24) ||
+        clean(person.preferredName, 24) ||
+        clean(person.realName, 24) ||
+        clean(relative.relationToUser, 24) ||
+        '其他家人';
+      const relation =
+        clean(relative.relationToUser, 24) ||
+        clean(person.relationToUser, 24) ||
+        '关系未确认';
+      return `${label}（${relation}）平时叫你${called}`;
+    })
+    .filter(Boolean);
   const relatives = (identity.relatives || []).map(relative => ({
     id: relative.id,
     preferredName: clean(relative.preferredName, 24) || '未设置',
@@ -353,6 +386,11 @@ export function buildAgentIdentityPrompt(
     `身份：${JSON.stringify({ agent, user })}`,
     knownPeople.length
       ? `本轮相关其他人物：${JSON.stringify(knownPeople)}`
+      : '',
+    personAddressLines.length
+      ? `其他家人对用户的称呼：${personAddressLines.join(
+          '；'
+        )}。这是该家人自己的叫法，只归属该人物，既不是当前角色对用户的称呼，也不是用户的正式姓名或别名。`
       : '',
     relatives.length ? `本轮相关亲人档案：${JSON.stringify(relatives)}` : '',
     'agent 始终是正在回复的当前角色，user 始终是聊天用户；其他人物、地点和物品必须另建对象，不得互换说话者、经历或关系。',
