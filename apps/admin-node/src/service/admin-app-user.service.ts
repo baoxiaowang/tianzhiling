@@ -18,6 +18,8 @@ import {
   MongoObjectId,
   OrderEntity,
   OrderStatus,
+  PersonTemporalAssertionEntity,
+  PersonTemporalProfileEntity,
   UserAccountEntity,
   UserEntity,
   UserIdentityProfileEntity,
@@ -41,6 +43,13 @@ import {
 } from '../dto/admin-app-user.dto';
 import { AdminAvatarUrlService } from './admin-avatar-url.service';
 import { AdminMilvusService } from './admin-milvus.service';
+import {
+  buildCoreInfoView,
+  type CoreFactInput,
+  type CoreInfoView,
+  type CoreTemporalAssertionInput,
+  type CoreTemporalProfileInput,
+} from './admin-app-user-core-info';
 
 export interface AdminAppUserItem {
   id: string;
@@ -216,6 +225,13 @@ export interface AdminAppUserIndexedEvidenceListResult {
 
 type MongoWhere = Record<string, unknown>;
 
+/**
+ * 后台「核心信息」只读视图 DTO：称呼 / 日期 / 语言与性格 / 核心家人状态，
+ * 每个当前采用项都带主体、来源类别、来源消息或创建批次、更新时间与采用理由；
+ * 未采用项带真实原因（库中没有原因时如实标注为合成）。
+ */
+export type AdminAppUserCoreInfoDTO = CoreInfoView;
+
 @Provide()
 export class AdminAppUserService {
   @InjectEntityModel(AgentEntity)
@@ -256,6 +272,12 @@ export class AdminAppUserService {
 
   @InjectEntityModel(AgentProfileFactEntity)
   agentProfileFactModel: MongoRepository<AgentProfileFactEntity>;
+
+  @InjectEntityModel(PersonTemporalProfileEntity)
+  personTemporalProfileModel: MongoRepository<PersonTemporalProfileEntity>;
+
+  @InjectEntityModel(PersonTemporalAssertionEntity)
+  personTemporalAssertionModel: MongoRepository<PersonTemporalAssertionEntity>;
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
@@ -706,6 +728,214 @@ export class AdminAppUserService {
       accountSharedItems: accountShared.items,
       accountSharedTotal: accountShared.total,
     };
+  }
+
+  /**
+   * 后台「聊天与记忆」右栏的只读「核心信息」：称呼、日期、语言与性格、核心家人状态。
+   *
+   * - 只读：不触发抽取 / embedding / 索引 / 回填，也不写任何状态。
+   * - 权限：复用 assertUserOwnedAgent，只允许当前用户自己创建的角色；不读共享角色。
+   * - 选择规则：语言派生与冲突解决复用 @tzl/shared（deriveLanguageSettings /
+   *   selectRoleCoreEntry / sourcePriority），后台不复制第二套优先级。
+   */
+  async getAgentCoreInfo(
+    userId: string,
+    agentId: string
+  ): Promise<AdminAppUserCoreInfoDTO> {
+    const user = await this.getUserById(userId);
+    const agentObjectId = this.parseObjectId(agentId);
+    const agent = await this.assertUserOwnedAgent(user.id, agentObjectId);
+    const userObjectId = user.id;
+
+    // 与当前角色相关的亲人：只取画像里显式关联到该 agent 的人物，避免展示账号下无关亲人。
+    const relativeProfiles = await this.userRelativeProfileModel.find({
+      where: {
+        userId: userObjectId,
+        status: UserRelativeProfileStatus.active,
+        'relationshipsToAgents.agentId': agentObjectId,
+      } as never,
+      take: 200,
+    });
+    const relativeIds = relativeProfiles
+      .map(profile => profile.personId)
+      .filter((id): id is MongoObjectId => Boolean(id));
+
+    const subjectClauses: Array<Record<string, unknown>> = [
+      { subjectType: 'user', subjectId: userObjectId },
+      { subjectType: 'agent', subjectId: agentObjectId },
+    ];
+    if (relativeIds.length) {
+      subjectClauses.push({
+        subjectType: 'relative',
+        subjectId: { $in: relativeIds },
+      });
+    }
+
+    const [factEntities, temporalProfiles, knownPeople] = await Promise.all([
+      this.agentProfileFactModel.find({
+        where: { userId: userObjectId, agentId: agentObjectId } as never,
+        order: { updatedAt: 'DESC' },
+        take: 500,
+      }),
+      this.personTemporalProfileModel.find({
+        where: {
+          userId: userObjectId,
+          $or: subjectClauses,
+        } as never,
+        order: { updatedAt: 'DESC' },
+        take: 50,
+      }),
+      this.userKnownPersonModel.find({
+        where: {
+          userId: userObjectId,
+          status: UserKnownPersonStatus.active,
+        } as never,
+        take: 300,
+      }),
+    ]);
+
+    const assertionIds = temporalProfiles
+      .map(profile => profile.bestAssertionId)
+      .filter((id): id is MongoObjectId => Boolean(id));
+    const assertionEntities = assertionIds.length
+      ? await this.personTemporalAssertionModel.find({
+          where: { _id: { $in: assertionIds } } as never,
+        })
+      : [];
+
+    const sourceIdSet = new Set<string>();
+    for (const fact of factEntities) {
+      for (const id of this.collectFactSourceIds(fact)) {
+        sourceIdSet.add(id);
+      }
+    }
+    for (const assertion of assertionEntities) {
+      const id = this.stringifyOptionalObjectId(assertion.sourceMessageId);
+      if (id) sourceIdSet.add(id);
+    }
+    const conversationMap = await this.getSourceConversationMap([
+      ...sourceIdSet,
+    ]);
+
+    const facts: CoreFactInput[] = factEntities.map(fact => {
+      const sourceMessageId = this.stringifyOptionalObjectId(
+        fact.sourceMessageId
+      );
+      return {
+        id: this.stringifyObjectId(fact.id),
+        type: fact.type ?? '',
+        key: fact.key ?? '',
+        value: fact.value ?? '',
+        status: fact.status ?? '',
+        confidence: fact.confidence ?? '',
+        priority: typeof fact.priority === 'number' ? fact.priority : 0,
+        createdAt: this.formatDate(fact.createdAt),
+        updatedAt: this.formatDate(fact.updatedAt),
+        sourceMessageId: sourceMessageId || '',
+        sourceConversationId: sourceMessageId
+          ? conversationMap.get(sourceMessageId) ?? ''
+          : '',
+        sourceText: fact.sourceText ?? '',
+        timeKind: fact.governance?.timeKind ?? '',
+      };
+    });
+
+    const temporalProfileInputs: CoreTemporalProfileInput[] =
+      temporalProfiles.map(profile => ({
+        bestAssertionId:
+          this.stringifyOptionalObjectId(profile.bestAssertionId) || '',
+        subjectType: profile.subjectType ?? '',
+        subjectId: this.stringifyObjectId(profile.subjectId),
+        eventType: profile.eventType ?? '',
+        calendar: profile.calendar ?? '',
+        precision: profile.precision ?? '',
+        resolutionCertainty: profile.resolutionCertainty ?? '',
+        conflictStatus: profile.conflictStatus ?? '',
+        ...(typeof profile.normalizedYear === 'number'
+          ? { normalizedYear: profile.normalizedYear }
+          : {}),
+        ...(typeof profile.normalizedMonth === 'number'
+          ? { normalizedMonth: profile.normalizedMonth }
+          : {}),
+        ...(typeof profile.normalizedDay === 'number'
+          ? { normalizedDay: profile.normalizedDay }
+          : {}),
+        exactDate: this.formatDate(profile.exactDate),
+        estimatedStart: this.formatDate(profile.estimatedStart),
+        estimatedEnd: this.formatDate(profile.estimatedEnd),
+        updatedAt: this.formatDate(profile.updatedAt),
+      }));
+
+    const temporalAssertionInputs: CoreTemporalAssertionInput[] =
+      assertionEntities.map(assertion => {
+        const sourceMessageId = this.stringifyObjectId(
+          assertion.sourceMessageId
+        );
+        return {
+          id: this.stringifyObjectId(assertion.id),
+          eventType: assertion.eventType ?? '',
+          subjectType: assertion.subjectType ?? '',
+          subjectId: this.stringifyObjectId(assertion.subjectId),
+          rawText: assertion.rawText ?? '',
+          status: assertion.status ?? '',
+          sourceMessageId,
+          sourceConversationId: conversationMap.get(sourceMessageId) ?? '',
+          createdAt: this.formatDate(assertion.createdAt),
+        };
+      });
+
+    const subjectLabels: Record<string, string> = {
+      [`user:${this.stringifyObjectId(userObjectId)}`]: '用户本人',
+      [`agent:${this.stringifyObjectId(agentObjectId)}`]:
+        agent.name || agent.realName || '当前角色',
+    };
+    for (const person of knownPeople) {
+      subjectLabels[`relative:${this.stringifyObjectId(person.id)}`] =
+        person.preferredName ||
+        person.realName ||
+        person.aliases?.[0] ||
+        '亲人';
+    }
+
+    const persona = agent.personaProfile || {};
+
+    return buildCoreInfoView({
+      userId: this.stringifyObjectId(userObjectId),
+      agent: {
+        id: this.stringifyObjectId(agentObjectId),
+        name: agent.name ?? '',
+        realName: agent.realName ?? '',
+        iCallAgent: agent.iCallAgent ?? '',
+        agentCallMe: agent.agentCallMe ?? '',
+        sex:
+          agent.sex === undefined || agent.sex === null
+            ? ''
+            : String(agent.sex),
+        birthday: this.formatDate(agent.birthday),
+        deathDate: this.formatDate(agent.deathDate),
+        departureDuration: agent.departureDuration ?? '',
+        languageHabits: agent.languageHabits ?? '',
+        relationshipType: persona.demographics?.relationshipType ?? '',
+        persona: {
+          personalityTraits: agent.personalityTraits ?? '',
+          languageProfile: (persona.languageProfile ?? {}) as Record<
+            string,
+            string | undefined
+          >,
+          languageProfileSources: (persona.languageProfileSources ??
+            {}) as Record<
+            string,
+            { batchId?: string; confidence?: number } | undefined
+          >,
+          lifeTraits: persona.lifeTraits ?? [],
+          coreValues: persona.coreValues ?? [],
+        },
+      },
+      facts,
+      temporalProfiles: temporalProfileInputs,
+      temporalAssertions: temporalAssertionInputs,
+      subjectLabels,
+    });
   }
 
   /**

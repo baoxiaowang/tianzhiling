@@ -96,6 +96,15 @@ export class AdminAppUserController {
     return this.adminAppUserService.listIndexedEvidence(id, agentId, query);
   }
 
+  /** 只读：核心信息（称呼/日期/语言与性格/核心家人状态的当前采用值、来源与未采用原因）。 */
+  @Get('/:id/agents/:agentId/core-info')
+  async agentCoreInfo(
+    @Param('id') id: string,
+    @Param('agentId') agentId: string
+  ) {
+    return this.adminAppUserService.getAgentCoreInfo(id, agentId);
+  }
+
   @Post('/:id/agents/:agentId/messenger-messages')
   async sendMessengerMessage(
     @Param('id') id: string,
