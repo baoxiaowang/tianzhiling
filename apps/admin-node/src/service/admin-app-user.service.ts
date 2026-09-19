@@ -837,6 +837,7 @@ export class AdminAppUserService {
           : '',
         sourceText: fact.sourceText ?? '',
         timeKind: fact.governance?.timeKind ?? '',
+        governanceReason: fact.governance?.reason ?? '',
       };
     });
 

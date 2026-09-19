@@ -9,7 +9,16 @@
  *
  * 事实真值不在本文件：这里只消费 service 传入的落库记录，绝不写库、绝不触发抽取。
  */
-import { HOMETOWN_FACT_KEY, buildDialectLabel, deriveLanguageSettings, parseHometownProvince, selectRoleCoreEntry, sourcePriority, type RoleCoreSourceKind, type RoleCoreSourceRef } from '@tzl/shared';
+import {
+  HOMETOWN_FACT_KEY,
+  buildDialectLabel,
+  deriveLanguageSettings,
+  parseHometownProvince,
+  selectRoleCoreEntry,
+  sourcePriority,
+  type RoleCoreSourceKind,
+  type RoleCoreSourceRef,
+} from '@tzl/shared';
 
 export type { RoleCoreSourceKind };
 
@@ -52,6 +61,11 @@ export interface CoreFactInput {
   sourceText: string;
   /** governance.timeKind：stable/current/historical/plan/wish */
   timeKind: string;
+  /**
+   * governance.reason：d9b2b54 起归档/更正会写入的真实原因原句。
+   * 有值就原样展示，缺失时才回退到按 confidence/status 合成。
+   */
+  governanceReason: string;
 }
 
 export interface CorePersonaInput {
@@ -283,9 +297,15 @@ const IMPORT_LANGUAGE_DIMENSIONS: Array<{ key: string; label: string }> = [
   { key: 'distinctiveRhythm', label: '节奏特征' },
 ];
 
-/** 归档/拒绝原因：库里没有写入真实原因，只能按 confidence/status 合成并如实标注。 */
+/** 旧数据没有真实 reason 时，合成原因统一加此前缀，后台据此与库中原句区分。 */
+export const SYNTHESIZED_REASON_PREFIX = '【合成】';
+
+/**
+ * 旧数据归档/拒绝原因：库里没有写入真实 reason，只能按 confidence/status 合成并如实标注。
+ * d9b2b54 起新写入的归档/更正会在 governance.reason 里带真实原句，此说明仅在缺失时使用。
+ */
 const ARCHIVED_REASON_NOTE =
-  '（归档路径不写原因，本说明按 confidence/status 合成，非库中原句）';
+  '（旧数据归档路径未写原因，本说明按 confidence/status 合成，非库中原句）';
 
 export function buildCoreInfoView(input: CoreInfoInput): CoreInfoView {
   return {
@@ -299,7 +319,7 @@ export function buildCoreInfoView(input: CoreInfoInput): CoreInfoView {
     personality: buildPersonalitySection(input),
     family: buildFamilySection(input),
     limitations: [
-      '事实层更正走“置 archived”，归档路径不写 reason；"不采用：被用户明确更正覆盖" 按 confidence/status 合成，不是数据库原文。',
+      `事实层更正/归档：d9b2b54 起新数据会在 governance.reason 写入真实原因原句（例如“用户明确更正：原事实「…」被「…」覆盖”），后台优先原样展示；只有旧数据没有 reason 时才回退到按 confidence/status 合成，并以“${SYNTHESIZED_REASON_PREFIX}”前缀与真实原因区分。`,
       '语言/称呼的“当前采用值”按 @tzl/shared 的来源优先级在后台重建；与主聊天共用同一优先级，但主聊天另有一套身份装配代码。',
       '年度生日（birthday_observance）即使库中存了年份也不在后台展示年份，避免把纪念日误当成出生年。',
       '没有来源消息的历史提取事实只能显示“历史提取，证据不完整”，不能定位到左侧原话。',
@@ -864,22 +884,31 @@ function sourceView(
 }
 
 function rejectionReason(fact: CoreFactInput): string {
+  // 优先读库里 d9b2b54 起写入的真实 governance.reason 原句，原样展示。
+  const storedReason = (fact.governanceReason || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (storedReason) {
+    return storedReason;
+  }
+
+  // 旧数据没有 reason：回退到合成，并用固定前缀让后台能区分“库中真实原因”与“合成”。
   if (fact.status === 'archived' && fact.confidence === 'user_corrected') {
-    return `不采用：被用户明确更正覆盖 ${ARCHIVED_REASON_NOTE}`;
+    return `${SYNTHESIZED_REASON_PREFIX}不采用：被用户明确更正覆盖 ${ARCHIVED_REASON_NOTE}`;
   }
   if (fact.status === 'archived') {
-    return `不采用：已归档 ${ARCHIVED_REASON_NOTE}`;
+    return `${SYNTHESIZED_REASON_PREFIX}不采用：已归档 ${ARCHIVED_REASON_NOTE}`;
   }
   if (fact.status === 'rejected') {
-    return `不采用：事实已被拒绝 ${ARCHIVED_REASON_NOTE}`;
+    return `${SYNTHESIZED_REASON_PREFIX}不采用：事实已被拒绝 ${ARCHIVED_REASON_NOTE}`;
   }
   if (fact.status === 'conflicted') {
-    return '不采用：与其它来源冲突，状态为 conflicted，保留待定';
+    return `${SYNTHESIZED_REASON_PREFIX}不采用：与其它来源冲突，状态为 conflicted，保留待定`;
   }
   if (fact.status === 'pending' || fact.status === 'candidate') {
-    return '不采用：仍待确认（pending/candidate），未进入采用值';
+    return `${SYNTHESIZED_REASON_PREFIX}不采用：仍待确认（pending/candidate），未进入采用值`;
   }
-  return `不采用：状态 ${fact.status || '未知'}`;
+  return `${SYNTHESIZED_REASON_PREFIX}不采用：状态 ${fact.status || '未知'}`;
 }
 
 function dateReason(
@@ -952,8 +981,10 @@ function parseFamilyPersonLabel(key: string, value: string): string {
 
 function isNameFactKey(key: string): boolean {
   return (
-    key === AGENT_PREFERRED_NAME_FACT_KEY ||
-    key === USER_PREFERRED_NAME_FACT_KEY ||
+    // 明确更正会生成 `<canonicalKey>.superseded.<hash>` 的归档派生记录，
+    // 这里用 startsWith 才能把它一并展示（旧值 + 真实 reason）。
+    key.startsWith(AGENT_PREFERRED_NAME_FACT_KEY) ||
+    key.startsWith(USER_PREFERRED_NAME_FACT_KEY) ||
     key === AGENT_DERIVED_ALIASES_FACT_KEY ||
     key === USER_DERIVED_ALIASES_FACT_KEY ||
     key.startsWith(AGENT_EXPLICIT_ALIAS_FACT_PREFIX) ||

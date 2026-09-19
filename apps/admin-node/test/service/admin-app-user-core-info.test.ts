@@ -23,6 +23,7 @@ function fact(
     sourceConversationId: partial.sourceConversationId || '',
     sourceText: partial.sourceText || '',
     timeKind: partial.timeKind || '',
+    governanceReason: partial.governanceReason || '',
   };
 }
 
@@ -113,7 +114,7 @@ describe('admin core info view: reuses @tzl/shared selection rules', () => {
     expect(pending.addresses.userCallsAgent?.status).toBe('adopted');
   });
 
-  it('reports archived user_corrected facts with a synthesized reason (no raw reason in DB)', () => {
+  it('reports archived user_corrected facts with a synthesized reason when the DB has none', () => {
     const view = buildCoreInfoView(
       input({
         facts: [
@@ -132,7 +133,90 @@ describe('admin core info view: reuses @tzl/shared selection rules', () => {
     );
     expect(rejected).toBeDefined();
     expect(rejected?.reason).toContain('合成');
-    expect(view.limitations.join('\n')).toContain('归档路径不写 reason');
+    expect(rejected?.reason.startsWith('【合成】')).toBe(true);
+    expect(view.limitations.join('\n')).toContain('旧数据');
+  });
+
+  it('shows the stored governance.reason verbatim and never marks it synthesized', () => {
+    const storedReason = '用户明确更正：原事实「称呼爷爷」被「称呼老爷子」覆盖';
+    const view = buildCoreInfoView(
+      input({
+        facts: [
+          fact({
+            key: 'relationship.preferred_user_name',
+            value: '当前用户希望当前角色称呼其为湾呐',
+            status: 'archived',
+            confidence: 'user_corrected',
+            governanceReason: storedReason,
+          }),
+        ],
+      })
+    );
+
+    const rejected = view.addresses.candidates.find(
+      item => item.value === '当前用户希望当前角色称呼其为湾呐'
+    );
+    expect(rejected?.reason).toBe(storedReason);
+    expect(rejected?.reason).not.toContain('合成');
+  });
+
+  it('recognizes the archived superseded assertion derived key and shows its real reason', () => {
+    const storedReason = '用户明确更正：原事实「老爷子」被「爷爷」覆盖';
+    const view = buildCoreInfoView(
+      input({
+        facts: [
+          fact({
+            key: 'relationship.preferred_agent_name.superseded.ab12cd',
+            value: '当前用户偏好称呼当前角色为老爷子',
+            status: 'archived',
+            confidence: 'confirmed',
+            governanceReason: storedReason,
+          }),
+        ],
+      })
+    );
+
+    const rejected = view.addresses.candidates.find(
+      item => item.value === '当前用户偏好称呼当前角色为老爷子'
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.subject).toBe('角色');
+    expect(rejected?.reason).toBe(storedReason);
+    expect(rejected?.reason).not.toContain('合成');
+  });
+
+  it('reads the real reason for archived family facts and falls back only when absent', () => {
+    const view = buildCoreInfoView(
+      input({
+        facts: [
+          fact({
+            key: 'family.child.superseded.ff00',
+            value: '用户和当前角色共同的儿子叫小军',
+            type: 'family',
+            status: 'archived',
+            governanceReason:
+              '用户明确更正：原事实「儿子叫小军」被「儿子叫小强」覆盖',
+          }),
+          fact({
+            key: 'family.child.superseded.aa11',
+            value: '用户和当前角色共同的女儿叫小美',
+            type: 'family',
+            status: 'archived',
+          }),
+        ],
+      })
+    );
+
+    const real = view.family.items.find(item => item.value.includes('小军'));
+    const synthesized = view.family.items.find(item =>
+      item.value.includes('小美')
+    );
+    expect(real?.reason).toBe(
+      '用户明确更正：原事实「儿子叫小军」被「儿子叫小强」覆盖'
+    );
+    expect(real?.reason).not.toContain('合成');
+    expect(synthesized?.reason.startsWith('【合成】')).toBe(true);
+    expect(synthesized?.reason).toContain('合成');
   });
 
   it('never fabricates a year for birthday_observance', () => {

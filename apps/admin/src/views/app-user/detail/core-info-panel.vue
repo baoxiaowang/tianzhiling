@@ -120,7 +120,21 @@
                   </span>
                 </a-space>
                 <div class="core-info-panel__reason">
-                  {{ candidate.reason || '-' }}
+                  <a-tag
+                    v-if="isSynthesizedReason(candidate.reason)"
+                    size="small"
+                    color="orange"
+                  >
+                    合成原因
+                  </a-tag>
+                  <a-tag
+                    v-else-if="candidate.reason"
+                    size="small"
+                    color="green"
+                  >
+                    库中真实原因
+                  </a-tag>
+                  {{ stripSynthesizedPrefix(candidate.reason) || '-' }}
                 </div>
               </div>
             </div>
@@ -408,7 +422,19 @@
                   <span>获知时间：{{ formatDate(item.learnedAt) }}</span>
                   <span>更新时间：{{ formatDate(item.updatedAt) }}</span>
                 </div>
-                <div class="core-info-panel__reason">{{ item.reason }}</div>
+                <div class="core-info-panel__reason">
+                  <a-tag
+                    v-if="isSynthesizedReason(item.reason)"
+                    size="small"
+                    color="orange"
+                  >
+                    合成原因
+                  </a-tag>
+                  <a-tag v-else-if="item.reason" size="small" color="green">
+                    库中真实原因
+                  </a-tag>
+                  {{ stripSynthesizedPrefix(item.reason) || '-' }}
+                </div>
                 <div
                   v-if="item.source?.messageId"
                   class="core-info-panel__source"
@@ -572,6 +598,18 @@
     if (status === 'rejected') return 'gray';
     return 'gray';
   };
+
+  // 与后端 admin-app-user-core-info.ts 的 SYNTHESIZED_REASON_PREFIX 保持一致：
+  // 只有旧数据没有 governance.reason 时才合成，合成原因带此前缀。
+  const SYNTHESIZED_REASON_PREFIX = '【合成】';
+
+  const isSynthesizedReason = (reason?: string) =>
+    (reason || '').startsWith(SYNTHESIZED_REASON_PREFIX);
+
+  const stripSynthesizedPrefix = (reason?: string) =>
+    isSynthesizedReason(reason)
+      ? (reason || '').slice(SYNTHESIZED_REASON_PREFIX.length)
+      : reason || '';
 
   const formatDate = (value?: string) => {
     if (!value) return '-';
