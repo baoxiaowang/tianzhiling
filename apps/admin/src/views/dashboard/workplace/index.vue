@@ -75,15 +75,12 @@
       </a-grid>
 
       <a-card
-        class="data-dashboard__monthly"
+        class="data-dashboard__chart-card data-dashboard__monthly"
         :bordered="false"
         title="每月新增用户、收入与消息数"
       >
         <template #extra>
           <a-space>
-            <a-typography-text type="secondary">
-              收入为当月净收入（实付 − 退款）
-            </a-typography-text>
             <a-select
               v-model="monthlyRange"
               class="data-dashboard__monthly-range"
@@ -94,48 +91,19 @@
               <a-option :value="24">近 24 个月</a-option>
               <a-option value="all">全部月份</a-option>
             </a-select>
+            <a-radio-group v-model="monthlyMetric" type="button" size="small">
+              <a-radio value="newUsers">新增用户</a-radio>
+              <a-radio value="netRevenue">当月收入</a-radio>
+              <a-radio value="userMessages">总消息数</a-radio>
+            </a-radio-group>
+            <a-button size="small" @click="downloadMonthly">
+              下载数据
+            </a-button>
           </a-space>
         </template>
-        <a-table
-          row-key="month"
-          :data="monthlyRows"
-          :loading="monthlyLoading"
-          :pagination="false"
-          :scroll="{ x: 860 }"
-          :row-class="monthlyRowClass"
-        >
-          <template #columns>
-            <a-table-column title="月份" data-index="month" :width="160">
-              <template #cell="{ record }">
-                <strong>{{ record.month }}</strong>
-                <small v-if="record.isCurrentMonth">本月进行中</small>
-              </template>
-            </a-table-column>
-            <a-table-column title="新增用户" :width="150">
-              <template #cell="{ record }">{{
-                formatNumber(record.newUsers)
-              }}</template>
-            </a-table-column>
-            <a-table-column title="总消息数" :width="150">
-              <template #cell="{ record }">{{
-                formatNumber(record.userMessages)
-              }}</template>
-            </a-table-column>
-            <a-table-column title="收入（净）" :width="150">
-              <template #cell="{ record }">{{
-                formatMoney(record.netRevenue)
-              }}</template>
-            </a-table-column>
-            <a-table-column title="实付 / 退款" :width="220">
-              <template #cell="{ record }">
-                <span class="data-dashboard__monthly-detail">
-                  {{ formatMoney(record.paidRevenue) }} /
-                  {{ formatMoney(record.refundedRevenue) }}
-                </span>
-              </template>
-            </a-table-column>
-          </template>
-        </a-table>
+        <a-spin :loading="monthlyLoading">
+          <Chart height="420px" :option="monthlyChartOption" />
+        </a-spin>
       </a-card>
     </a-spin>
   </div>
@@ -172,6 +140,9 @@
   );
   const report = ref<AdminOperationsReportDTO>();
   const monthlyRange = ref<AdminMonthlySummaryRange>(12);
+  const monthlyMetric = ref<'newUsers' | 'netRevenue' | 'userMessages'>(
+    'newUsers'
+  );
   const monthlyLoading = ref(false);
   const monthlyRows = ref<AdminMonthlySummaryPointDTO[]>([]);
 
@@ -378,8 +349,52 @@
     }
   };
 
-  const monthlyRowClass = (record: AdminMonthlySummaryPointDTO) =>
-    record.isCurrentMonth ? 'is-current-month' : '';
+  const monthlyMeta = computed(() => {
+    const map = {
+      newUsers: { name: '新增用户', color: '#7662cf', money: false },
+      netRevenue: { name: '当月收入（净）', color: '#36a375', money: true },
+      userMessages: { name: '总消息数', color: '#5f91bd', money: false },
+    };
+
+    return map[monthlyMetric.value];
+  });
+
+  const monthlyChartOption = computed(() => {
+    const items = monthlyRows.value || [];
+
+    return {
+      tooltip: {
+        trigger: 'axis',
+        valueFormatter: (value: number) =>
+          monthlyMeta.value.money ? formatMoney(value) : formatNumber(value),
+      },
+      grid: { left: 66, right: 28, top: 34, bottom: 38 },
+      xAxis: {
+        type: 'category',
+        data: items.map((item) => item.month),
+        axisLabel: { interval: 'auto' },
+      },
+      yAxis: {
+        type: 'value',
+        minInterval: monthlyMeta.value.money ? undefined : 1,
+        name: monthlyMeta.value.money ? '元' : '',
+      },
+      series: [
+        {
+          name: monthlyMeta.value.name,
+          type: 'line',
+          smooth: true,
+          symbolSize: 8,
+          data: items.map((item) => item[monthlyMetric.value]),
+          itemStyle: {
+            color: monthlyMeta.value.color,
+          },
+          lineStyle: { width: 3 },
+          areaStyle: { opacity: 0.1 },
+        },
+      ],
+    };
+  });
 
   const formatNumber = (value: number) =>
     Number(value || 0).toLocaleString('zh-CN');
@@ -409,6 +424,29 @@
     const a = document.createElement('a');
     a.href = url;
     a.download = `每日趋势_${month.value}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadMonthly = () => {
+    const items = monthlyRows.value || [];
+    if (!items.length) return;
+    const header = '月份,新增用户,总消息数,当月净收入（元）\n';
+    const rows = items
+      .map((item) =>
+        [
+          item.month,
+          item.newUsers,
+          item.userMessages,
+          Number(item.netRevenue || 0).toFixed(2),
+        ].join(',')
+      )
+      .join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `月度统计_${monthlyRange.value}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -512,26 +550,8 @@
       width: 100%;
       margin-top: 16px;
 
-      :deep(.arco-table-cell) strong {
-        display: block;
-      }
-
-      :deep(.arco-table-cell) small {
-        display: block;
-        color: var(--color-text-3);
-        font-size: 12px;
-      }
-
-      :deep(.is-current-month) td {
-        background: rgb(var(--purple-1));
-      }
-
       &-range {
         width: 132px;
-      }
-
-      &-detail {
-        color: var(--color-text-3);
       }
     }
   }
