@@ -84,6 +84,14 @@ export class AdminOperationsController {
     });
   }
 
+  @Put('/reports/daily/:date/note')
+  async updateDailyNote(
+    @Param('date') date: string,
+    @Body() body: { note?: unknown }
+  ) {
+    return this.adminOperationsService.setDailyNote(date, body?.note);
+  }
+
   @Get('/order-analytics')
   async orderAnalytics(@Query() query: Record<string, string>) {
     return this.adminOperationsService.getOrderAnalytics(query?.month);

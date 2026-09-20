@@ -80,6 +80,19 @@
               }}
             </template>
           </a-table-column>
+          <a-table-column title="运营笔记" :width="240">
+            <template #cell="{ record }">
+              <a-textarea
+                class="daily-detail-page__note-input"
+                :model-value="noteValue(record)"
+                :auto-size="{ minRows: 1, maxRows: 3 }"
+                :max-length="500"
+                placeholder="填写运营笔记"
+                @input="(value) => onNoteChange(record, value)"
+                @blur="flushNote(record)"
+              />
+            </template>
+          </a-table-column>
         </template>
       </a-table>
     </a-spin>
@@ -93,20 +106,27 @@
   import type { AdminOperationsDailyPointDTO } from '@tzl/shared';
   import {
     queryDailyDetail,
+    updateDailyNote,
     updateDailyPromotionExpense,
   } from '@/api/operations';
   import { getDouyinPromotionExpense } from '@tzl/shared/src/douyin-promotion-expenses';
 
   /** 自动刷新间隔。后端每 30 分钟重算一次当日汇总，这里取分钟级保证及时可见。 */
   const AUTO_REFRESH_MS = 60 * 1000;
+  /** 运营笔记是自由文本，防抖比推广费长一些，减少半句话被存进去的次数。 */
+  const NOTE_SAVE_DEBOUNCE_MS = 1500;
 
   const month = ref(dayjs().format('YYYY-MM'));
   const loading = ref(false);
   const daily = ref<AdminOperationsDailyPointDTO[]>([]);
+  const notes = ref<Record<string, string>>({});
   const lastUpdatedAt = ref('');
   const promotionDrafts = reactive<Record<string, number | undefined>>({});
   const savingDates = reactive<Record<string, boolean>>({});
   const promotionTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+  const noteDrafts = reactive<Record<string, string | undefined>>({});
+  const savingNoteDates = reactive<Record<string, boolean>>({});
+  const noteTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   let autoRefreshTimer: ReturnType<typeof setInterval> | undefined;
 
   const formatMoney = (value?: number) =>
@@ -200,10 +220,91 @@
     });
   };
 
-  /** 有未提交的推广费编辑时不打断用户（自动刷新会跳过这一轮）。 */
-  const hasPendingPromotionEdit = () =>
+  /* ---------- 运营笔记 ---------- */
+
+  const noteValue = (record: AdminOperationsDailyPointDTO) =>
+    noteDrafts[record.date] ?? notes.value[record.date] ?? '';
+
+  const clearNoteTimer = (date: string) => {
+    const timer = noteTimers[date];
+    if (timer) {
+      clearTimeout(timer);
+      delete noteTimers[date];
+    }
+  };
+
+  const scheduleNoteSave = (record: AdminOperationsDailyPointDTO) => {
+    clearNoteTimer(record.date);
+    noteTimers[record.date] = setTimeout(() => {
+      delete noteTimers[record.date];
+      saveNote(record);
+    }, NOTE_SAVE_DEBOUNCE_MS);
+  };
+
+  const saveNote = async (record: AdminOperationsDailyPointDTO) => {
+    const draft = noteDrafts[record.date];
+    if (draft === undefined) return;
+    if (draft === (notes.value[record.date] ?? '')) {
+      delete noteDrafts[record.date];
+      return;
+    }
+    if (savingNoteDates[record.date]) {
+      // 已有请求在途，稍后再保存最新值
+      scheduleNoteSave(record);
+      return;
+    }
+    savingNoteDates[record.date] = true;
+    try {
+      const { data } = await updateDailyNote(record.date, draft);
+      if (data.note) {
+        notes.value[record.date] = data.note;
+      } else {
+        delete notes.value[record.date];
+      }
+      if (noteDrafts[record.date] === data.note) {
+        delete noteDrafts[record.date];
+      }
+    } catch {
+      Message.error('运营笔记保存失败');
+      delete noteDrafts[record.date];
+    } finally {
+      savingNoteDates[record.date] = false;
+      const pending = noteDrafts[record.date];
+      if (
+        pending !== undefined &&
+        pending !== (notes.value[record.date] ?? '')
+      ) {
+        scheduleNoteSave(record);
+      }
+    }
+  };
+
+  const onNoteChange = (
+    record: AdminOperationsDailyPointDTO,
+    value: string
+  ) => {
+    noteDrafts[record.date] = typeof value === 'string' ? value : '';
+    scheduleNoteSave(record);
+  };
+
+  const flushNote = (record: AdminOperationsDailyPointDTO) => {
+    clearNoteTimer(record.date);
+    saveNote(record);
+  };
+
+  const clearNoteDrafts = () => {
+    Object.keys(noteDrafts).forEach((key) => {
+      clearNoteTimer(key);
+      delete noteDrafts[key];
+    });
+  };
+
+  /** 有未提交的推广费或运营笔记编辑时不打断用户（自动刷新会跳过这一轮）。 */
+  const hasPendingEdit = () =>
     Object.keys(promotionDrafts).length > 0 ||
-    Object.keys(savingDates).some((key) => savingDates[key]);
+    Object.keys(savingDates).some((key) => savingDates[key]) ||
+    Object.keys(noteDrafts).length > 0 ||
+    Object.keys(savingNoteDates).some((key) => savingNoteDates[key]);
 
   const stopAutoRefresh = () => {
     if (autoRefreshTimer) {
@@ -213,15 +314,19 @@
   };
 
   const fetch = async (options?: { refresh?: boolean; silent?: boolean }) => {
-    if (options?.silent && hasPendingPromotionEdit()) return;
+    if (options?.silent && hasPendingEdit()) return;
     try {
       if (!options?.silent) loading.value = true;
       const { data } = await queryDailyDetail(month.value, {
         refresh: options?.refresh,
       });
-      daily.value = data || [];
+      daily.value = data?.daily || [];
+      notes.value = data?.notes || {};
       lastUpdatedAt.value = dayjs().format('HH:mm:ss');
-      if (!options?.silent) clearPromotionDrafts();
+      if (!options?.silent) {
+        clearPromotionDrafts();
+        clearNoteDrafts();
+      }
     } catch {
       if (!options?.silent) Message.error('每日明细加载失败');
     } finally {
@@ -307,6 +412,15 @@
 
       :deep(input) {
         text-align: center;
+      }
+    }
+
+    &__note-input {
+      width: 220px;
+
+      :deep(textarea) {
+        font-size: 13px;
+        line-height: 1.4;
       }
     }
 

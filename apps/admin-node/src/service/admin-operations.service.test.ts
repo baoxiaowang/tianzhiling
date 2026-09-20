@@ -456,10 +456,14 @@ describe('AdminOperationsService', () => {
       .spyOn(service, 'computeAndPersistDailyStats')
       .mockResolvedValue({ date: '2026-09-19' } as never);
 
-    const rows = await service.getDailyDetail('2026-09');
-    expect(rows.map(row => row.date)).toHaveLength(19);
-    expect(rows[0]).toMatchObject({ date: '2026-09-01', newUsers: 1 });
-    expect(rows[18]).toMatchObject({ date: '2026-09-19', userMessages: 190 });
+    const result = await service.getDailyDetail('2026-09');
+    expect(result.month).toBe('2026-09');
+    expect(result.daily.map(row => row.date)).toHaveLength(19);
+    expect(result.daily[0]).toMatchObject({ date: '2026-09-01', newUsers: 1 });
+    expect(result.daily[18]).toMatchObject({
+      date: '2026-09-19',
+      userMessages: 190,
+    });
     // 普通读取不该触发任何重算
     expect(recompute).not.toHaveBeenCalled();
 
@@ -476,7 +480,35 @@ describe('AdminOperationsService', () => {
 
     // 非法月份回落到当前月（2026-09）
     const fallback = await service.getDailyDetail('oops');
-    expect(fallback[fallback.length - 1].date).toBe('2026-09-19');
+    expect(fallback.month).toBe('2026-09');
+    expect(fallback.daily[fallback.daily.length - 1].date).toBe('2026-09-19');
+  });
+
+  it('每日运营笔记可保存、读取与清空', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-19T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+    const { statsModel, queryRunner } = createPromotionExpenseStore();
+    service.statsModel = statsModel as never;
+
+    const saved = await service.setDailyNote('2026-09-19', '  投了 3 条视频  ');
+    expect(saved).toEqual({ date: '2026-09-19', note: '投了 3 条视频' });
+    expect(queryRunner.updateOne).toHaveBeenCalled();
+
+    const longNote = 'x'.repeat(600);
+    const truncated = await service.setDailyNote('2026-09-18', longNote);
+    expect(truncated.note).toHaveLength(500);
+
+    // 空文本 = 清除
+    const cleared = await service.setDailyNote('2026-09-19', '   ');
+    expect(cleared.note).toBe('');
+    expect(queryRunner.deleteOne).toHaveBeenCalledWith(
+      'admin_daily_note',
+      expect.objectContaining({ _id: '2026-09-19' })
+    );
+
+    await expect(service.setDailyNote('2026-9-1', 'x')).rejects.toThrow(
+      'invalid date'
+    );
   });
 
   it('computeDailyStats 排除内部小使者并计算单日统计', async () => {

@@ -163,6 +163,14 @@ const MONTHLY_SUMMARY_MAX_MONTHS = 120;
  */
 const PROMOTION_EXPENSE_OVERRIDE_COLLECTION = 'admin_daily_promotion_expense';
 
+/**
+ * 每日运营笔记集合。与推广费覆盖值同样单独存表、走原生命令读写。
+ * 文档结构：{ _id: 'YYYY-MM-DD', note: string, updatedAt: Date }
+ */
+const DAILY_NOTE_COLLECTION = 'admin_daily_note';
+/** 运营笔记长度上限（字符），避免误粘贴超长文本 */
+const DAILY_NOTE_MAX_LENGTH = 500;
+
 /** 覆盖值读写所需的最小 Mongo query runner 能力 */
 type PromotionExpenseOverrideQueryRunner = {
   updateOne(
@@ -180,6 +188,19 @@ type PromotionExpenseOverrideQueryRunner = {
     filter: Record<string, unknown>
   ): { toArray(): Promise<Array<Record<string, unknown>>> };
 };
+
+/** 每日明细页的响应：每日行 + 当日运营笔记（date -> 文本）。 */
+export interface AdminDailyDetailResult {
+  month: string;
+  daily: AdminOperationsDailyPointDTO[];
+  notes: Record<string, string>;
+}
+
+/** 运营笔记读写结果。 */
+export interface AdminDailyNoteResult {
+  date: string;
+  note: string;
+}
 
 @Provide()
 export class AdminOperationsService {
@@ -826,7 +847,7 @@ export class AdminOperationsService {
   }
 
   /**
-   * 每日明细页专用：只返回所选月份的每日行。
+   * 每日明细页专用：返回所选月份的每日行 + 运营笔记。
    *
    * 数据全部来自 admin_daily_stats 预计算汇总表，不做全表聚合——
    * 完整报表接口的 allTime 会扫整张 message 表（线上约 390 万条），
@@ -835,7 +856,7 @@ export class AdminOperationsService {
   async getDailyDetail(
     month?: string,
     options?: { refresh?: boolean }
-  ): Promise<AdminOperationsDailyPointDTO[]> {
+  ): Promise<AdminDailyDetailResult> {
     const currentMonth = this.getBeijingMonth(new Date());
     const normalizedMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month ?? '')
       ? (month as string)
@@ -856,7 +877,66 @@ export class AdminOperationsService {
         }
       }
     }
-    return this.getMonthDailyFromStats(normalizedMonth);
+    const [daily, notes] = await Promise.all([
+      this.getMonthDailyFromStats(normalizedMonth),
+      this.loadDailyNotes(`${normalizedMonth}-01`, `${normalizedMonth}-31`),
+    ]);
+    const notesRecord: Record<string, string> = {};
+    notes.forEach((value, key) => {
+      notesRecord[key] = value;
+    });
+    return {
+      month: normalizedMonth,
+      daily,
+      notes: notesRecord,
+    };
+  }
+
+  /** 读取日期区间内的运营笔记（date -> 文本，不含空笔记）。 */
+  async loadDailyNotes(
+    startDate: string,
+    endDate: string
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    const runner = this.getPromotionExpenseOverrideQueryRunner();
+    if (!runner) return result;
+    const rows = await runner
+      .cursor(DAILY_NOTE_COLLECTION, {
+        _id: { $gte: startDate, $lte: endDate },
+      })
+      .toArray();
+    for (const row of rows) {
+      const date = String(row._id ?? '');
+      const note = this.normalizeDailyNote(row.note);
+      if (date && note) result.set(date, note);
+    }
+    return result;
+  }
+
+  /** 写入/清除某日运营笔记。空文本表示清除。 */
+  async setDailyNote(date: string, rawNote: unknown): Promise<AdminDailyNoteResult> {
+    if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)) {
+      throw new AppError('INVALID_DATE', `invalid date: ${date}`);
+    }
+    const note = this.normalizeDailyNote(rawNote);
+    const runner = this.getPromotionExpenseOverrideQueryRunner();
+    if (!runner) return { date, note };
+    if (!note) {
+      await runner.deleteOne(DAILY_NOTE_COLLECTION, { _id: date });
+      return { date, note: '' };
+    }
+    await runner.updateOne(
+      DAILY_NOTE_COLLECTION,
+      { _id: date },
+      { $set: { note, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    return { date, note };
+  }
+
+  private normalizeDailyNote(value: unknown): string {
+    if (typeof value !== 'string') return '';
+    return value.trim().slice(0, DAILY_NOTE_MAX_LENGTH);
   }
 
   private async refreshReportData(month: string): Promise<void> {
