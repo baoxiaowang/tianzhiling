@@ -77,6 +77,13 @@ export class AdminOperationsController {
     return this.adminOperationsService.getMonthlySummary(query?.range);
   }
 
+  @Get('/daily-detail')
+  async dailyDetail(@Query() query: Record<string, string>) {
+    return this.adminOperationsService.getDailyDetail(query?.month, {
+      refresh: query?.refresh === '1' || query?.refresh === 'true',
+    });
+  }
+
   @Get('/order-analytics')
   async orderAnalytics(@Query() query: Record<string, string>) {
     return this.adminOperationsService.getOrderAnalytics(query?.month);

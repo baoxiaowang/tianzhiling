@@ -420,6 +420,65 @@ describe('AdminOperationsService', () => {
     expect(second.items).toEqual(first.items);
   });
 
+  it('每日明细只读汇总表，手动刷新只重算今天和昨天', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-19T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+    const { stats, statsModel } = createPromotionExpenseStore();
+    const seedMonth = (targetMonth: string, lastDay: number) => {
+      for (let day = 1; day <= lastDay; day += 1) {
+        const date = `${targetMonth}-${String(day).padStart(2, '0')}`;
+        stats.set(date, {
+          date,
+          newUsers: day,
+          newAgents: 0,
+          newUserChatUsers: 0,
+          newUserMessages: 0,
+          newUserFiveMessageUsers: 0,
+          allChatUsers: day,
+          userMessages: day * 10,
+          paidUsers: 0,
+          paidOrders: 0,
+          sameDayPayingUsers: 0,
+          paidRevenue: day,
+          refundedRevenue: 0,
+          netRevenue: day,
+          cohortRevenue: day,
+          promotionExpense: 0,
+          profit: day,
+        });
+      }
+    };
+    seedMonth('2026-09', 19);
+    // 历史月整月都有汇总行，避免踩到「缺失日期实时补算」
+    seedMonth('2026-05', 31);
+    service.statsModel = statsModel as never;
+    const recompute = jest
+      .spyOn(service, 'computeAndPersistDailyStats')
+      .mockResolvedValue({ date: '2026-09-19' } as never);
+
+    const rows = await service.getDailyDetail('2026-09');
+    expect(rows.map(row => row.date)).toHaveLength(19);
+    expect(rows[0]).toMatchObject({ date: '2026-09-01', newUsers: 1 });
+    expect(rows[18]).toMatchObject({ date: '2026-09-19', userMessages: 190 });
+    // 普通读取不该触发任何重算
+    expect(recompute).not.toHaveBeenCalled();
+
+    // 手动刷新：只重算今天和昨天
+    await service.getDailyDetail('2026-09', { refresh: true });
+    expect(recompute).toHaveBeenCalledTimes(2);
+    expect(recompute).toHaveBeenCalledWith('2026-09-18');
+    expect(recompute).toHaveBeenCalledWith('2026-09-19');
+
+    // 历史月：不重算
+    recompute.mockClear();
+    await service.getDailyDetail('2026-05', { refresh: true });
+    expect(recompute).not.toHaveBeenCalled();
+
+    // 非法月份回落到当前月（2026-09）
+    const fallback = await service.getDailyDetail('oops');
+    expect(fallback[fallback.length - 1].date).toBe('2026-09-19');
+  });
+
   it('computeDailyStats 排除内部小使者并计算单日统计', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-23T04:30:00.000Z'));
     const service = new AdminOperationsService();

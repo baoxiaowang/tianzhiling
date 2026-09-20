@@ -825,6 +825,40 @@ export class AdminOperationsService {
     return value;
   }
 
+  /**
+   * 每日明细页专用：只返回所选月份的每日行。
+   *
+   * 数据全部来自 admin_daily_stats 预计算汇总表，不做全表聚合——
+   * 完整报表接口的 allTime 会扫整张 message 表（线上约 390 万条），
+   * 冷启动 5 秒以上，而明细页并不需要这些字段。
+   */
+  async getDailyDetail(
+    month?: string,
+    options?: { refresh?: boolean }
+  ): Promise<AdminOperationsDailyPointDTO[]> {
+    const currentMonth = this.getBeijingMonth(new Date());
+    const normalizedMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month ?? '')
+      ? (month as string)
+      : currentMonth;
+    if (options?.refresh) {
+      // 历史月不会被后续订单/退款改写，只有今天和昨天需要重算。
+      const today = this.getTodayBeijing();
+      const [year, monthNumber, day] = today.split('-').map(Number);
+      const yesterdayDate = new Date(
+        Date.UTC(year, monthNumber - 1, day) - 24 * 60 * 60 * 1000
+      );
+      const yesterday = `${yesterdayDate.getUTCFullYear()}-${String(
+        yesterdayDate.getUTCMonth() + 1
+      ).padStart(2, '0')}-${String(yesterdayDate.getUTCDate()).padStart(2, '0')}`;
+      for (const date of [yesterday, today]) {
+        if (date.startsWith(normalizedMonth)) {
+          await this.computeAndPersistDailyStats(date);
+        }
+      }
+    }
+    return this.getMonthDailyFromStats(normalizedMonth);
+  }
+
   private async refreshReportData(month: string): Promise<void> {
     reportCache.delete(month);
     allTimeCache = undefined;

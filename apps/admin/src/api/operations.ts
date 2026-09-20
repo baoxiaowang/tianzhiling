@@ -70,6 +70,22 @@ export function queryMonthlySummary(range: AdminMonthlySummaryRange) {
   );
 }
 
+/**
+ * 每日明细页专用：只取所选月份的每日行。
+ * 比 queryOperationsReport 轻很多——后者还要算累计口径（扫全表消息）。
+ */
+export function queryDailyDetail(
+  month?: string,
+  options?: { refresh?: boolean }
+) {
+  return axios.get<AdminOperationsDailyPointDTO[]>(
+    '/admin_api/operations/daily-detail',
+    {
+      params: { month, refresh: options?.refresh ? 1 : undefined },
+    }
+  );
+}
+
 export function queryOrderAnalytics(month?: string) {
   return axios.get<AdminOrderAnalyticsDTO>(
     '/admin_api/operations/order-analytics',

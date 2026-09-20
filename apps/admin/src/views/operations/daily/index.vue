@@ -6,13 +6,18 @@
         <p>每日用户活跃、订单、收入与推广费用</p>
       </div>
       <a-space>
+        <a-typography-text v-if="lastUpdatedAt" type="secondary">
+          最后更新 {{ lastUpdatedAt }}
+        </a-typography-text>
         <a-month-picker
           v-model="month"
           value-format="YYYY-MM"
           :allow-clear="false"
-          @change="fetch"
+          @change="() => fetch()"
         />
-        <a-button :loading="loading" @click="fetch">刷新</a-button>
+        <a-button type="primary" :loading="loading" @click="refresh">
+          刷新
+        </a-button>
       </a-space>
     </header>
 
@@ -82,27 +87,27 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+  import { onMounted, onUnmounted, reactive, ref } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import type {
-    AdminOperationsDailyPointDTO,
-    AdminOperationsReportDTO,
-  } from '@tzl/shared';
+  import type { AdminOperationsDailyPointDTO } from '@tzl/shared';
   import {
-    queryOperationsReport,
+    queryDailyDetail,
     updateDailyPromotionExpense,
   } from '@/api/operations';
   import { getDouyinPromotionExpense } from '@tzl/shared/src/douyin-promotion-expenses';
 
+  /** 自动刷新间隔。后端每 30 分钟重算一次当日汇总，这里取分钟级保证及时可见。 */
+  const AUTO_REFRESH_MS = 60 * 1000;
+
   const month = ref(dayjs().format('YYYY-MM'));
   const loading = ref(false);
-  const report = ref<AdminOperationsReportDTO>();
+  const daily = ref<AdminOperationsDailyPointDTO[]>([]);
+  const lastUpdatedAt = ref('');
   const promotionDrafts = reactive<Record<string, number | undefined>>({});
   const savingDates = reactive<Record<string, boolean>>({});
   const promotionTimers: Record<string, ReturnType<typeof setTimeout>> = {};
-
-  const daily = computed(() => report.value?.daily || []);
+  let autoRefreshTimer: ReturnType<typeof setInterval> | undefined;
 
   const formatMoney = (value?: number) =>
     `¥${Number(value || 0).toLocaleString('zh-CN', {
@@ -195,24 +200,58 @@
     });
   };
 
-  onUnmounted(() => {
-    Object.keys(promotionTimers).forEach((key) => clearPromotionTimer(key));
-  });
+  /** 有未提交的推广费编辑时不打断用户（自动刷新会跳过这一轮）。 */
+  const hasPendingPromotionEdit = () =>
+    Object.keys(promotionDrafts).length > 0 ||
+    Object.keys(savingDates).some((key) => savingDates[key]);
 
-  const fetch = async () => {
-    try {
-      loading.value = true;
-      const { data } = await queryOperationsReport(month.value);
-      report.value = data;
-      clearPromotionDrafts();
-    } catch {
-      Message.error('每日明细加载失败');
-    } finally {
-      loading.value = false;
+  const stopAutoRefresh = () => {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = undefined;
     }
   };
 
-  onMounted(fetch);
+  const fetch = async (options?: { refresh?: boolean; silent?: boolean }) => {
+    if (options?.silent && hasPendingPromotionEdit()) return;
+    try {
+      if (!options?.silent) loading.value = true;
+      const { data } = await queryDailyDetail(month.value, {
+        refresh: options?.refresh,
+      });
+      daily.value = data || [];
+      lastUpdatedAt.value = dayjs().format('HH:mm:ss');
+      if (!options?.silent) clearPromotionDrafts();
+    } catch {
+      if (!options?.silent) Message.error('每日明细加载失败');
+    } finally {
+      if (!options?.silent) loading.value = false;
+    }
+  };
+
+  /** 手动刷新：绕过后端当日的汇总重算，拿到最新数据 */
+  const refresh = () => fetch({ refresh: true });
+
+  const handleVisibilityChange = () => {
+    // 页面回到前台时补一次，避免长时间挂在后台后显示过期数据
+    if (!document.hidden) fetch({ silent: true });
+  };
+
+  onMounted(() => {
+    fetch();
+    stopAutoRefresh();
+    autoRefreshTimer = setInterval(() => {
+      if (document.hidden) return;
+      fetch({ silent: true });
+    }, AUTO_REFRESH_MS);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  });
+
+  onUnmounted(() => {
+    stopAutoRefresh();
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    Object.keys(promotionTimers).forEach((key) => clearPromotionTimer(key));
+  });
 </script>
 
 <style lang="less" scoped>
