@@ -1,10 +1,11 @@
 import Taro from '@tarojs/taro'
 import {
-  type OrderRecord,
   syncOrderPayment,
-  type WechatPaymentParams,
   type WechatVirtualPaymentParams,
 } from '../apis/order'
+import { isIosClientPlatform } from './client-platform'
+
+export { isIosClientPlatform } from './client-platform'
 
 interface MiniProgramSystemInfo {
   platform?: string
@@ -34,16 +35,6 @@ interface WechatVirtualPaymentAlert {
   confirmText?: string
 }
 
-interface WechatVirtualPaymentOrderResult {
-  order: OrderRecord
-  virtualPayment: WechatVirtualPaymentParams
-}
-
-interface WechatPaymentOrderResult {
-  order: OrderRecord
-  payment?: WechatPaymentParams
-}
-
 export class WechatVirtualPaymentError extends Error {
   readonly errMsg?: string
   readonly errCode?: number
@@ -63,11 +54,19 @@ export class WechatVirtualPaymentError extends Error {
 
 export function assertVirtualPaymentAvailable() {
   const systemInfo = Taro.getSystemInfoSync() as MiniProgramSystemInfo
-  // const platform = systemInfo.platform?.toLowerCase() ?? ''
 
-  // if (platform === 'ios') {
-  //   throw new Error('暂不支持 iOS 端购买，请使用安卓/鸿蒙/Windows 微信客户端购买')
-  // }
+  // iOS 不走虚拟支付（手续费高、账期长），调用方在选分支时就会绕开这里；
+  // 这里作为防线快速失败，避免将来有人漏判平台时又建出一笔 Apple 通道订单。
+  //
+  // 必须抛**普通 Error（不带 errMsg）**：页面 catch 用 isWechatPaymentCancel 区分
+  // "用户主动取消"，只有 errMsg 里带 cancel 才算取消。普通 Error 会被当作真实失败展示，
+  // 不会被误判成取消。
+  //
+  // 正常路径上调用方（vip-center / voice-package-success）已按平台选好分支，
+  // iOS 根本不会走到这里，也就不会建出 Apple 通道订单。
+  if (isIosClientPlatform()) {
+    throw new Error('iOS 客户端不支持小程序虚拟支付，改用普通微信支付')
+  }
 
   if (
     compareVersion(systemInfo.SDKVersion ?? '', minVirtualPaymentSdkVersion) < 0 &&
@@ -127,42 +126,6 @@ export async function requestWechatVirtualPayment(
   } finally {
     stopWatchingOrder = true
     paymentPromise.catch(() => undefined)
-  }
-}
-
-export async function requestWechatVirtualPaymentWithFallback(
-  result: WechatVirtualPaymentOrderResult,
-  createFallbackOrder: () => Promise<WechatPaymentOrderResult>
-) {
-  try {
-    await requestWechatVirtualPayment(result.virtualPayment, {
-      orderId: result.order.id,
-    })
-
-    return result.order
-  } catch (error) {
-    if (isWechatPaymentCancel(error)) {
-      throw error
-    }
-
-    console.warn(
-      '[virtual-payment] requestVirtualPayment failed, fallback to wechat payment',
-      {
-        orderId: result.order.id,
-        error,
-      }
-    )
-    const fallbackResult = await createFallbackOrder()
-
-    if (fallbackResult.order.payableAmount > 0) {
-      if (!fallbackResult.payment) {
-        throw new Error('支付参数获取失败，请稍后重试')
-      }
-
-      await Taro.requestPayment(fallbackResult.payment)
-    }
-
-    return fallbackResult.order
   }
 }
 

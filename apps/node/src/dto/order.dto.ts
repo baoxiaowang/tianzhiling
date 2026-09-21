@@ -13,6 +13,9 @@ export class CreateVipPlanOrderBodyDTO implements CreateVipPlanOrderDTO {
 
   @Rule(RuleType.boolean().optional())
   supportsZeroAmountOrder?: boolean;
+
+  @Rule(RuleType.string().max(32).optional())
+  platform?: string;
 }
 
 export class CreateVoicePackageOrderBodyDTO
@@ -32,4 +35,7 @@ export class CreateVoicePackageOrderBodyDTO
 
   @Rule(RuleType.number().min(0).max(3600).optional())
   materialDurationSeconds?: number;
+
+  @Rule(RuleType.string().max(32).optional())
+  platform?: string;
 }

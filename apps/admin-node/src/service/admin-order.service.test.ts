@@ -2246,6 +2246,144 @@ describe('AdminOrderService', () => {
     );
   });
 
+  // 幂等预检不能只看 status：微信在部分退款后就置 status=5。
+  // 只有 left_fee 明确且已不多于「本次退款后应有的余额」才能认定已退过。
+  it('微信未返回 left_fee 时不认定已退款，也不重复提交', async () => {
+    const { service, orders, memberships } = createService();
+    const { order } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.paymentProvider = 'wechat_virtual_pay';
+    order.payerOpenid = 'virtual-openid-no-left-fee';
+    order.virtualPaymentEnv = 0;
+
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 19900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never);
+
+    await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenCalledTimes(1);
+
+    // 最终退款：微信只回了 status=5，没有 left_fee
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValue({
+        order_id: order.orderNo,
+        status: 5,
+        paid_fee: 19900,
+      } as never);
+
+    await expect(
+      service.refundOrder(ORDER_ID.toHexString())
+    ).rejects.toMatchObject({
+      code: 'WECHAT_VIRTUAL_PAY_LEFT_FEE_INVALID',
+    });
+
+    // 既不能误判成功，也不能拿缺失金额去提交退款
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenCalledTimes(1);
+    expect(order.status).not.toBe(OrderStatus.refunded);
+  });
+
+  it('微信侧已全额退款时幂等返回成功，不重复提交', async () => {
+    const { service, orders, refundOrders, memberships } = createService();
+    const { order, membership } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.paymentProvider = 'wechat_virtual_pay';
+    order.payerOpenid = 'virtual-openid-already-refunded';
+    order.virtualPaymentEnv = 0;
+
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 19900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never)
+      // 最终退款前微信已显示无剩余可退：说明上一次已经退成功
+      .mockResolvedValue({
+        order_id: order.orderNo,
+        status: 5,
+        paid_fee: 19900,
+        left_fee: 0,
+      } as never);
+
+    await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    const callsAfterDowngrade = jest.mocked(
+      service.adminWechatPayService.refundVirtualOrder
+    ).mock.calls.length;
+
+    const refunded = await service.refundOrder(ORDER_ID.toHexString());
+
+    // 不重复提交；本地据此收口为已退款
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenCalledTimes(callsAfterDowngrade);
+    expect(refunded.status).toBe(OrderStatus.refunded);
+    expect(membership.status).toBe(UserMembershipStatus.refunded);
+    expect(refundOrders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          refundNo: `R${order.orderNo}`,
+          refundType: 'voice_membership_final_refund',
+          amount: 12900,
+          status: 'completed',
+        }),
+      ])
+    );
+  });
+
   it('reconciles an in-progress WeChat virtual downgrade before changing benefits', async () => {
     const { service, orders, memberships } = createService();
     const { order, membership } = mockVoiceMembershipDowngradeLookups(

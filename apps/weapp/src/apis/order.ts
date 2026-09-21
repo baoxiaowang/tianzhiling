@@ -10,6 +10,7 @@ import type {
   WechatVirtualPaymentParamsDTO,
 } from '@tzl/shared'
 import { get, post } from '../api/api-client'
+import { getClientPlatform } from '../utils/client-platform'
 
 export interface OrderRecord {
   id: string
@@ -255,6 +256,7 @@ export async function createVipPlanOrder(payload: {
     vipPlanId: payload.vipPlanId,
     jsCode: payload.jsCode,
     supportsZeroAmountOrder: true,
+    platform: getClientPlatform(),
   })
 
   return parseCreateVipPlanOrderResult(data)
@@ -270,6 +272,7 @@ export async function createVipPlanVirtualPaymentOrder(payload: {
       vipPlanId: payload.vipPlanId,
       jsCode: payload.jsCode,
       supportsZeroAmountOrder: true,
+      platform: getClientPlatform(),
     }
   )
 
@@ -291,6 +294,7 @@ export async function createVoicePackageOrder(payload: {
       jsCode: payload.jsCode,
       materialObjectKeys: payload.materialObjectKeys ?? [],
       materialDurationSeconds: payload.materialDurationSeconds,
+      platform: getClientPlatform(),
     }
   )
 
@@ -312,6 +316,7 @@ export async function createVoicePackageVirtualPaymentOrder(payload: {
       jsCode: payload.jsCode,
       materialObjectKeys: payload.materialObjectKeys ?? [],
       materialDurationSeconds: payload.materialDurationSeconds,
+      platform: getClientPlatform(),
     }
   )
 

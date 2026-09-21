@@ -44,13 +44,19 @@
           ><span>退款流水</span
           ><strong>{{ formatMoney(report?.totals.refundedAmount) }}</strong
           ><small
-            >{{ formatCount(report?.totals.completedRefunds) }} 笔</small
+            >{{ formatCount(report?.totals.completedRefunds) }} 笔<template
+              v-if="report?.totals.legacyRefundCount"
+            >
+              ；另有历史遗留
+              {{ formatCount(report?.totals.legacyRefundCount) }} 笔
+              {{ formatMoney(report?.totals.legacyRefundedAmount) }}
+            </template></small
           ></article
         >
         <article
           ><span>月度净额</span
           ><strong>{{ formatMoney(report?.totals.netAmount) }}</strong
-          ><small>当月已付款 − 当月退款（同「本月收入」）</small></article
+          ><small>当月已付款 − 当月退款 − 历史遗留退款</small></article
         >
       </div>
 

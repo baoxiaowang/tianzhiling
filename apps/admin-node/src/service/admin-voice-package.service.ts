@@ -331,11 +331,22 @@ export class AdminVoicePackageService {
   private normalizePackagePayload(
     payload: SaveAdminVoicePackageDTO
   ): SavePackageData {
+    const priceAmount = this.normalizeAmount(payload.priceAmount);
+    const virtualPaymentProductId =
+      payload.virtualPaymentProductId?.trim() || '';
+    const status = this.normalizePackageStatus(payload.status);
+
+    this.assertVirtualPaymentProductConfigured({
+      priceAmount,
+      status,
+      virtualPaymentProductId,
+    });
+
     return {
       code: this.normalizeCode(payload.code),
       name: payload.name.trim(),
       description: payload.description?.trim() ?? '',
-      priceAmount: this.normalizeAmount(payload.priceAmount),
+      priceAmount,
       originalPriceAmount: this.normalizeOptionalAmount(
         payload.originalPriceAmount
       ),
@@ -345,10 +356,39 @@ export class AdminVoicePackageService {
       estimatedServiceDays: this.normalizeOptionalPositiveInteger(
         payload.estimatedServiceDays
       ),
-      virtualPaymentProductId: payload.virtualPaymentProductId?.trim() || '',
-      status: this.normalizePackageStatus(payload.status),
+      virtualPaymentProductId,
+      status,
       sort: this.normalizeNonNegativeInteger(payload.sort, 0),
     };
+  }
+
+  /**
+   * 付费且在售的声音套餐必须配置微信虚拟支付道具 ID。
+   *
+   * 非 iOS 客户端只走虚拟支付，缺 ID 会导致商品不可购买；免费/停售草稿不受限。
+   */
+  private assertVirtualPaymentProductConfigured(input: {
+    priceAmount: number;
+    status: VoicePackageStatus;
+    virtualPaymentProductId: string;
+  }): void {
+    if (input.priceAmount <= 0) {
+      return;
+    }
+
+    if (input.status !== VoicePackageStatus.active) {
+      return;
+    }
+
+    if (input.virtualPaymentProductId) {
+      return;
+    }
+
+    throw new AppError(
+      'VIRTUAL_PAYMENT_PRODUCT_ID_REQUIRED',
+      `声音套餐价格为 ${(input.priceAmount / 100).toFixed(2)} 元且在售，必须配置微信虚拟支付道具 ID 才能保存上线（需与微信公众平台虚拟支付后台的道具 ID 完全一致）`,
+      400
+    );
   }
 
   private normalizeDeliverables(

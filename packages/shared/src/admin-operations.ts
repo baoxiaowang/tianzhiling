@@ -293,8 +293,21 @@ export interface AdminMonthlyOrderReportDTO {
     validOrders: number;
     abnormalOrders: number;
     validAmount: number;
+    /** order_refund 集合里的已完成退款笔数（不含历史遗留退款） */
     completedRefunds: number;
+    /** order_refund 集合里的已完成退款金额（元，不含历史遗留退款） */
     refundedAmount: number;
+    /**
+     * 历史遗留退款金额（元）：订单自身带 refundAmount 且没有独立退款单，
+     * 出现在净值公式里但不在 refundOrders 明细里，单独列出以便勾稽。
+     */
+    legacyRefundedAmount: number;
+    /** 历史遗留退款笔数 */
+    legacyRefundCount: number;
+    /**
+     * 月度净额（元）= 当月实付金额 − refundedAmount − legacyRefundedAmount。
+     * 可用这三个字段与本字段互相验证。
+     */
     netAmount: number;
   };
   validOrders: AdminMonthlyOrderRecordDTO[];

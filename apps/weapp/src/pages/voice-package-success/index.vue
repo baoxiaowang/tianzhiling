@@ -112,8 +112,9 @@ import VoiceCustomerServiceCard from '../../components/voice-customer-service-ca
 import VoicePackageSheet from '../../components/voice-package-sheet/voice-package-sheet.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import {
+  isIosClientPlatform,
   isWechatPaymentCancel,
-  requestWechatVirtualPaymentWithFallback,
+  requestWechatVirtualPayment,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 
@@ -319,27 +320,24 @@ async function handlePay() {
 
     let paidOrderId = ''
 
-    if (voicePackage.virtualPaymentProductId) {
+    // 同 vip-center：iOS 走普通微信支付；非 iOS 只走虚拟支付，失败不回退。
+    if (voicePackage.virtualPaymentProductId && !isIosClientPlatform()) {
       const result = await createVoicePackageVirtualPaymentOrder({
         voicePackageId: voicePackage.id,
         agentId: agentId.value,
         jsCode: code,
       })
-      const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
-        const fallbackLoginResult = await Taro.login()
-        const fallbackCode = fallbackLoginResult.code?.trim()
+      paidOrderId = result.order.id
 
-        if (!fallbackCode) {
-          throw new Error('微信登录失败，请稍后重试')
+      if (result.order.payableAmount > 0) {
+        if (!result.virtualPayment) {
+          throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        return createVoicePackageOrder({
-          voicePackageId: voicePackage.id,
-          agentId: agentId.value,
-          jsCode: fallbackCode,
+        await requestWechatVirtualPayment(result.virtualPayment, {
+          orderId: result.order.id,
         })
-      })
-      paidOrderId = paidOrder.id
+      }
     } else {
       const result = await createVoicePackageOrder({
         voicePackageId: voicePackage.id,

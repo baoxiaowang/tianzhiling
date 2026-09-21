@@ -20,7 +20,7 @@ export class OrderController {
     return this.orderService.createVipPlanOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body,
-      this.getClientUserAgent()
+      this.getOrderClientContext(body)
     );
   }
 
@@ -30,7 +30,8 @@ export class OrderController {
   ) {
     return this.orderService.createVipPlanVirtualPaymentOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
-      body
+      body,
+      this.getOrderClientContext(body)
     );
   }
 
@@ -39,18 +40,22 @@ export class OrderController {
     return this.orderService.createVoicePackageOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body,
-      this.getClientUserAgent()
+      this.getOrderClientContext(body)
     );
   }
 
   /**
-   * 客户端平台只从 User-Agent 判定：微信只关闭了非 iOS 的普通微信支付，
-   * iOS 必须能走普通支付（其虚拟支付基本不可用）。用 UA 而不是新增请求字段，
-   * 是为了让已发布的旧版小程序无需发版即可生效。
+   * 下单请求的客户端上下文：
+   * - User-Agent 是旧客户端唯一的平台信号，必须保留以兼容已发布版本；
+   * - 新增客户端额外上报 `platform`，服务端做交叉验证，冲突则 fail-closed。
    */
-  private getClientUserAgent(): string | undefined {
+  private getOrderClientContext(body: { platform?: string }) {
     const header = this.ctx.headers['user-agent'];
-    return Array.isArray(header) ? header[0] : header;
+
+    return {
+      userAgent: Array.isArray(header) ? header[0] : header,
+      declaredPlatform: body?.platform,
+    };
   }
 
   @Post('/voice-package/virtual-payment')
@@ -59,7 +64,8 @@ export class OrderController {
   ) {
     return this.orderService.createVoicePackageVirtualPaymentOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
-      body
+      body,
+      this.getOrderClientContext(body)
     );
   }
 

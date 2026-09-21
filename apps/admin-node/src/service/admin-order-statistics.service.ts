@@ -18,7 +18,13 @@ import { MongoRepository } from 'typeorm';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
-export const CALCULATION_VERSION = 7;
+/**
+ * 历史月份也会出现迟到退款/补录，不能永久固化快照；
+ * 给一个更长的有限 TTL，既避免每次请求都重算，又能让补录在有限时间内反映出来。
+ */
+const PAST_MONTH_TTL_MS = 30 * 60 * 1000;
+// 7 → 8：totals 新增 legacyRefundedAmount / legacyRefundCount，旧快照需重算
+export const CALCULATION_VERSION = 8;
 
 type RawMonthlyOrder = {
   _id: { toString(): string };
@@ -83,12 +89,13 @@ export class AdminOrderStatisticsService {
       where: { month: normalizedMonth },
     });
     const isCurrentMonth = normalizedMonth === this.beijingMonth(now);
+    const snapshotTtlMs = isCurrentMonth
+      ? CURRENT_MONTH_TTL_MS
+      : PAST_MONTH_TTL_MS;
     const isFresh = Boolean(
       stored &&
         stored.calculationVersion === CALCULATION_VERSION &&
-        (!isCurrentMonth ||
-          now.getTime() - new Date(stored.updatedAt).getTime() <
-            CURRENT_MONTH_TTL_MS)
+        now.getTime() - new Date(stored.updatedAt).getTime() < snapshotTtlMs
     );
 
     if (!forceRefresh && stored && isFresh) {
@@ -107,10 +114,10 @@ export class AdminOrderStatisticsService {
     const monthIndex = Number(monthText) - 1;
     const start = new Date(Date.UTC(year, monthIndex, 1) - BEIJING_OFFSET_MS);
     const end = new Date(Date.UTC(year, monthIndex + 1, 1) - BEIJING_OFFSET_MS);
-    const [rows, refundRows, legacyRefundAmount] = await Promise.all([
+    const [rows, refundRows, legacyRefund] = await Promise.all([
       this.loadMonthlyOrders(start, end),
       this.loadMonthlyRefunds(start, end),
-      this.loadMonthlyLegacyRefundAmount(start, end),
+      this.loadMonthlyLegacyRefund(start, end),
     ]);
     const records = rows.map(row => this.toRecord(row));
     const refundOrders = refundRows.map(row => this.toRefundRecord(row));
@@ -137,7 +144,7 @@ export class AdminOrderStatisticsService {
       0
     );
     const netAmount = this.roundMoney(
-      (netPaidAmount - netRefundAmount - legacyRefundAmount) / 100
+      (netPaidAmount - netRefundAmount - legacyRefund.amount) / 100
     );
     const validOrderAmount = validOrders.reduce(
       (sum, order) => sum + order.amount,
@@ -161,6 +168,10 @@ export class AdminOrderStatisticsService {
         refundedAmount: this.roundMoney(
           refundOrders.reduce((sum, refund) => sum + refund.amount, 0)
         ),
+        // 历史遗留退款金额不在 refundOrders 明细里，单独列出保证总计可勾稽：
+        // netAmount = 当月实付 − refundedAmount − legacyRefundedAmount
+        legacyRefundedAmount: this.roundMoney(legacyRefund.amount / 100),
+        legacyRefundCount: legacyRefund.count,
         netAmount,
       },
       validOrders,
@@ -341,12 +352,16 @@ export class AdminOrderStatisticsService {
    * 且退款时间在本月的冲抵金额（分）。口径与仪表盘
    * `aggregateLegacyDailyRefundAmounts` 保持一致。
    */
-  private async loadMonthlyLegacyRefundAmount(
+  /**
+   * 历史遗留退款（订单自身带 refundAmount 且没有独立退款单）的金额与笔数。
+   * 两者都要返回：金额进净值公式，笔数用于和 completedRefunds 勾稽总笔数。
+   */
+  private async loadMonthlyLegacyRefund(
     start: Date,
     end: Date
-  ): Promise<number> {
+  ): Promise<{ amount: number; count: number }> {
     const rows = await this.orderModel
-      .aggregate<{ amount: number }>([
+      .aggregate<{ amount: number; count: number }>([
         {
           $match: {
             targetCode: { $ne: 'voice_one' },
@@ -389,11 +404,16 @@ export class AdminOrderStatisticsService {
                 ],
               },
             },
+            count: { $sum: 1 },
           },
         },
       ])
       .toArray();
-    return Number(rows[0]?.amount) || 0;
+
+    return {
+      amount: Number(rows[0]?.amount) || 0,
+      count: Number(rows[0]?.count) || 0,
+    };
   }
 
   private toRefundRecord(row: RawMonthlyRefund): AdminMonthlyRefundRecordDTO {

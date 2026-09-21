@@ -211,6 +211,12 @@ export interface CreateVipPlanOrderDTO {
   vipPlanId: string;
   jsCode: string;
   supportsZeroAmountOrder?: boolean;
+  /**
+   * 客户端自报平台（iOS 用普通微信支付，非 iOS 只走虚拟支付）。
+   * 新增客户端会带上，用于和服务端 User-Agent 判定交叉验证；
+   * 旧客户端不带，服务端仅按 User-Agent 判定。
+   */
+  platform?: string;
 }
 
 export interface CreateVoicePackageOrderDTO {
@@ -219,6 +225,8 @@ export interface CreateVoicePackageOrderDTO {
   jsCode: string;
   materialObjectKeys?: string[];
   materialDurationSeconds?: number;
+  /** 见 CreateVipPlanOrderDTO.platform。 */
+  platform?: string;
 }
 
 export interface CreateVipPlanOrderResultDTO {

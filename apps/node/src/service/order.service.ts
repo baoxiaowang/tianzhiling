@@ -64,6 +64,16 @@ const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD =
 const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS = 60 * 1000;
 export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
 
+/**
+ * 下单请求的客户端上下文。
+ * - userAgent：旧客户端唯一的平台信号（微信小程序 UA）；
+ * - declaredPlatform：新增客户端显式上报，用于与 UA 交叉验证。
+ */
+export interface OrderClientContext {
+  userAgent?: string;
+  declaredPlatform?: string;
+}
+
 interface MembershipFinancialOperationLease {
   token: string;
   userId: MongoObjectId;
@@ -148,11 +158,14 @@ export class OrderService {
   @InjectEntityModel(VoiceTrainingTaskEntity)
   voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
 
-  /** 客户端平台只从 User-Agent 判定：微信小程序 UA 里带 iPhone/iPad 或 Android。 */
-  private describeClientPlatform(
+  /** User-Agent 判定：微信小程序 UA 里带 iPhone/iPad 或 Android。 */
+  private readUserAgentPlatform(
     clientUserAgent?: string
   ): 'ios' | 'android' | 'other' {
     const value = String(clientUserAgent || '');
+    if (!value.trim()) {
+      return 'other';
+    }
     if (/(iPhone|iPad|iPod)/i.test(value)) {
       return 'ios';
     }
@@ -160,6 +173,104 @@ export class OrderService {
       return 'android';
     }
     return 'other';
+  }
+
+  /** 客户端自报平台（新增客户端才会带）。 */
+  private readDeclaredPlatform(
+    value?: unknown
+  ): 'ios' | 'android' | 'other' | undefined {
+    const text = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    if (!text) {
+      return undefined;
+    }
+    if (text === 'ios') {
+      return 'ios';
+    }
+    if (text === 'android' || text === 'harmony' || text === 'ohos') {
+      return 'android';
+    }
+    // windows / mac / devtools 等桌面与工具环境：都不是 iOS。
+    return 'other';
+  }
+
+  /**
+   * 解析客户端平台，并做交叉验证。
+   *
+   * 平台决定资金走哪条通道（iOS 走普通微信支付，非 iOS 只走虚拟支付），
+   * 所以不能只信单个可伪造的字段：
+   * - 旧客户端只带 User-Agent → 按 UA 判定（兼容）；
+   * - 新客户端两个都带 → 一致才采信，**不一致视为冲突**；
+   * - 冲突或完全判不出来 → `isTrustedIos` 为 false，按非 iOS 处理（fail-closed）。
+   *
+   * **UA 是唯一的信任来源**：真实微信小程序请求一定带 UA，缺 UA 只可能是
+   * 服务端调用、压测脚本或伪造请求。此类请求即便自报 `platform=ios` 也**不采信**，
+   * 否则非 iOS 客户端只需省掉 UA 再自报 iOS 就能白拿普通微信支付、绕过规则。
+   * 自报字段只用于"与 UA 对照"，永远不能单独把请求提升为可信 iOS。
+   */
+  private resolveClientPlatform(input: {
+    clientUserAgent?: string;
+    declaredPlatform?: unknown;
+  }): {
+    platform: 'ios' | 'android' | 'other';
+    source: 'ua' | 'declared' | 'ua+declared' | 'none';
+    conflict: boolean;
+    isTrustedIos: boolean;
+  } {
+    const hasUserAgent = String(input.clientUserAgent || '').trim().length > 0;
+    const fromUa = hasUserAgent
+      ? this.readUserAgentPlatform(input.clientUserAgent)
+      : undefined;
+    const fromDeclared = this.readDeclaredPlatform(input.declaredPlatform);
+
+    if (fromUa === undefined && fromDeclared === undefined) {
+      return {
+        platform: 'other',
+        source: 'none',
+        conflict: false,
+        isTrustedIos: false,
+      };
+    }
+
+    if (fromDeclared === undefined) {
+      return {
+        platform: fromUa as 'ios' | 'android' | 'other',
+        source: 'ua',
+        conflict: false,
+        isTrustedIos: fromUa === 'ios',
+      };
+    }
+
+    if (fromUa === undefined) {
+      // 缺 UA：不可信来源，自报 ios 也按非 iOS 处理（fail-closed）。
+      return {
+        platform: fromDeclared ?? 'other',
+        source: 'declared',
+        conflict: false,
+        isTrustedIos: false,
+      };
+    }
+
+    const conflict = (fromUa === 'ios') !== (fromDeclared === 'ios');
+
+    return {
+      platform: conflict ? fromUa : fromDeclared,
+      source: 'ua+declared',
+      conflict,
+      isTrustedIos: !conflict && fromDeclared === 'ios',
+    };
+  }
+
+  /** WARN 日志里的用户标识做哈希，避免原始 userId 落盘。 */
+  private hashLogUserId(userId?: string): string {
+    const value = String(userId || '')
+      .trim()
+      .toLowerCase();
+    if (!value) {
+      return '-';
+    }
+    return createHash('sha256').update(value).digest('hex').slice(0, 12);
   }
 
   /** 小程序运行环境（安卓/鸿蒙/Windows/Mac/开发者工具），用于排查细分平台问题。 */
@@ -171,60 +282,147 @@ export class OrderService {
   }
 
   /**
-   * 普通微信支付下单入口的守卫 + 兜底观测。
+   * 普通微信支付下单入口的守卫 + 路由观测。
    *
-   * **观测原理**：商品一旦配置了 `virtualPaymentProductId`，客户端的分支就只会走虚拟支付，
-   * 只有虚拟支付**非取消**失败时才会回退到本接口。所以这个入口收到请求，
-   * 本身就等价于「该设备的虚拟支付失败了」——不需要客户端上报就能统计，
-   * 也不需要小程序发版。
+   * **业务策略**：
+   * - iOS 主动不用小程序虚拟支付（Apple 通道手续费高、账期长），**直接走普通微信支付**；
+   * - 非 iOS（安卓/鸿蒙/Windows/Mac）配置了虚拟商品的付费数字商品**只走虚拟支付**，
+   *   失败不回退——各自只有一条通道，不存在"兜底"。
    *
-   * 每次命中都打一条 `ORDER_VIRTUAL_PAY_FALLBACK`，可直接按平台统计：
-   *   grep -c "ORDER_VIRTUAL_PAY_FALLBACK.*platform=ios" 
+   * 因此这里不再有"回退"语义：iOS 命中本入口是**正常直付**，
+   * 非 iOS 命中本入口说明客户端或配置有问题，必须拒绝。
    *
-   * **守卫**：微信平台只关闭了**非 iOS** 系统的普通微信支付能力。iOS 上普通支付仍然可用，
-   * 而且 iOS 的 `wx.requestVirtualPayment` 基本走不通，普通支付是 iOS 用户唯一能成功的路径。
-   * 因此只拒绝非 iOS 客户端——否则 iOS 用户会被堵死在
-   * 「虚拟支付失败 → 回退普通支付 → 被本守卫拒绝」的死路上（2026-09-21 两起真实案例）。
+   * 平台判定交叉验证 User-Agent 与客户端自报字段（见 resolveClientPlatform），
+   * 冲突或判不出来时按非 iOS 处理（fail-closed）。
+   *
+   * 每次命中打一条 `ORDER_PAY_ROUTE`，可直接统计：
+   *   grep -c "ORDER_PAY_ROUTE route=ios_ordinary_direct"
+   * 用户标识做哈希，原始 userId 不落 WARN 日志。
    */
   private assertOrdinaryWechatPayAllowed(input: {
     virtualPaymentProductId?: string;
     clientUserAgent?: string;
+    declaredPlatform?: unknown;
     userId?: string;
     targetCode?: string;
   }): void {
     const productId = input.virtualPaymentProductId?.trim();
+
     if (!productId) {
+      // 付费商品没配虚拟道具 ID：非 iOS 端其实无通道可走（管理端已拒绝保存这类配置，
+      // 这里是服务端兜底）。**不能**因此放行普通微信支付——否则非 iOS 客户端只要
+      // 挑一个漏配的商品下单就能绕过规则，所以只把配置异常打出来，仍按平台判定。
+      this.logger?.error?.(
+        '[order] 付费商品缺少 virtualPaymentProductId，非 iOS 用户将无法购买，targetCode=%s',
+        input.targetCode || '-'
+      );
+    }
+
+    const resolved = this.resolveClientPlatform({
+      clientUserAgent: input.clientUserAgent,
+      declaredPlatform: input.declaredPlatform,
+    });
+
+    let route = 'non_ios_ordinary_blocked';
+    if (resolved.conflict) {
+      route = 'platform_conflict';
+    } else if (resolved.isTrustedIos) {
+      route = 'ios_ordinary_direct';
+    } else if (resolved.source === 'none') {
+      route = 'platform_unknown';
+    }
+
+    this.logger?.warn?.(
+      'ORDER_PAY_ROUTE route=%s outcome=%s platform=%s platformSource=%s virtualProduct=%s mpEnv=%s userHash=%s targetCode=%s productId=%s',
+      route,
+      resolved.isTrustedIos ? 'allowed' : 'rejected',
+      resolved.platform,
+      resolved.source,
+      productId ? 'configured' : 'missing',
+      this.readMiniProgramEnv(input.clientUserAgent),
+      this.hashLogUserId(input.userId),
+      input.targetCode || '-',
+      productId || '-'
+    );
+
+    if (resolved.isTrustedIos) {
       return;
     }
 
-    const platform = this.describeClientPlatform(input.clientUserAgent);
-    const allowed = platform === 'ios';
-
-    this.logger?.warn?.(
-      'ORDER_VIRTUAL_PAY_FALLBACK platform=%s mpEnv=%s outcome=%s userId=%s targetCode=%s productId=%s',
-      platform,
-      this.readMiniProgramEnv(input.clientUserAgent),
-      allowed ? 'allowed' : 'rejected',
-      input.userId || '-',
-      input.targetCode || '-',
-      productId
-    );
-
-    if (allowed) {
-      return;
+    if (resolved.conflict) {
+      // 两个平台信号互相矛盾：拒绝而不是猜，避免把资金路由到错误通道。
+      throw new AppError(
+        'WECHAT_ORDINARY_PAY_PLATFORM_CONFLICT',
+        '客户端平台信息不一致，请更新微信或小程序后重试',
+        400
+      );
     }
 
     throw new AppError(
       'WECHAT_ORDINARY_PAY_DISABLED',
-      '当前设备无法使用普通微信支付，请更新微信到最新版本后重试',
+      '当前设备请使用小程序内支付，请更新微信到最新版本后重试',
       400
     );
+  }
+
+  /**
+   * 虚拟支付下单入口的平台防线。
+   *
+   * **业务规则**：iOS 不走虚拟支付（Apple 通道手续费高、账期长），走普通微信支付。
+   *
+   * 处理分两档，避免误伤已发布客户端：
+   * - 显式自报 `platform=ios`：新客户端才会上报，说明前端路由走错了，**直接拒绝**；
+   * - 仅 UA 命中 iPhone/iPad：可能是已发布的旧客户端（旧版本会先试虚拟支付），
+   *   这里**不做硬拒绝**，只打告警，等客户端换版后自然消失；硬拒绝会让线上 iOS 用户无路可走。
+   *
+   * 抛错不写进普通支付回退路径：非 iOS 虚拟支付失败时客户端也只提示重试，
+   * 绝不会改用普通微信支付（规则 2）。
+   */
+  private assertVirtualPaymentClientAllowed(input: {
+    clientUserAgent?: string;
+    declaredPlatform?: unknown;
+    userId?: string;
+    targetCode?: string;
+  }): void {
+    const resolved = this.resolveClientPlatform({
+      clientUserAgent: input.clientUserAgent,
+      declaredPlatform: input.declaredPlatform,
+    });
+    const declaredIos =
+      this.readDeclaredPlatform(input.declaredPlatform) === 'ios';
+
+    if (declaredIos || resolved.conflict) {
+      this.logger?.warn?.(
+        'ORDER_PAY_ROUTE route=ios_virtual_blocked outcome=rejected platform=%s platformSource=%s uaEnv=%s userHash=%s targetCode=%s',
+        resolved.platform,
+        resolved.source,
+        this.readMiniProgramEnv(input.clientUserAgent),
+        this.hashLogUserId(input.userId),
+        input.targetCode || '-'
+      );
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_IOS_NOT_ALLOWED',
+        'iOS 请使用普通微信支付下单',
+        400
+      );
+    }
+
+    if (resolved.platform === 'ios') {
+      // 已发布旧客户端的兼容路径，只告警不拦截。
+      this.logger?.warn?.(
+        'ORDER_PAY_ROUTE route=ios_virtual_legacy_client outcome=allowed platformSource=%s uaEnv=%s userHash=%s targetCode=%s',
+        resolved.source,
+        this.readMiniProgramEnv(input.clientUserAgent),
+        this.hashLogUserId(input.userId),
+        input.targetCode || '-'
+      );
+    }
   }
 
   async createVipPlanOrder(
     auth: AuthenticatedUserPayload,
     payload: CreateVipPlanOrderDTO,
-    clientUserAgent?: string
+    client?: OrderClientContext
   ): Promise<CreateVipPlanOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
@@ -232,7 +430,8 @@ export class OrderService {
     if (preliminaryPricing.payableAmount > 0) {
       this.assertOrdinaryWechatPayAllowed({
         virtualPaymentProductId: plan.virtualPaymentProductId,
-        clientUserAgent,
+        clientUserAgent: client?.userAgent,
+        declaredPlatform: client?.declaredPlatform ?? payload.platform,
         userId: this.stringifyObjectId(userId),
         targetCode: plan.code,
       });
@@ -261,7 +460,8 @@ export class OrderService {
 
         this.assertOrdinaryWechatPayAllowed({
           virtualPaymentProductId: plan.virtualPaymentProductId,
-          clientUserAgent,
+          clientUserAgent: client?.userAgent,
+          declaredPlatform: client?.declaredPlatform ?? payload.platform,
           userId: this.stringifyObjectId(userId),
           targetCode: plan.code,
         });
@@ -337,7 +537,7 @@ export class OrderService {
   async createVoicePackageOrder(
     auth: AuthenticatedUserPayload,
     payload: CreateVoicePackageOrderDTO,
-    clientUserAgent?: string
+    client?: OrderClientContext
   ): Promise<CreateVoicePackageOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const [voicePackage, agent] = await Promise.all([
@@ -348,7 +548,8 @@ export class OrderService {
     if (voicePackage.priceAmount > 0) {
       this.assertOrdinaryWechatPayAllowed({
         virtualPaymentProductId: voicePackage.virtualPaymentProductId,
-        clientUserAgent,
+        clientUserAgent: client?.userAgent,
+        declaredPlatform: client?.declaredPlatform ?? payload.platform,
         userId: this.stringifyObjectId(userId),
         targetCode: voicePackage.code,
       });
@@ -423,9 +624,16 @@ export class OrderService {
 
   async createVipPlanVirtualPaymentOrder(
     auth: AuthenticatedUserPayload,
-    payload: CreateVipPlanOrderDTO
+    payload: CreateVipPlanOrderDTO,
+    client?: OrderClientContext
   ): Promise<CreateVipPlanVirtualPaymentOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
+    this.assertVirtualPaymentClientAllowed({
+      clientUserAgent: client?.userAgent,
+      declaredPlatform: client?.declaredPlatform ?? payload.platform,
+      userId: this.stringifyObjectId(userId),
+      targetCode: payload.vipPlanId,
+    });
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
     const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
     let productId: string | undefined;
@@ -458,6 +666,8 @@ export class OrderService {
             payload.supportsZeroAmountOrder
           );
         }
+
+        this.assertVirtualPaymentPriceMatchesPlan(plan, pricing.payableAmount);
 
         if (!productId || !session) {
           needsPaymentSession = true;
@@ -532,9 +742,16 @@ export class OrderService {
 
   async createVoicePackageVirtualPaymentOrder(
     auth: AuthenticatedUserPayload,
-    payload: CreateVoicePackageOrderDTO
+    payload: CreateVoicePackageOrderDTO,
+    client?: OrderClientContext
   ): Promise<CreateVoicePackageVirtualPaymentOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
+    this.assertVirtualPaymentClientAllowed({
+      clientUserAgent: client?.userAgent,
+      declaredPlatform: client?.declaredPlatform ?? payload.platform,
+      userId: this.stringifyObjectId(userId),
+      targetCode: payload.voicePackageId,
+    });
     const [voicePackage, agent] = await Promise.all([
       this.getActiveVoicePackageById(payload.voicePackageId),
       this.getUserAgentById(userId, payload.agentId),
@@ -882,19 +1099,38 @@ export class OrderService {
     }
 
     const now = new Date();
+    const paidAt = transaction.success_time
+      ? new Date(transaction.success_time)
+      : now;
+    const relationship = await this.orderRelationshipService.inferRelationship(
+      order.userId,
+      order.agentId
+    );
+    const claimed = await this.claimOrderForGranting(order, {
+      paidAmount,
+      paymentTradeNo: transaction.transaction_id,
+      paymentNotifyAt: now,
+      paidAt,
+      relationship,
+      updatedAt: now,
+    });
+
+    if (!claimed) {
+      this.logger?.warn?.(
+        '[wechat-pay] 重复/并发回调已跳过发放: orderNo=%s, status=%s',
+        order.orderNo,
+        order.status
+      );
+      return;
+    }
+
     order.status = OrderStatus.granting;
     order.paidAmount = paidAmount;
     order.paymentTradeNo = transaction.transaction_id;
     order.paymentNotifyAt = now;
-    order.paidAt = transaction.success_time
-      ? new Date(transaction.success_time)
-      : now;
+    order.paidAt = paidAt;
     order.updatedAt = now;
-    order.relationship = await this.orderRelationshipService.inferRelationship(
-      order.userId,
-      order.agentId
-    );
-    await this.orderModel.save(order);
+    order.relationship = relationship;
 
     try {
       await this.grantOrderBenefits(order);
@@ -1143,27 +1379,59 @@ export class OrderService {
     }
 
     const now = new Date();
-    order.status = OrderStatus.granting;
-    order.paidAmount = paidAmount;
-    order.paymentTradeNo =
-      virtualOrder.wxpay_order_id ||
-      virtualOrder.wx_order_id ||
-      notify?.WeChatPayInfo?.TransactionId ||
-      notify?.WeChatPayInfo?.MchOrderNo;
-    order.paymentNotifyAt = now;
-    order.paidAt =
+    const paidAt =
       virtualOrder.paid_time || notify?.WeChatPayInfo?.PaidTime
         ? new Date(
             (virtualOrder.paid_time ?? notify?.WeChatPayInfo?.PaidTime ?? 0) *
               1000
           )
         : now;
-    order.updatedAt = now;
-    order.relationship = await this.orderRelationshipService.inferRelationship(
+    const paymentTradeNo =
+      virtualOrder.wxpay_order_id ||
+      virtualOrder.wx_order_id ||
+      notify?.WeChatPayInfo?.TransactionId ||
+      notify?.WeChatPayInfo?.MchOrderNo;
+    const relationship = await this.orderRelationshipService.inferRelationship(
       order.userId,
       order.agentId
     );
-    await this.orderModel.save(order);
+
+    // 原子占用：把订单从「读到的状态」翻成 granting 的那一个回调才能继续发权益。
+    // 微信回调会重试，客户端 sync-payment 轮询与回调也可能同时到达（读-改-写不加锁
+    // 会双双通过上面的状态判断，导致会员权益/额度重复发放），所以必须用
+    // 带状态条件的 updateOne + matchedCount 做 CAS，而不是 save()。
+    const claimedFields: Record<string, unknown> = {
+      paidAmount,
+      paymentNotifyAt: now,
+      paidAt,
+      relationship,
+      updatedAt: now,
+    };
+
+    if (paymentTradeNo) {
+      claimedFields.paymentTradeNo = paymentTradeNo;
+    }
+
+    const claimed = await this.claimOrderForGranting(order, claimedFields);
+
+    if (!claimed) {
+      this.logger?.warn?.(
+        '[wechat-virtual-pay] 重复/并发回调已跳过发放: orderNo=%s, status=%s',
+        order.orderNo,
+        order.status
+      );
+      return;
+    }
+
+    order.status = OrderStatus.granting;
+    order.paidAmount = paidAmount;
+    order.paymentNotifyAt = now;
+    order.paidAt = paidAt;
+    order.relationship = relationship;
+    order.updatedAt = now;
+    if (paymentTradeNo) {
+      order.paymentTradeNo = paymentTradeNo;
+    }
 
     try {
       await this.grantOrderBenefits(order);
@@ -2081,6 +2349,34 @@ export class OrderService {
     );
   }
 
+  /**
+   * 原子地把订单从「当前状态」翻成 `granting`，返回是否抢到发放权。
+   *
+   * 微信支付回调会重试，客户端 `sync-payment` 轮询与回调也可能并发到达；
+   * 只靠"先查状态再 save"会出现两个请求同时通过状态判断、各自调用
+   * `grantOrderBenefits`，导致会员权益/语音额度重复发放（`agent_entitlement`
+   * 的 `(sourceOrderId, type)` 索引不是唯一索引，拦不住并发插入）。
+   *
+   * 这里用带状态条件的 `updateOne` + `matchedCount` 做 CAS：并发/乱序的重复回调
+   * 匹配不到原状态，`matchedCount` 为 0，直接跳过发放。
+   */
+  private async claimOrderForGranting(
+    order: OrderEntity,
+    claimedFields: Record<string, unknown>
+  ): Promise<boolean> {
+    const claim = await this.orderModel.updateOne(
+      { _id: order.id, status: order.status } as never,
+      {
+        $set: {
+          ...claimedFields,
+          status: OrderStatus.granting,
+        },
+      } as never
+    );
+
+    return this.didMongoUpdate(claim);
+  }
+
   private async createZeroAmountVipPlanOrder(
     userId: MongoObjectId,
     plan: VipPlanEntity,
@@ -2316,6 +2612,40 @@ export class OrderService {
       createdAt: this.formatDate(order.createdAt),
       paidAt: order.paidAt ? this.formatDate(order.paidAt) : undefined,
     };
+  }
+
+  /**
+   * 微信虚拟支付道具是**固定价格**：下单时 `goodsPrice` 必须与该道具在微信后台
+   * 配置的价格完全一致，否则微信侧直接返回 `GOODS_PRICE_INVALID`。
+   *
+   * 会员升级会按历史实付抵扣出**动态** `payableAmount`（例如 199 元套餐抵扣完
+   * 只应付 100 元），这个金额在道具里并不存在。当前数据模型只有单个
+   * `virtualPaymentProductId`，**没有"按金额映射的差价道具"**，所以这里 fail-closed：
+   * 与其发一个必然失败的参数，不如明确告诉运营需要配置对应价格的虚拟商品。
+   *
+   * 零元升级在调用前已经分流（`createZeroAmountVipPlanOrder`），不受影响。
+   */
+  private assertVirtualPaymentPriceMatchesPlan(
+    plan: VipPlanEntity,
+    payableAmount: number
+  ): void {
+    if (payableAmount === plan.priceAmount) {
+      return;
+    }
+
+    throw new AppError(
+      'VIRTUAL_PAYMENT_PRICE_MISMATCH',
+      `本次应付 ${this.formatYuanAmount(payableAmount)} 元与「${
+        plan.name
+      }」原价 ${this.formatYuanAmount(
+        plan.priceAmount
+      )} 元不一致（升级抵扣后为动态金额）。微信虚拟支付道具是固定价格，无法按差价下单，请为该差价配置价格匹配的虚拟支付道具后再试。`,
+      409
+    );
+  }
+
+  private formatYuanAmount(amount: number): string {
+    return (Number(amount || 0) / 100).toFixed(2);
   }
 
   private buildVipPlanSnapshot(plan: VipPlanEntity): Record<string, unknown> {

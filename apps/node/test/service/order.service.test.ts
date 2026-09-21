@@ -33,6 +33,10 @@ const AGENT_ID = '665000000000000000000005';
 const VOICE_TASK_ID = '665000000000000000000006';
 const ORDER_NO = 'VIP202605010001';
 const VOICE_ORDER_NO = 'VOICE202605010001';
+// 普通微信支付入口只对可信 iOS 放行；真实小程序请求一定带 UA，
+// 所以非平台相关的下单用例也要带一个 iPhone UA 才符合生产形态。
+const IOS_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.74(0x18004a30) NetType/4G Language/zh_CN';
 
 function createOrder(overrides: Partial<OrderEntity> = {}) {
   const createdAt = new Date('2026-05-01T00:00:00.000Z');
@@ -275,6 +279,22 @@ function createOrderModel(
       savedSnapshots.push(snapshotOrder(entity));
       return entity;
     }),
+    // CAS：只有 _id 与当前 status 都对得上才占用成功，用于验证重复回调不会重复发权益。
+    updateOne: jest.fn(async (filter: any, update: any) => {
+      const id = filter?._id;
+      const matchesId = id && sameObjectId(id, order.id);
+      const expectedStatus = filter?.status;
+      const matchesStatus =
+        expectedStatus === undefined || expectedStatus === order.status;
+
+      if (!matchesId || !matchesStatus) {
+        return { matchedCount: 0, modifiedCount: 0 };
+      }
+
+      Object.assign(order, update?.$set ?? {});
+      savedSnapshots.push(snapshotOrder(order));
+      return { matchedCount: 1, modifiedCount: 1 };
+    }),
   };
 
   return model;
@@ -509,6 +529,7 @@ function createService(
 
   service.logger = {
     warn: jest.fn(),
+    error: jest.fn(),
   } as any;
   service.orderModel = orderModel as any;
   service.orderRefundModel = orderRefundModel as any;
@@ -526,12 +547,19 @@ function createService(
     ),
   } as any;
   service.messengerService = messengerService as any;
+  // 下单/发放链路会推断用户与智能体的关系标签；此前漏了这个 mock，
+  // 导致 9 个用例在 inferRelationship 上失败。返回空串表示未识别，符合默认语义。
+  const orderRelationshipService = {
+    inferRelationship: jest.fn().mockResolvedValue(''),
+  };
+  service.orderRelationshipService = orderRelationshipService as any;
 
   return {
     service,
     order,
     orderModel,
     orderRefundModel,
+    orderRelationshipService,
     voicePackage,
     voicePackageModel,
     agent,
@@ -566,10 +594,14 @@ describe('OrderService payment expiration and reconciliation', () => {
   it('enqueues a delayed expiration job after creating a vip payment order', async () => {
     const { service, queue, auth } = createService();
 
-    await service.createVipPlanOrder(auth, {
-      vipPlanId: VIP_PLAN_ID,
-      jsCode: 'wx-code',
-    });
+    await service.createVipPlanOrder(
+      auth,
+      {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      },
+      { userAgent: IOS_UA }
+    );
 
     expect(queue.addJobToQueue).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -626,28 +658,46 @@ describe('OrderService payment expiration and reconciliation', () => {
   // 普通支付是它唯一的成功路径，必须放行，否则 iOS 用户会被堵死。
   // 到达普通支付入口且商品配了虚拟支付商品 = 客户端虚拟支付失败后回退。
   // 这个入口本身就是「虚拟支付失败」的信号，埋点用于按平台统计，无需客户端上报。
-  it('在普通支付入口记录虚拟支付兜底埋点，并按平台区分结果', async () => {
+  it('普通支付入口按 route/outcome 埋点，且不把原始 userId 写进日志', async () => {
     const IPHONE_UA =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.74 NetType/4G';
     const ANDROID_UA =
       'Mozilla/5.0 (Linux; Android 12; BLK-AL80 Build/HUAWEIBLK-AL80; wv) AppleWebKit/537.36 Mobile Safari/537.36 MiniProgramEnv/android';
 
-    const ios = createService({}, { virtualPaymentProductId: 'vip_month_goods' });
+    // iOS：正常直付，route=ios_ordinary_direct，不是"回退"
+    const ios = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
     await ios.service.createVipPlanOrder(
       ios.auth,
       { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
-      IPHONE_UA
+      { userAgent: IPHONE_UA }
     );
-    expect(ios.service.logger.warn).toHaveBeenCalledWith(
-      'ORDER_VIRTUAL_PAY_FALLBACK platform=%s mpEnv=%s outcome=%s userId=%s targetCode=%s productId=%s',
-      'ios',
-      '-',
+    const iosLog = (ios.service.logger.warn as jest.Mock).mock.calls.find(
+      call => String(call[0]).startsWith('ORDER_PAY_ROUTE')
+    );
+    expect(iosLog).toBeDefined();
+    expect(iosLog[0]).toBe(
+      'ORDER_PAY_ROUTE route=%s outcome=%s platform=%s platformSource=%s virtualProduct=%s mpEnv=%s userHash=%s targetCode=%s productId=%s'
+    );
+    expect(iosLog.slice(1)).toEqual([
+      'ios_ordinary_direct',
       'allowed',
-      USER_ID,
+      'ios',
+      'ua',
+      'configured',
+      '-',
+      expect.any(String),
       'vip_month',
-      'vip_month_goods'
-    );
+      'vip_month_goods',
+    ]);
+    // 用户标识必须哈希，原始 userId 不能出现
+    expect(iosLog[7]).not.toBe(USER_ID);
+    expect(iosLog).toHaveLength(10);
+    expect(JSON.stringify(iosLog)).not.toContain(USER_ID);
 
+    // 安卓：只允许虚拟支付，命中普通支付入口必须拒绝
     const android = createService(
       {},
       { virtualPaymentProductId: 'vip_month_goods' }
@@ -656,21 +706,26 @@ describe('OrderService payment expiration and reconciliation', () => {
       android.service.createVipPlanOrder(
         android.auth,
         { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
-        ANDROID_UA
+        { userAgent: ANDROID_UA }
       )
     ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
-    expect(android.service.logger.warn).toHaveBeenCalledWith(
-      'ORDER_VIRTUAL_PAY_FALLBACK platform=%s mpEnv=%s outcome=%s userId=%s targetCode=%s productId=%s',
-      'android',
-      'android',
+    const androidLog = (
+      android.service.logger.warn as jest.Mock
+    ).mock.calls.find(call => String(call[0]).startsWith('ORDER_PAY_ROUTE'));
+    expect(androidLog.slice(1)).toEqual([
+      'non_ios_ordinary_blocked',
       'rejected',
-      USER_ID,
+      'android',
+      'ua',
+      'configured',
+      'android',
+      expect.any(String),
       'vip_month',
-      'vip_month_goods'
-    );
+      'vip_month_goods',
+    ]);
   });
 
-  it('iOS 客户端仍可为虚拟支付商品创建普通微信支付订单', async () => {
+  it('iOS 客户端可为虚拟支付商品创建普通微信支付订单（UA 判定）', async () => {
     const IPHONE_UA =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.74(0x18004a30) NetType/4G Language/zh_CN';
     const { service, auth, orderModel } = createService(
@@ -681,7 +736,7 @@ describe('OrderService payment expiration and reconciliation', () => {
     await service.createVipPlanOrder(
       auth,
       { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
-      IPHONE_UA
+      { userAgent: IPHONE_UA }
     );
 
     expect(orderModel.save).toHaveBeenCalled();
@@ -703,8 +758,12 @@ describe('OrderService payment expiration and reconciliation', () => {
     );
     await ios.service.createVoicePackageOrder(
       ios.auth,
-      { voicePackageId: VOICE_PACKAGE_ID, agentId: AGENT_ID, jsCode: 'wx-code' },
-      IPHONE_UA
+      {
+        voicePackageId: VOICE_PACKAGE_ID,
+        agentId: AGENT_ID,
+        jsCode: 'wx-code',
+      },
+      { userAgent: IPHONE_UA }
     );
     expect(ios.orderModel.save).toHaveBeenCalled();
 
@@ -725,9 +784,247 @@ describe('OrderService payment expiration and reconciliation', () => {
           agentId: AGENT_ID,
           jsCode: 'wx-code',
         },
-        ANDROID_UA
+        { userAgent: ANDROID_UA }
       )
     ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+  });
+
+  it('自报平台与 UA 一致才放行；缺 UA 时自报 ios 不采信', async () => {
+    const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)';
+
+    const both = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+    await both.service.createVipPlanOrder(
+      both.auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code', platform: 'ios' },
+      { userAgent: IPHONE_UA }
+    );
+    const bothLog = (both.service.logger.warn as jest.Mock).mock.calls.find(
+      call => String(call[0]).startsWith('ORDER_PAY_ROUTE')
+    );
+    expect(bothLog.slice(1)).toEqual([
+      'ios_ordinary_direct',
+      'allowed',
+      'ios',
+      'ua+declared',
+      'configured',
+      '-',
+      expect.any(String),
+      'vip_month',
+      'vip_month_goods',
+    ]);
+
+    // 没有 UA：不可信来源。自报 ios 不足以拿到普通微信支付，
+    // 否则非 iOS 客户端只要省掉 UA 再自报 ios 就能绕过平台路由规则。
+    const declaredOnly = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+    await expect(
+      declaredOnly.service.createVipPlanOrder(declaredOnly.auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+        platform: 'ios',
+      })
+    ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+    expect(declaredOnly.orderModel.save).not.toHaveBeenCalled();
+
+    const declaredOnlyLog = (
+      declaredOnly.service.logger.warn as jest.Mock
+    ).mock.calls.find(call => String(call[0]).startsWith('ORDER_PAY_ROUTE'));
+    expect(declaredOnlyLog.slice(1)).toEqual([
+      'non_ios_ordinary_blocked',
+      'rejected',
+      'ios',
+      'declared',
+      'configured',
+      '-',
+      expect.any(String),
+      'vip_month',
+      'vip_month_goods',
+    ]);
+  });
+
+  it('自报平台与 UA 冲突时拒绝并告警，不猜通道', async () => {
+    const ANDROID_UA =
+      'Mozilla/5.0 (Linux; Android 12; BLK-AL80 Build/HUAWEIBLK-AL80; wv) AppleWebKit/537.36 MiniProgramEnv/android';
+    const { service, auth, orderModel } = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+
+    // UA 说安卓、自报说 iOS：伪造嫌疑，按 fail-closed 拒绝
+    await expect(
+      service.createVipPlanOrder(
+        auth,
+        { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code', platform: 'ios' },
+        { userAgent: ANDROID_UA }
+      )
+    ).rejects.toMatchObject({
+      code: 'WECHAT_ORDINARY_PAY_PLATFORM_CONFLICT',
+    });
+    expect(orderModel.save).not.toHaveBeenCalled();
+
+    const conflictLog = (service.logger.warn as jest.Mock).mock.calls.find(
+      call => String(call[0]).startsWith('ORDER_PAY_ROUTE')
+    );
+    expect(conflictLog.slice(1)).toEqual([
+      'platform_conflict',
+      'rejected',
+      'android',
+      'ua+declared',
+      'configured',
+      'android',
+      expect.any(String),
+      'vip_month',
+      'vip_month_goods',
+    ]);
+  });
+
+  it('平台完全判不出来时按非 iOS 拒绝', async () => {
+    const { service, auth } = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+
+    await expect(
+      service.createVipPlanOrder(auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+
+    const log = (service.logger.warn as jest.Mock).mock.calls.find(call =>
+      String(call[0]).startsWith('ORDER_PAY_ROUTE')
+    );
+    expect(log.slice(1)).toEqual([
+      'platform_unknown',
+      'rejected',
+      'other',
+      'none',
+      'configured',
+      '-',
+      expect.any(String),
+      'vip_month',
+      'vip_month_goods',
+    ]);
+  });
+
+  it('商品漏配 virtualPaymentProductId 时非 iOS 也不能拿普通微信支付订单', async () => {
+    const ANDROID_UA =
+      'Mozilla/5.0 (Linux; Android 12; BLK-AL80 Build/HUAWEIBLK-AL80; wv) AppleWebKit/537.36 MiniProgramEnv/android';
+    // 默认套餐 fixture 没有 virtualPaymentProductId，模拟"在售付费商品漏配道具 ID"
+    const { service, auth, orderModel, wechatPayService } = createService();
+
+    await expect(
+      service.createVipPlanOrder(
+        auth,
+        { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+        { userAgent: ANDROID_UA }
+      )
+    ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+    expect(orderModel.save).not.toHaveBeenCalled();
+    expect(wechatPayService.createVipPlanPrepay).not.toHaveBeenCalled();
+
+    // 漏配要留错误日志，便于运营发现；路由日志标记 missing
+    const errorLog = (service.logger.error as jest.Mock).mock.calls.find(call =>
+      String(call[0]).includes('缺少 virtualPaymentProductId')
+    );
+    expect(errorLog).toBeDefined();
+    const routeLog = (service.logger.warn as jest.Mock).mock.calls.find(call =>
+      String(call[0]).startsWith('ORDER_PAY_ROUTE')
+    );
+    expect(routeLog).toContain('missing');
+  });
+
+  it('商品漏配虚拟道具 ID 时 iOS 仍可正常普通支付，不能连累 iOS 成单', async () => {
+    const { service, auth, orderModel } = createService();
+
+    await service.createVipPlanOrder(
+      auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+      { userAgent: IOS_UA }
+    );
+
+    expect(orderModel.save).toHaveBeenCalled();
+  });
+
+  it('虚拟支付入口拒绝显式自报 iOS，仅 UA 命中的旧客户端放行但告警', async () => {
+    const ANDROID_UA =
+      'Mozilla/5.0 (Linux; Android 12; BLK-AL80 Build/HUAWEIBLK-AL80; wv) AppleWebKit/537.36 MiniProgramEnv/android';
+    // 显式自报 ios：新客户端才会带，说明前端路由错了 → 拒绝，绝不落到 Apple 通道
+    const declaredIos = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+    await expect(
+      declaredIos.service.createVipPlanVirtualPaymentOrder(declaredIos.auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+        platform: 'ios',
+      })
+    ).rejects.toMatchObject({
+      code: 'WECHAT_VIRTUAL_PAY_IOS_NOT_ALLOWED',
+    });
+    expect(declaredIos.orderModel.save).not.toHaveBeenCalled();
+
+    // 仅 UA 命中 iPhone：可能是已发布旧客户端，放行但留告警
+    const legacy = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+    await legacy.service.createVipPlanVirtualPaymentOrder(
+      legacy.auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+      { userAgent: IOS_UA }
+    );
+    const legacyLog = (legacy.service.logger.warn as jest.Mock).mock.calls.find(
+      call => String(call[0]).includes('route=ios_virtual_legacy_client')
+    );
+    expect(legacyLog).toBeDefined();
+
+    // 安卓走虚拟支付是正常路径，不该出现 iOS 告警
+    const android = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+    await android.service.createVipPlanVirtualPaymentOrder(
+      android.auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+      { userAgent: ANDROID_UA }
+    );
+    const androidIosWarn = (
+      android.service.logger.warn as jest.Mock
+    ).mock.calls.find(call => String(call[0]).includes('ios_virtual'));
+    expect(androidIosWarn).toBeUndefined();
+  });
+
+  it('订单发放权已被并发回调占用时，重复回调不再发放权益', async () => {
+    const { service, order, orderModel, userMembershipModel } = createService();
+
+    // 模拟并发：另一个回调/轮询已经用 CAS 把订单抢占成 granting
+    orderModel.updateOne.mockResolvedValueOnce({
+      matchedCount: 0,
+      modifiedCount: 0,
+    });
+
+    await service.handleWechatPaymentSuccess({
+      out_trade_no: ORDER_NO,
+      transaction_id: '420000000020260501000123',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: { total: 990, payer_total: 990 },
+    });
+
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+    expect(order.status).toBe(OrderStatus.pending);
+    expect(orderModel.save).not.toHaveBeenCalled();
+    const skipLog = (service.logger.warn as jest.Mock).mock.calls.find(call =>
+      String(call[0]).includes('重复/并发回调已跳过发放')
+    );
+    expect(skipLog).toBeDefined();
   });
 
   it('deducts historical vip payments from a member upgrade order', async () => {
@@ -757,10 +1054,14 @@ describe('OrderService payment expiration and reconciliation', () => {
       }
     );
 
-    const result = await service.createVipPlanOrder(auth, {
-      vipPlanId: VIP_PLAN_ID,
-      jsCode: 'wx-code',
-    });
+    const result = await service.createVipPlanOrder(
+      auth,
+      {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      },
+      { userAgent: IOS_UA }
+    );
 
     expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -817,10 +1118,14 @@ describe('OrderService payment expiration and reconciliation', () => {
       .mockResolvedValueOnce([historicalOrder])
       .mockResolvedValueOnce([refundClaimedOrder]);
 
-    const result = await service.createVipPlanOrder(auth, {
-      vipPlanId: VIP_PLAN_ID,
-      jsCode: 'wx-code',
-    });
+    const result = await service.createVipPlanOrder(
+      auth,
+      {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      },
+      { userAgent: IOS_UA }
+    );
 
     expect(result.order.payableAmount).toBe(5000);
     expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
@@ -882,10 +1187,14 @@ describe('OrderService payment expiration and reconciliation', () => {
     });
 
     await expect(
-      service.createVipPlanOrder(auth, {
-        vipPlanId: VIP_PLAN_ID,
-        jsCode: 'wx-code',
-      })
+      service.createVipPlanOrder(
+        auth,
+        {
+          vipPlanId: VIP_PLAN_ID,
+          jsCode: 'wx-code',
+        },
+        { userAgent: IOS_UA }
+      )
     ).rejects.toMatchObject({
       code: 'MEMBERSHIP_FINANCIAL_OPERATION_BUSY',
       status: 409,
@@ -956,10 +1265,14 @@ describe('OrderService payment expiration and reconciliation', () => {
       }
     );
 
-    const result = await service.createVipPlanOrder(auth, {
-      vipPlanId: VIP_PLAN_ID,
-      jsCode: 'wx-code',
-    });
+    const result = await service.createVipPlanOrder(
+      auth,
+      {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      },
+      { userAgent: IOS_UA }
+    );
 
     expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1008,11 +1321,15 @@ describe('OrderService payment expiration and reconciliation', () => {
         }
       );
 
-    const result = await service.createVipPlanOrder(auth, {
-      vipPlanId: VIP_PLAN_ID,
-      jsCode: 'wx-code',
-      supportsZeroAmountOrder: true,
-    });
+    const result = await service.createVipPlanOrder(
+      auth,
+      {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+        supportsZeroAmountOrder: true,
+      },
+      { userAgent: IOS_UA }
+    );
 
     expect(result.order.payableAmount).toBe(0);
     expect(result.order.status).toBe(OrderStatus.completed);
@@ -1237,13 +1554,17 @@ describe('OrderService payment expiration and reconciliation', () => {
       auth,
     } = createService();
 
-    const result = await service.createVoicePackageOrder(auth, {
-      voicePackageId: VOICE_PACKAGE_ID,
-      agentId: AGENT_ID,
-      jsCode: 'wx-code',
-      materialObjectKeys: ['voice-training-materials/audio-1.m4a'],
-      materialDurationSeconds: 72,
-    });
+    const result = await service.createVoicePackageOrder(
+      auth,
+      {
+        voicePackageId: VOICE_PACKAGE_ID,
+        agentId: AGENT_ID,
+        jsCode: 'wx-code',
+        materialObjectKeys: ['voice-training-materials/audio-1.m4a'],
+        materialDurationSeconds: 72,
+      },
+      { userAgent: IOS_UA }
+    );
 
     expect(voiceTrainingTaskModel.find).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1301,6 +1622,101 @@ describe('OrderService payment expiration and reconciliation', () => {
         payableAmount: 12900,
       })
     );
+  });
+
+  // 微信虚拟支付道具是固定价格，goodsPrice 必须与道具价格一致。
+  // 升级抵扣会算出动态应付金额，当前模型没有"差价道具"映射，必须 fail-closed，
+  // 否则发出去必然被微信拒成 GOODS_PRICE_INVALID。
+  it('升级抵扣后的动态应付金额不能用固定价格的虚拟道具下单', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000021'),
+      status: OrderStatus.completed,
+      paidAmount: 990,
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000022'),
+      vipPlanCode: 'vip_month',
+    });
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      {
+        code: 'vip_voice_lifetime',
+        name: '声音永久会员',
+        planGroup: VipPlanGroup.voice,
+        priceAmount: 5000,
+        durationDays: undefined,
+        lifetime: true,
+        virtualPaymentProductId: 'vip_voice_lifetime_goods',
+      },
+      { memberships: [membership], historicalVipOrders: [historicalOrder] }
+    );
+
+    await expect(
+      service.createVipPlanVirtualPaymentOrder(auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({
+      code: 'VIRTUAL_PAYMENT_PRICE_MISMATCH',
+      message: expect.stringContaining('配置价格匹配的虚拟支付道具'),
+    });
+
+    // 不能先建出一笔注定失败的订单，也不能发参数给微信
+    expect(orderModel.save).not.toHaveBeenCalled();
+    expect(wechatPayService.buildVirtualPaymentParams).not.toHaveBeenCalled();
+  });
+
+  it('应付金额与套餐原价一致时虚拟支付照常下单', async () => {
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+
+    const result = await service.createVipPlanVirtualPaymentOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(wechatPayService.buildVirtualPaymentParams).toHaveBeenCalled();
+    // 应付金额与套餐原价一致，才允许用固定价格的虚拟道具下单
+    expect(orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 990, payableAmount: 990 })
+    );
+    expect(result.order.payableAmount).toBe(990);
+  });
+
+  it('零元升级仍然直接发放，不触发价格校验', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000031'),
+      status: OrderStatus.completed,
+      paidAmount: 5000,
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000032'),
+      vipPlanCode: 'vip_month',
+    });
+    const { service, wechatPayService, auth } = createService(
+      {},
+      {
+        code: 'vip_voice_lifetime',
+        name: '声音永久会员',
+        planGroup: VipPlanGroup.voice,
+        priceAmount: 5000,
+        durationDays: undefined,
+        lifetime: true,
+        virtualPaymentProductId: 'vip_voice_lifetime_goods',
+      },
+      { memberships: [membership], historicalVipOrders: [historicalOrder] }
+    );
+
+    const result = await service.createVipPlanVirtualPaymentOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+      supportsZeroAmountOrder: true,
+    });
+
+    expect(result.order.payableAmount).toBe(0);
+    expect(wechatPayService.buildVirtualPaymentParams).not.toHaveBeenCalled();
   });
 
   it('creates a vip virtual payment order with product id and virtual params', async () => {

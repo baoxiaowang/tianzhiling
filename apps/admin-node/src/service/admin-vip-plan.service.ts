@@ -157,12 +157,24 @@ export class AdminVipPlanService {
       );
     }
 
+    const priceAmount = this.normalizeAmount(payload.priceAmount);
+    const virtualPaymentProductId =
+      payload.virtualPaymentProductId?.trim() || '';
+    const status = this.normalizeStatus(payload.status);
+
+    this.assertVirtualPaymentProductConfigured({
+      subject: '会员套餐',
+      priceAmount,
+      status,
+      virtualPaymentProductId,
+    });
+
     return {
       code: this.normalizeCode(payload.code),
       name: payload.name.trim(),
       description: payload.description?.trim() ?? '',
       planGroup: this.normalizePlanGroup(payload.planGroup),
-      priceAmount: this.normalizeAmount(payload.priceAmount),
+      priceAmount,
       originalPriceAmount: this.normalizeOptionalAmount(
         payload.originalPriceAmount
       ),
@@ -179,10 +191,46 @@ export class AdminVipPlanService {
       voicePackageId: voicePackage?.id,
       voicePackageCode: voicePackage?.code,
       voicePackageName: voicePackage?.name,
-      virtualPaymentProductId: payload.virtualPaymentProductId?.trim() || '',
-      status: this.normalizeStatus(payload.status),
+      virtualPaymentProductId,
+      status,
       sort: this.normalizeNonNegativeInteger(payload.sort, 0),
     };
+  }
+
+  /**
+   * 付费且在售的数字商品必须配置微信虚拟支付道具 ID。
+   *
+   * 非 iOS 客户端（安卓/鸿蒙/Windows/Mac）只走微信虚拟支付，缺这个 ID 时
+   * 要么下单参数构建失败、要么微信侧直接 GOODS_PRICE_INVALID，商品等于不可购买。
+   * 免费商品与 disabled 草稿不受限制，避免影响未上线的编辑。
+   */
+  private assertVirtualPaymentProductConfigured(input: {
+    subject: string;
+    priceAmount: number;
+    status: VipPlanStatus;
+    virtualPaymentProductId: string;
+  }): void {
+    if (input.priceAmount <= 0) {
+      return;
+    }
+
+    if (input.status !== VipPlanStatus.active) {
+      return;
+    }
+
+    if (input.virtualPaymentProductId) {
+      return;
+    }
+
+    throw new AppError(
+      'VIRTUAL_PAYMENT_PRODUCT_ID_REQUIRED',
+      `${input.subject}价格为 ${this.formatYuan(input.priceAmount)} 元且在售，必须配置微信虚拟支付道具 ID 才能保存上线（需与微信公众平台虚拟支付后台的道具 ID 完全一致）`,
+      400
+    );
+  }
+
+  private formatYuan(amount: number): string {
+    return (amount / 100).toFixed(2);
   }
 
   private normalizeBenefits(

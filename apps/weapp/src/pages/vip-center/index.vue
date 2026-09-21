@@ -89,8 +89,9 @@ import {
   redirectToAuthPage,
 } from '../../utils/auth-guard'
 import {
+  isIosClientPlatform,
   isWechatPaymentCancel,
-  requestWechatVirtualPaymentWithFallback,
+  requestWechatVirtualPayment,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
@@ -341,7 +342,10 @@ async function handlePurchaseTap() {
 
     let paidOrderId = ''
 
-    if (virtualPaymentProductId) {
+    // 平台分流，两条路互不回退：
+    //   iOS     → 普通微信支付（虚拟支付走 Apple 通道，手续费高、账期长，主动不用）
+    //   非 iOS  → 只走微信虚拟支付，失败就把真实错误展示给用户
+    if (virtualPaymentProductId && !isIosClientPlatform()) {
       const result = await createVipPlanVirtualPaymentOrder({
         vipPlanId,
         jsCode,
@@ -353,26 +357,9 @@ async function handlePurchaseTap() {
           throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        const paidOrder = await requestWechatVirtualPaymentWithFallback(
-          {
-            order: result.order,
-            virtualPayment: result.virtualPayment,
-          },
-          async () => {
-            const fallbackLoginResult = await Taro.login()
-            const fallbackJsCode = fallbackLoginResult.code?.trim()
-
-            if (!fallbackJsCode) {
-              throw new Error('微信登录凭证获取失败，请稍后重试')
-            }
-
-            return createVipPlanOrder({
-              vipPlanId,
-              jsCode: fallbackJsCode,
-            })
-          }
-        )
-        paidOrderId = paidOrder.id
+        await requestWechatVirtualPayment(result.virtualPayment, {
+          orderId: result.order.id,
+        })
       }
     } else {
       const result = await createVipPlanOrder({
