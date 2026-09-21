@@ -2148,6 +2148,104 @@ describe('AdminOrderService', () => {
     );
   });
 
+  it('对部分退款后 status=5 的虚拟订单仍会真正提交剩余退款', async () => {
+    // 回归：微信在「部分退款」后就把 status 置为 5，但 left_fee 仍是剩余可退。
+    // 旧实现据 status===5 认定「已全额退款」，跳过 refundVirtualOrder，
+    // 本地记为成功却没有退款单号 —— 用户实际没收到钱。
+    const { service, orders, refundOrders, memberships } = createService();
+    const { order } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.paymentProvider = 'wechat_virtual_pay';
+    order.payerOpenid = 'virtual-openid-status5';
+    order.virtualPaymentEnv = 0;
+
+    // 降级退款：微信侧状态 4，可退 19900
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 19900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never);
+
+    await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenCalledTimes(1);
+
+    // 剩余退款：微信返回 status=5（部分退款后即置 5），但 left_fee 还有 12900；
+    // 提交之后微信侧归零，用于确认成功。
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 5,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never)
+      .mockResolvedValue({
+        order_id: order.orderNo,
+        status: 5,
+        paid_fee: 19900,
+        left_fee: 0,
+      } as never);
+    jest
+      .mocked(service.adminWechatPayService.refundVirtualOrder)
+      .mockResolvedValueOnce({
+        refund_order_id: `R${order.orderNo}`,
+        refund_wx_order_id: 'VPR-REGRESSION-1',
+      } as never);
+
+    const refunded = await service.refundOrder(ORDER_ID.toHexString());
+
+    // 必须真的提交给微信
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenNthCalledWith(2, {
+      openid: 'virtual-openid-status5',
+      orderNo: order.orderNo,
+      refundNo: `R${order.orderNo}`,
+      leftFee: 12900,
+      refundFee: 12900,
+      reason: '管理端退订退款',
+      env: 0,
+    });
+    expect(refunded.status).toBe(OrderStatus.refunded);
+    expect(refundOrders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          refundNo: `R${order.orderNo}`,
+          refundType: 'voice_membership_final_refund',
+          amount: 12900,
+          status: 'completed',
+          paymentRefundId: 'VPR-REGRESSION-1',
+        }),
+      ])
+    );
+  });
+
   it('reconciles an in-progress WeChat virtual downgrade before changing benefits', async () => {
     const { service, orders, memberships } = createService();
     const { order, membership } = mockVoiceMembershipDowngradeLookups(

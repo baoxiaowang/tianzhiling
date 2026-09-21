@@ -1748,6 +1748,8 @@ export class AdminOrderService {
       return;
     }
 
+    let virtualRefundId: string | undefined;
+
     if (order.paymentProvider === ADMIN_MANUAL_PAYMENT_PROVIDER) {
       throw new AppError(
         'ORDER_REFUND_PROVIDER_UNSUPPORTED',
@@ -1763,7 +1765,12 @@ export class AdminOrderService {
       );
       return;
     } else if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
-      await this.refundVirtualPaymentOrder(order, refundAmount, reason);
+      // 记下微信退款单号：没有它事后无法判断这笔钱是否真的退了。
+      virtualRefundId = await this.refundVirtualPaymentOrder(
+        order,
+        refundAmount,
+        reason
+      );
     } else {
       await this.adminWechatPayService.refundOrder({
         orderNo: order.orderNo,
@@ -1780,7 +1787,7 @@ export class AdminOrderService {
       this.generateRefundNo(order),
       OrderRefundType.orderRefund,
       refundAmount,
-      undefined,
+      virtualRefundId,
       now,
       now
     );
@@ -1942,6 +1949,19 @@ export class AdminOrderService {
     if (status === 'SUCCESS') {
       resolvedFinalRefund.status = 'benefits_processing';
       resolvedFinalRefund.failureReason = undefined;
+
+      // 记为成功却拿不到微信退款单号 = 很可能从未真正提交退款。
+      // 历史事故：幂等预检误判，本地记为成功但微信侧 left_fee 未归零，
+      // 用户没收到钱。这里必须留下可检索的告警，不能静默记完成。
+      if (!resolvedFinalRefund.wechatRefundId) {
+        this.logger?.warn?.(
+          '[order] virtual refund recorded SUCCESS without wechat refund id, orderNo=%s refundNo=%s refundAmount=%s',
+          order.orderNo,
+          refundNo,
+          refundAmount
+        );
+      }
+
       const recorded = await this.recordVoiceMembershipFinalRefundSuccess(
         order,
         resolvedFinalRefund,
@@ -2574,7 +2594,7 @@ export class AdminOrderService {
     order: OrderEntity,
     refundAmount: number,
     reason: string
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     if (!order.payerOpenid) {
       throw new AppError(
         'WECHAT_VIRTUAL_PAY_OPENID_MISSING',
@@ -2583,7 +2603,7 @@ export class AdminOrderService {
       );
     }
 
-    await this.adminWechatPayService.refundVirtualOrder({
+    const response = await this.adminWechatPayService.refundVirtualOrder({
       openid: order.payerOpenid,
       orderNo: order.orderNo,
       refundNo: this.generateRefundNo(order),
@@ -2594,6 +2614,8 @@ export class AdminOrderService {
         order.virtualPaymentEnv ??
         this.adminWechatPayService.getVirtualPayEnv(),
     });
+
+    return response.refund_wx_order_id || response.refund_order_id;
   }
 
   private async submitVoiceMembershipDowngradeRefund(
@@ -2661,11 +2683,21 @@ export class AdminOrderService {
     );
   }
 
+  /**
+   * 发起（或确认）虚拟支付会员退款。
+   *
+   * @param cumulativeRefundIncludingThis 这笔退款完成后的**累计已退金额**
+   *        （含本次）。用它倒推微信侧「本次退款后应有的剩余可退金额」：
+   *        `expectedLeftFee = 实付 - 累计已退`。
+   *        例：实付 16900、本次退 9900 且此前未退过 → 传 9900；
+   *            降级退 7000 且此前未退过 → 传 7000。
+   *        该值只用于幂等判据，不会作为退款金额提交给微信（提交的是 refundAmount）。
+   */
   private async refundVirtualMembershipPayment(
     order: OrderEntity,
     refundNo: string,
     refundAmount: number,
-    expectedCumulativeRefund: number,
+    cumulativeRefundIncludingThis: number,
     reason: string
   ): Promise<WechatRefundPayload> {
     if (!order.payerOpenid) {
@@ -2677,7 +2709,11 @@ export class AdminOrderService {
     }
 
     const paidAmount = order.paidAmount ?? order.payableAmount ?? 0;
-    const expectedLeftFee = Math.max(paidAmount - expectedCumulativeRefund, 0);
+    // 微信侧在本笔退款完成后应当剩余的可退金额；用于判断是否已经退过。
+    const expectedLeftFee = Math.max(
+      paidAmount - cumulativeRefundIncludingThis,
+      0
+    );
     const env =
       order.virtualPaymentEnv ?? this.adminWechatPayService.getVirtualPayEnv();
     const queryOrder = () =>
@@ -2686,20 +2722,34 @@ export class AdminOrderService {
         orderNo: order.orderNo,
         env,
       });
+    /**
+     * 幂等预检：这笔退款是不是「此前已经提交并落到微信」。
+     *
+     * 唯一可信判据是微信返回的剩余可退金额 left_fee——它已经不多于
+     * 「本次退款完成后应有的余额」expectedLeftFee，说明退款已经落地，
+     * 可以认定成功、不重复提交。
+     *
+     * 绝对不能看订单 status：微信在**部分退款**之后就会把 status 置为
+     * 5/8，若据此判定「已全额退款」，剩下没退的金额会被静默跳过。
+     * （2026-09-21 一笔 ¥99 最终退款就是这样被记为成功但从未提交微信，
+     * 用户没有收到钱。）left_fee 缺失时同样不能当作已退款。
+     */
     const buildConfirmedRefund = (
       virtualOrder: AdminWechatVirtualOrderPayload
     ): WechatRefundPayload | undefined => {
       const leftFee = Number(virtualOrder.left_fee);
-      const fullyRefunded =
-        expectedLeftFee === 0 &&
-        (virtualOrder.status === 5 || virtualOrder.status === 8);
 
-      if (
-        (!Number.isFinite(leftFee) || leftFee > expectedLeftFee) &&
-        !fullyRefunded
-      ) {
+      if (!Number.isFinite(leftFee) || leftFee > expectedLeftFee) {
         return undefined;
       }
+
+      this.logger?.warn?.(
+        '[order] virtual membership refund already settled on wechat, skip resubmit, orderNo=%s refundNo=%s leftFee=%s expectedLeftFee=%s',
+        order.orderNo,
+        refundNo,
+        leftFee,
+        expectedLeftFee
+      );
 
       return {
         out_refund_no: refundNo,
