@@ -112,6 +112,7 @@ import VoiceCustomerServiceCard from '../../components/voice-customer-service-ca
 import VoicePackageSheet from '../../components/voice-package-sheet/voice-package-sheet.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import {
+  isIosClientPlatform,
   isWechatPaymentCancel,
   requestWechatVirtualPaymentWithFallback,
   showWechatVirtualPaymentError,
@@ -319,7 +320,8 @@ async function handlePay() {
 
     let paidOrderId = ''
 
-    if (voicePackage.virtualPaymentProductId) {
+    // 同 vip-center：iOS 直接走普通微信支付，避免建出注定失败的虚拟支付订单。
+    if (voicePackage.virtualPaymentProductId && !isIosClientPlatform()) {
       const result = await createVoicePackageVirtualPaymentOrder({
         voicePackageId: voicePackage.id,
         agentId: agentId.value,

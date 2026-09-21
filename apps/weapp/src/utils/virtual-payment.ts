@@ -61,13 +61,34 @@ export class WechatVirtualPaymentError extends Error {
   }
 }
 
+/**
+ * 当前是否 iOS 微信客户端。
+ *
+ * 微信只对**非 iOS** 系统关闭了普通微信支付，也就是说 iOS 上普通微信支付仍然可用；
+ * 反过来 iOS 的 `wx.requestVirtualPayment` 基本走不通。所以 iOS 必须直接走普通微信支付。
+ */
+export function isIosClientPlatform() {
+  const platform = String(
+    (Taro.getSystemInfoSync() as MiniProgramSystemInfo).platform || ''
+  ).toLowerCase()
+
+  return platform === 'ios'
+}
+
 export function assertVirtualPaymentAvailable() {
   const systemInfo = Taro.getSystemInfoSync() as MiniProgramSystemInfo
-  // const platform = systemInfo.platform?.toLowerCase() ?? ''
 
-  // if (platform === 'ios') {
-  //   throw new Error('暂不支持 iOS 端购买，请使用安卓/鸿蒙/Windows 微信客户端购买')
-  // }
+  // iOS 无法完成小程序虚拟支付：这里快速失败，让 requestWechatVirtualPaymentWithFallback
+  // 立刻回退到普通微信支付。
+  //
+  // 注意必须抛**普通 Error（不带 errMsg）**：isWechatPaymentCancel 只认 errMsg 里的
+  // cancel，否则会被误判成"用户主动取消"而不回退。
+  //
+  // 这是兜底防线。正常路径上调用方（vip-center / voice-package-success）已经按平台
+  // 选好分支，iOS 根本不会走到这里、也就不会先建出一笔虚拟支付订单。
+  if (isIosClientPlatform()) {
+    throw new Error('iOS 客户端不支持小程序虚拟支付，改用普通微信支付')
+  }
 
   if (
     compareVersion(systemInfo.SDKVersion ?? '', minVirtualPaymentSdkVersion) < 0 &&

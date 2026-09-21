@@ -89,6 +89,7 @@ import {
   redirectToAuthPage,
 } from '../../utils/auth-guard'
 import {
+  isIosClientPlatform,
   isWechatPaymentCancel,
   requestWechatVirtualPaymentWithFallback,
   showWechatVirtualPaymentError,
@@ -341,7 +342,9 @@ async function handlePurchaseTap() {
 
     let paidOrderId = ''
 
-    if (virtualPaymentProductId) {
+    // iOS 用不了小程序虚拟支付，直接走普通微信支付：这样既不会先建出一笔
+    // 注定失败的虚拟支付订单，也不会让用户看到一次失败尝试。
+    if (virtualPaymentProductId && !isIosClientPlatform()) {
       const result = await createVipPlanVirtualPaymentOrder({
         vipPlanId,
         jsCode,
