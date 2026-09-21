@@ -622,6 +622,68 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(orderModel.save).not.toHaveBeenCalled();
   });
 
+  // 微信只关闭了非 iOS 的普通微信支付；iOS 的 wx.requestVirtualPayment 基本走不通，
+  // 普通支付是它唯一的成功路径，必须放行，否则 iOS 用户会被堵死。
+  it('iOS 客户端仍可为虚拟支付商品创建普通微信支付订单', async () => {
+    const IPHONE_UA =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.74(0x18004a30) NetType/4G Language/zh_CN';
+    const { service, auth, orderModel } = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+
+    await service.createVipPlanOrder(
+      auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+      IPHONE_UA
+    );
+
+    expect(orderModel.save).toHaveBeenCalled();
+  });
+
+  it('iOS 语音套餐同样放行，非 iOS 客户端仍被拒绝', async () => {
+    const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)';
+    const ANDROID_UA =
+      'Mozilla/5.0 (Linux; Android 12; BLK-AL80 Build/HUAWEIBLK-AL80; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/150.0 Mobile Safari/537.36 MiniProgramEnv/android';
+
+    const ios = createService(
+      {},
+      {},
+      {
+        voicePackageOverrides: {
+          virtualPaymentProductId: 'voice_standard_goods',
+        },
+      }
+    );
+    await ios.service.createVoicePackageOrder(
+      ios.auth,
+      { voicePackageId: VOICE_PACKAGE_ID, agentId: AGENT_ID, jsCode: 'wx-code' },
+      IPHONE_UA
+    );
+    expect(ios.orderModel.save).toHaveBeenCalled();
+
+    const android = createService(
+      {},
+      {},
+      {
+        voicePackageOverrides: {
+          virtualPaymentProductId: 'voice_standard_goods',
+        },
+      }
+    );
+    await expect(
+      android.service.createVoicePackageOrder(
+        android.auth,
+        {
+          voicePackageId: VOICE_PACKAGE_ID,
+          agentId: AGENT_ID,
+          jsCode: 'wx-code',
+        },
+        ANDROID_UA
+      )
+    ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+  });
+
   it('deducts historical vip payments from a member upgrade order', async () => {
     const historicalOrder = createOrder({
       id: new MongoObjectId('665000000000000000000011'),

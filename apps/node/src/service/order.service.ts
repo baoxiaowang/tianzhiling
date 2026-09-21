@@ -149,35 +149,58 @@ export class OrderService {
   voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
 
   /**
-   * 微信平台已关闭非 iOS 系统的普通微信支付能力，虚拟商品必须使用小程序虚拟支付。
-   * 配置了虚拟支付商品的套餐/语音包，其普通微信支付下单接口一律拒绝，
-   * 避免旧版本小程序在虚拟支付失败后自动回退并生成 wechat_pay 订单。
+   * 微信平台只关闭了**非 iOS** 系统的普通微信支付能力：
+   * iOS 上普通微信支付仍然可用，而且 iOS 的 `wx.requestVirtualPayment` 基本走不通，
+   * 普通支付正是 iOS 用户唯一能成功的路径。
+   *
+   * 因此这里必须按平台区分，只拒绝非 iOS 客户端——否则 iOS 用户会被堵死在
+   * 「虚拟支付失败 → 回退普通支付 → 被本守卫拒绝」的死路上（2026-09-21 两起真实案例）。
+   *
+   * 平台通过请求的 User-Agent 判定（微信小程序 UA 里带 iPhone/iPad），
+   * 这样已发布的旧版小程序无需发版即可修复。
    */
+  private isIosClientUserAgent(clientUserAgent?: string): boolean {
+    return /(iPhone|iPad|iPod)/i.test(String(clientUserAgent || ''));
+  }
+
   private assertOrdinaryWechatPayAllowed(
-    virtualPaymentProductId?: string
+    virtualPaymentProductId?: string,
+    clientUserAgent?: string
   ): void {
-    if (virtualPaymentProductId?.trim()) {
-      this.logger?.warn?.(
-        '[order] ordinary wechat pay disabled, rejected order creation, virtualPaymentProductId=%s',
-        virtualPaymentProductId
-      );
-      throw new AppError(
-        'WECHAT_ORDINARY_PAY_DISABLED',
-        '当前小程序已关闭普通微信支付，请更新微信到最新版本后重试',
-        400
-      );
+    if (!virtualPaymentProductId?.trim()) {
+      return;
     }
+
+    if (this.isIosClientUserAgent(clientUserAgent)) {
+      // iOS 保留普通微信支付，直接放行。
+      return;
+    }
+
+    this.logger?.warn?.(
+      '[order] ordinary wechat pay disabled, rejected order creation, virtualPaymentProductId=%s userAgent=%s',
+      virtualPaymentProductId,
+      String(clientUserAgent || '').slice(0, 160)
+    );
+    throw new AppError(
+      'WECHAT_ORDINARY_PAY_DISABLED',
+      '当前设备无法使用普通微信支付，请更新微信到最新版本后重试',
+      400
+    );
   }
 
   async createVipPlanOrder(
     auth: AuthenticatedUserPayload,
-    payload: CreateVipPlanOrderDTO
+    payload: CreateVipPlanOrderDTO,
+    clientUserAgent?: string
   ): Promise<CreateVipPlanOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
     const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
     if (preliminaryPricing.payableAmount > 0) {
-      this.assertOrdinaryWechatPayAllowed(plan.virtualPaymentProductId);
+      this.assertOrdinaryWechatPayAllowed(
+        plan.virtualPaymentProductId,
+        clientUserAgent
+      );
     }
     let openid =
       preliminaryPricing.payableAmount > 0
@@ -201,7 +224,10 @@ export class OrderService {
           );
         }
 
-        this.assertOrdinaryWechatPayAllowed(plan.virtualPaymentProductId);
+        this.assertOrdinaryWechatPayAllowed(
+          plan.virtualPaymentProductId,
+          clientUserAgent
+        );
 
         if (!openid) {
           needsOpenid = true;
@@ -273,7 +299,8 @@ export class OrderService {
 
   async createVoicePackageOrder(
     auth: AuthenticatedUserPayload,
-    payload: CreateVoicePackageOrderDTO
+    payload: CreateVoicePackageOrderDTO,
+    clientUserAgent?: string
   ): Promise<CreateVoicePackageOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const [voicePackage, agent] = await Promise.all([
@@ -282,7 +309,10 @@ export class OrderService {
     ]);
     await this.assertAgentCanBuyVoicePackage(agent.id);
     if (voicePackage.priceAmount > 0) {
-      this.assertOrdinaryWechatPayAllowed(voicePackage.virtualPaymentProductId);
+      this.assertOrdinaryWechatPayAllowed(
+        voicePackage.virtualPaymentProductId,
+        clientUserAgent
+      );
     }
     const materialObjectKeys = this.normalizeVoiceTrainingMaterialObjectKeys(
       payload.materialObjectKeys
