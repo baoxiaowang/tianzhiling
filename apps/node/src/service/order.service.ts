@@ -148,39 +148,72 @@ export class OrderService {
   @InjectEntityModel(VoiceTrainingTaskEntity)
   voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
 
-  /**
-   * 微信平台只关闭了**非 iOS** 系统的普通微信支付能力：
-   * iOS 上普通微信支付仍然可用，而且 iOS 的 `wx.requestVirtualPayment` 基本走不通，
-   * 普通支付正是 iOS 用户唯一能成功的路径。
-   *
-   * 因此这里必须按平台区分，只拒绝非 iOS 客户端——否则 iOS 用户会被堵死在
-   * 「虚拟支付失败 → 回退普通支付 → 被本守卫拒绝」的死路上（2026-09-21 两起真实案例）。
-   *
-   * 平台通过请求的 User-Agent 判定（微信小程序 UA 里带 iPhone/iPad），
-   * 这样已发布的旧版小程序无需发版即可修复。
-   */
-  private isIosClientUserAgent(clientUserAgent?: string): boolean {
-    return /(iPhone|iPad|iPod)/i.test(String(clientUserAgent || ''));
+  /** 客户端平台只从 User-Agent 判定：微信小程序 UA 里带 iPhone/iPad 或 Android。 */
+  private describeClientPlatform(
+    clientUserAgent?: string
+  ): 'ios' | 'android' | 'other' {
+    const value = String(clientUserAgent || '');
+    if (/(iPhone|iPad|iPod)/i.test(value)) {
+      return 'ios';
+    }
+    if (/Android/i.test(value)) {
+      return 'android';
+    }
+    return 'other';
   }
 
-  private assertOrdinaryWechatPayAllowed(
-    virtualPaymentProductId?: string,
-    clientUserAgent?: string
-  ): void {
-    if (!virtualPaymentProductId?.trim()) {
+  /** 小程序运行环境（安卓/鸿蒙/Windows/Mac/开发者工具），用于排查细分平台问题。 */
+  private readMiniProgramEnv(clientUserAgent?: string): string {
+    const matched = /MiniProgramEnv\/([A-Za-z0-9_]+)/i.exec(
+      String(clientUserAgent || '')
+    );
+    return matched?.[1] || '-';
+  }
+
+  /**
+   * 普通微信支付下单入口的守卫 + 兜底观测。
+   *
+   * **观测原理**：商品一旦配置了 `virtualPaymentProductId`，客户端的分支就只会走虚拟支付，
+   * 只有虚拟支付**非取消**失败时才会回退到本接口。所以这个入口收到请求，
+   * 本身就等价于「该设备的虚拟支付失败了」——不需要客户端上报就能统计，
+   * 也不需要小程序发版。
+   *
+   * 每次命中都打一条 `ORDER_VIRTUAL_PAY_FALLBACK`，可直接按平台统计：
+   *   grep -c "ORDER_VIRTUAL_PAY_FALLBACK.*platform=ios" 
+   *
+   * **守卫**：微信平台只关闭了**非 iOS** 系统的普通微信支付能力。iOS 上普通支付仍然可用，
+   * 而且 iOS 的 `wx.requestVirtualPayment` 基本走不通，普通支付是 iOS 用户唯一能成功的路径。
+   * 因此只拒绝非 iOS 客户端——否则 iOS 用户会被堵死在
+   * 「虚拟支付失败 → 回退普通支付 → 被本守卫拒绝」的死路上（2026-09-21 两起真实案例）。
+   */
+  private assertOrdinaryWechatPayAllowed(input: {
+    virtualPaymentProductId?: string;
+    clientUserAgent?: string;
+    userId?: string;
+    targetCode?: string;
+  }): void {
+    const productId = input.virtualPaymentProductId?.trim();
+    if (!productId) {
       return;
     }
 
-    if (this.isIosClientUserAgent(clientUserAgent)) {
-      // iOS 保留普通微信支付，直接放行。
-      return;
-    }
+    const platform = this.describeClientPlatform(input.clientUserAgent);
+    const allowed = platform === 'ios';
 
     this.logger?.warn?.(
-      '[order] ordinary wechat pay disabled, rejected order creation, virtualPaymentProductId=%s userAgent=%s',
-      virtualPaymentProductId,
-      String(clientUserAgent || '').slice(0, 160)
+      'ORDER_VIRTUAL_PAY_FALLBACK platform=%s mpEnv=%s outcome=%s userId=%s targetCode=%s productId=%s',
+      platform,
+      this.readMiniProgramEnv(input.clientUserAgent),
+      allowed ? 'allowed' : 'rejected',
+      input.userId || '-',
+      input.targetCode || '-',
+      productId
     );
+
+    if (allowed) {
+      return;
+    }
+
     throw new AppError(
       'WECHAT_ORDINARY_PAY_DISABLED',
       '当前设备无法使用普通微信支付，请更新微信到最新版本后重试',
@@ -197,10 +230,12 @@ export class OrderService {
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
     const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
     if (preliminaryPricing.payableAmount > 0) {
-      this.assertOrdinaryWechatPayAllowed(
-        plan.virtualPaymentProductId,
-        clientUserAgent
-      );
+      this.assertOrdinaryWechatPayAllowed({
+        virtualPaymentProductId: plan.virtualPaymentProductId,
+        clientUserAgent,
+        userId: this.stringifyObjectId(userId),
+        targetCode: plan.code,
+      });
     }
     let openid =
       preliminaryPricing.payableAmount > 0
@@ -224,10 +259,12 @@ export class OrderService {
           );
         }
 
-        this.assertOrdinaryWechatPayAllowed(
-          plan.virtualPaymentProductId,
-          clientUserAgent
-        );
+        this.assertOrdinaryWechatPayAllowed({
+          virtualPaymentProductId: plan.virtualPaymentProductId,
+          clientUserAgent,
+          userId: this.stringifyObjectId(userId),
+          targetCode: plan.code,
+        });
 
         if (!openid) {
           needsOpenid = true;
@@ -309,10 +346,12 @@ export class OrderService {
     ]);
     await this.assertAgentCanBuyVoicePackage(agent.id);
     if (voicePackage.priceAmount > 0) {
-      this.assertOrdinaryWechatPayAllowed(
-        voicePackage.virtualPaymentProductId,
-        clientUserAgent
-      );
+      this.assertOrdinaryWechatPayAllowed({
+        virtualPaymentProductId: voicePackage.virtualPaymentProductId,
+        clientUserAgent,
+        userId: this.stringifyObjectId(userId),
+        targetCode: voicePackage.code,
+      });
     }
     const materialObjectKeys = this.normalizeVoiceTrainingMaterialObjectKeys(
       payload.materialObjectKeys

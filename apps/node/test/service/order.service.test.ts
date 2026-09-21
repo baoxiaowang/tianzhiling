@@ -624,6 +624,52 @@ describe('OrderService payment expiration and reconciliation', () => {
 
   // 微信只关闭了非 iOS 的普通微信支付；iOS 的 wx.requestVirtualPayment 基本走不通，
   // 普通支付是它唯一的成功路径，必须放行，否则 iOS 用户会被堵死。
+  // 到达普通支付入口且商品配了虚拟支付商品 = 客户端虚拟支付失败后回退。
+  // 这个入口本身就是「虚拟支付失败」的信号，埋点用于按平台统计，无需客户端上报。
+  it('在普通支付入口记录虚拟支付兜底埋点，并按平台区分结果', async () => {
+    const IPHONE_UA =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.74 NetType/4G';
+    const ANDROID_UA =
+      'Mozilla/5.0 (Linux; Android 12; BLK-AL80 Build/HUAWEIBLK-AL80; wv) AppleWebKit/537.36 Mobile Safari/537.36 MiniProgramEnv/android';
+
+    const ios = createService({}, { virtualPaymentProductId: 'vip_month_goods' });
+    await ios.service.createVipPlanOrder(
+      ios.auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+      IPHONE_UA
+    );
+    expect(ios.service.logger.warn).toHaveBeenCalledWith(
+      'ORDER_VIRTUAL_PAY_FALLBACK platform=%s mpEnv=%s outcome=%s userId=%s targetCode=%s productId=%s',
+      'ios',
+      '-',
+      'allowed',
+      USER_ID,
+      'vip_month',
+      'vip_month_goods'
+    );
+
+    const android = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+    await expect(
+      android.service.createVipPlanOrder(
+        android.auth,
+        { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+        ANDROID_UA
+      )
+    ).rejects.toMatchObject({ code: 'WECHAT_ORDINARY_PAY_DISABLED' });
+    expect(android.service.logger.warn).toHaveBeenCalledWith(
+      'ORDER_VIRTUAL_PAY_FALLBACK platform=%s mpEnv=%s outcome=%s userId=%s targetCode=%s productId=%s',
+      'android',
+      'android',
+      'rejected',
+      USER_ID,
+      'vip_month',
+      'vip_month_goods'
+    );
+  });
+
   it('iOS 客户端仍可为虚拟支付商品创建普通微信支付订单', async () => {
     const IPHONE_UA =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.74(0x18004a30) NetType/4G Language/zh_CN';
