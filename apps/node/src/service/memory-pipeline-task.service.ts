@@ -175,6 +175,8 @@ export class MemoryPipelineTaskService {
     searchableText: string,
     kinds: MemoryPipelineTaskKind[]
   ): Promise<MemoryPipelineTaskEntity[]> {
+    // 记忆写入总闸：暂停期间不创建任何任务（含批量分支）。
+    if (isMemoryWriteDisabled()) return [];
     const cleanText = searchableText?.replace(/\s+/g, ' ').trim();
     if (!cleanText || !message?.id) return [];
 
@@ -213,6 +215,8 @@ export class MemoryPipelineTaskService {
     agentId: MongoObjectId;
     now?: Date;
   }): Promise<MemoryPipelineTaskEntity | undefined> {
+    // 记忆写入总闸：暂停期间不创建未了结抽取任务。
+    if (isMemoryWriteDisabled()) return undefined;
     if (!options?.userId) return undefined;
     const now = options.now || new Date();
     const dayKey = resolveBeijingDayKey(now);
@@ -351,6 +355,9 @@ export class MemoryPipelineTaskService {
     conversationId: string
   ): Promise<MemoryPipelineTaskEntity | null> {
     if (!this.redisService) return null;
+    // 记忆写入总闸：暂停期间不消费 Redis 批次、不落任务。
+    // 刻意不删除批次键：暂停前已累积的消息保留到恢复后再落库（不属于暂停期数据）。
+    if (isMemoryWriteDisabled()) return null;
     const batchKey = this.batchKey(kind, conversationId);
     let messageIds: string[] = [];
     try {
@@ -1116,6 +1123,8 @@ export class MemoryPipelineTaskService {
     batchId: string;
     now?: Date;
   }): Promise<MemoryPipelineTaskEntity | null> {
+    // 记忆写入总闸：暂停期间不创建后台类记忆任务。
+    if (isMemoryWriteDisabled()) return null;
     const cleanText = options.searchableText?.replace(/\s+/g, ' ').trim();
     const batchId = options.batchId?.trim();
     if (!cleanText || !options.message?.id || !batchId) return null;

@@ -3,6 +3,7 @@ import {
   MemoryPipelineTaskKind,
   MemoryPipelineTaskScheduleClass,
   MemoryPipelineTaskStatus,
+  MessageEntity,
   MongoObjectId,
 } from '@tzl/entities';
 import {
@@ -233,6 +234,86 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
       ).updateAgentLanguageProfile({ id: 'b1', userId: 'u1', agentId: 'a1' }, []);
 
       expect(upsertFromHistoricalImport).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('任务创建原语：暂停期间一个任务都不落', () => {
+    const makeMessage = () =>
+      Object.assign(new MessageEntity(), {
+        id: new MongoObjectId('665000000000000000000a01'),
+        conversationId: new MongoObjectId('665000000000000000000a02'),
+        userId: new MongoObjectId('665000000000000000000a03'),
+        agentId: new MongoObjectId('665000000000000000000a04'),
+      });
+
+    it('enqueueForMessage 返回空数组且不写库', async () => {
+      process.env[FLAG] = 'true';
+      const service = new MemoryPipelineTaskService();
+      const save = jest.fn();
+      service.logger = { warn: jest.fn() } as never;
+      service.taskModel = { findOne: jest.fn(), save } as never;
+
+      const tasks = await service.enqueueForMessage(
+        makeMessage(),
+        '用户说了新的家人情况',
+        [MemoryPipelineTaskKind.semanticIndex]
+      );
+
+      expect(tasks).toEqual([]);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('flushBatch 返回 null 且不消费 Redis 批次（批次键保留给恢复后）', async () => {
+      process.env[FLAG] = 'true';
+      const service = new MemoryPipelineTaskService();
+      const lrange = jest.fn();
+      const del = jest.fn();
+      service.logger = { warn: jest.fn(), info: jest.fn() } as never;
+      service.redisService = { lrange, del } as never;
+
+      const task = await service.flushBatch(
+        MemoryPipelineTaskKind.structuredMemory,
+        '6ab2711d0ae0e319dd85163d'
+      );
+
+      expect(task).toBeNull();
+      expect(lrange).not.toHaveBeenCalled();
+      expect(del).not.toHaveBeenCalled();
+    });
+
+    it('enqueueBackgroundTask 返回 null', async () => {
+      process.env[FLAG] = 'true';
+      const service = new MemoryPipelineTaskService();
+      const save = jest.fn();
+      service.logger = { warn: jest.fn() } as never;
+      service.taskModel = { findOne: jest.fn(), save } as never;
+
+      const task = await service.enqueueBackgroundTask({
+        message: makeMessage(),
+        searchableText: '用户说了新的家人情况',
+        kind: MemoryPipelineTaskKind.openItemExtraction,
+        batchId: 'batch-1',
+      });
+
+      expect(task).toBeNull();
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('enqueueOpenItemExtraction 返回 undefined', async () => {
+      process.env[FLAG] = 'true';
+      const service = new MemoryPipelineTaskService();
+      const save = jest.fn();
+      service.logger = { warn: jest.fn() } as never;
+      service.taskModel = { findOne: jest.fn(), save } as never;
+
+      const task = await service.enqueueOpenItemExtraction({
+        userId: new MongoObjectId('665000000000000000000a03'),
+        conversationId: new MongoObjectId('665000000000000000000a02'),
+        agentId: new MongoObjectId('665000000000000000000a04'),
+      });
+
+      expect(task).toBeUndefined();
+      expect(save).not.toHaveBeenCalled();
     });
   });
 });
