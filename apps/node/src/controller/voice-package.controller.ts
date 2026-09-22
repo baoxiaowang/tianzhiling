@@ -16,8 +16,16 @@ export class VoicePackageController {
   async getAgentVoicePackageCenter(@Param('agentId') agentId: string) {
     return this.voicePackageService.getAgentVoicePackageCenter(
       this.requireAuth(),
-      agentId
+      agentId,
+      this.getClientUserAgent()
     );
+  }
+
+  /** 下发套餐时按平台裁剪虚拟支付道具 ID（iOS 不下发）。 */
+  private getClientUserAgent(): string | undefined {
+    const header = this.ctx.headers['user-agent'];
+
+    return Array.isArray(header) ? header[0] : header;
   }
 
   private requireAuth(): AuthenticatedUserPayload {

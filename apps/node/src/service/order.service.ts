@@ -43,6 +43,10 @@ import { createHash, randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AuthenticatedUserPayload } from '../interface';
 import {
+  readDeclaredPlatform,
+  resolveClientPlatform,
+} from '../common/client-platform';
+import {
   WechatPayService,
   WechatTransactionPayload,
   WechatVirtualOrderPayload,
@@ -158,110 +162,6 @@ export class OrderService {
   @InjectEntityModel(VoiceTrainingTaskEntity)
   voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
 
-  /** User-Agent 判定：微信小程序 UA 里带 iPhone/iPad 或 Android。 */
-  private readUserAgentPlatform(
-    clientUserAgent?: string
-  ): 'ios' | 'android' | 'other' {
-    const value = String(clientUserAgent || '');
-    if (!value.trim()) {
-      return 'other';
-    }
-    if (/(iPhone|iPad|iPod)/i.test(value)) {
-      return 'ios';
-    }
-    if (/Android/i.test(value)) {
-      return 'android';
-    }
-    return 'other';
-  }
-
-  /** 客户端自报平台（新增客户端才会带）。 */
-  private readDeclaredPlatform(
-    value?: unknown
-  ): 'ios' | 'android' | 'other' | undefined {
-    const text = String(value ?? '')
-      .trim()
-      .toLowerCase();
-    if (!text) {
-      return undefined;
-    }
-    if (text === 'ios') {
-      return 'ios';
-    }
-    if (text === 'android' || text === 'harmony' || text === 'ohos') {
-      return 'android';
-    }
-    // windows / mac / devtools 等桌面与工具环境：都不是 iOS。
-    return 'other';
-  }
-
-  /**
-   * 解析客户端平台，并做交叉验证。
-   *
-   * 平台决定资金走哪条通道（iOS 走普通微信支付，非 iOS 只走虚拟支付），
-   * 所以不能只信单个可伪造的字段：
-   * - 旧客户端只带 User-Agent → 按 UA 判定（兼容）；
-   * - 新客户端两个都带 → 一致才采信，**不一致视为冲突**；
-   * - 冲突或完全判不出来 → `isTrustedIos` 为 false，按非 iOS 处理（fail-closed）。
-   *
-   * **UA 是唯一的信任来源**：真实微信小程序请求一定带 UA，缺 UA 只可能是
-   * 服务端调用、压测脚本或伪造请求。此类请求即便自报 `platform=ios` 也**不采信**，
-   * 否则非 iOS 客户端只需省掉 UA 再自报 iOS 就能白拿普通微信支付、绕过规则。
-   * 自报字段只用于"与 UA 对照"，永远不能单独把请求提升为可信 iOS。
-   */
-  private resolveClientPlatform(input: {
-    clientUserAgent?: string;
-    declaredPlatform?: unknown;
-  }): {
-    platform: 'ios' | 'android' | 'other';
-    source: 'ua' | 'declared' | 'ua+declared' | 'none';
-    conflict: boolean;
-    isTrustedIos: boolean;
-  } {
-    const hasUserAgent = String(input.clientUserAgent || '').trim().length > 0;
-    const fromUa = hasUserAgent
-      ? this.readUserAgentPlatform(input.clientUserAgent)
-      : undefined;
-    const fromDeclared = this.readDeclaredPlatform(input.declaredPlatform);
-
-    if (fromUa === undefined && fromDeclared === undefined) {
-      return {
-        platform: 'other',
-        source: 'none',
-        conflict: false,
-        isTrustedIos: false,
-      };
-    }
-
-    if (fromDeclared === undefined) {
-      return {
-        platform: fromUa as 'ios' | 'android' | 'other',
-        source: 'ua',
-        conflict: false,
-        isTrustedIos: fromUa === 'ios',
-      };
-    }
-
-    if (fromUa === undefined) {
-      // 缺 UA：不可信来源，自报 ios 也按非 iOS 处理（fail-closed）。
-      return {
-        platform: fromDeclared ?? 'other',
-        source: 'declared',
-        conflict: false,
-        isTrustedIos: false,
-      };
-    }
-
-    const conflict = (fromUa === 'ios') !== (fromDeclared === 'ios');
-
-    return {
-      platform: conflict ? fromUa : fromDeclared,
-      source: 'ua+declared',
-      conflict,
-      isTrustedIos: !conflict && fromDeclared === 'ios',
-    };
-  }
-
   /** WARN 日志里的用户标识做哈希，避免原始 userId 落盘。 */
   private hashLogUserId(userId?: string): string {
     const value = String(userId || '')
@@ -318,7 +218,7 @@ export class OrderService {
       );
     }
 
-    const resolved = this.resolveClientPlatform({
+    const resolved = resolveClientPlatform({
       clientUserAgent: input.clientUserAgent,
       declaredPlatform: input.declaredPlatform,
     });
@@ -384,12 +284,11 @@ export class OrderService {
     userId?: string;
     targetCode?: string;
   }): void {
-    const resolved = this.resolveClientPlatform({
+    const resolved = resolveClientPlatform({
       clientUserAgent: input.clientUserAgent,
       declaredPlatform: input.declaredPlatform,
     });
-    const declaredIos =
-      this.readDeclaredPlatform(input.declaredPlatform) === 'ios';
+    const declaredIos = readDeclaredPlatform(input.declaredPlatform) === 'ios';
 
     if (declaredIos || resolved.conflict) {
       this.logger?.warn?.(

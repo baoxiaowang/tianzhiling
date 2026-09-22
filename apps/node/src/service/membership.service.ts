@@ -28,6 +28,7 @@ import type {
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import { AuthenticatedUserPayload } from '../interface';
+import { isTrustedIosRequest } from '../common/client-platform';
 import {
   calculateVipUpgradePricing,
   getHistoricalVipPaidAmount,
@@ -55,13 +56,15 @@ export class MembershipService {
   messageModel: MongoRepository<MessageEntity>;
 
   async getMembershipCenter(
-    auth: AuthenticatedUserPayload
+    auth: AuthenticatedUserPayload,
+    clientUserAgent?: string
   ): Promise<UserMembershipCenterDTO> {
+    const hideVirtualProduct = isTrustedIosRequest(clientUserAgent);
     const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
 
     const now = new Date();
     const [plans, memberships] = await Promise.all([
-      this.listActiveVipPlans(),
+      this.listActiveVipPlans(hideVirtualProduct),
       this.findActiveMemberships(userId),
     ]);
     const activeMembership = memberships.find(membership =>
@@ -83,20 +86,24 @@ export class MembershipService {
       isVip: true,
       membership: this.buildMembershipRecord(
         activeMembership,
-        membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
+        membershipPlan
+          ? this.buildVipPlanRecord(membershipPlan, hideVirtualProduct)
+          : undefined
       ),
       plans,
     };
   }
 
   async getVipPurchaseCenter(
-    auth: AuthenticatedUserPayload
+    auth: AuthenticatedUserPayload,
+    clientUserAgent?: string
   ): Promise<VipPurchaseCenterDTO> {
+    const hideVirtualProduct = isTrustedIosRequest(clientUserAgent);
     const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
 
     const now = new Date();
     const [plans, memberships] = await Promise.all([
-      this.listActiveVipPlans(),
+      this.listActiveVipPlans(hideVirtualProduct),
       this.findActiveMemberships(userId),
     ]);
     const activeMembership = memberships.find(membership =>
@@ -135,7 +142,9 @@ export class MembershipService {
       isVip: true,
       membership: this.buildMembershipRecord(
         activeMembership,
-        membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
+        membershipPlan
+          ? this.buildVipPlanRecord(membershipPlan, hideVirtualProduct)
+          : undefined
       ),
       plans: upgradePlans,
       serverTime: this.formatDate(now),
@@ -144,8 +153,10 @@ export class MembershipService {
   }
 
   async getMembershipStatus(
-    auth: AuthenticatedUserPayload
+    auth: AuthenticatedUserPayload,
+    clientUserAgent?: string
   ): Promise<UserMembershipStatusSnapshotDTO> {
+    const hideVirtualProduct = isTrustedIosRequest(clientUserAgent);
     const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
 
     const now = new Date();
@@ -174,14 +185,18 @@ export class MembershipService {
       isVip: true,
       membership: this.buildMembershipRecord(
         activeMembership,
-        membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
+        membershipPlan
+          ? this.buildVipPlanRecord(membershipPlan, hideVirtualProduct)
+          : undefined
       ),
       entitlements,
       serverTime: this.formatDate(now),
     };
   }
 
-  private async listActiveVipPlans(): Promise<VipPlanRecordDTO[]> {
+  private async listActiveVipPlans(
+    hideVirtualProduct = false
+  ): Promise<VipPlanRecordDTO[]> {
     const plans = await this.vipPlanModel.find({
       where: {
         status: VipPlanStatus.active,
@@ -192,7 +207,7 @@ export class MembershipService {
       },
     });
 
-    return plans.map(plan => this.buildVipPlanRecord(plan));
+    return plans.map(plan => this.buildVipPlanRecord(plan, hideVirtualProduct));
   }
 
   private isMembershipAvailable(
@@ -386,7 +401,17 @@ export class MembershipService {
     );
   }
 
-  private buildVipPlanRecord(plan: VipPlanEntity): VipPlanRecordDTO {
+  /**
+   * 组装客户端可见的套餐记录。
+   *
+   * `hideVirtualProduct=true`（iOS 请求）时不下发虚拟支付道具 ID：已发布的旧小程序
+   * 是「套餐带道具 ID 就只走虚拟支付」，而虚拟支付下单失败不会回退到普通支付，
+   * 所以只能由服务端把 ID 掩掉，旧客户端才会走普通微信支付分支。非 iOS 照常下发。
+   */
+  private buildVipPlanRecord(
+    plan: VipPlanEntity,
+    hideVirtualProduct = false
+  ): VipPlanRecordDTO {
     return {
       id: this.stringifyObjectId(plan.id),
       code: plan.code,
@@ -405,7 +430,9 @@ export class MembershipService {
         : undefined,
       voicePackageCode: plan.voicePackageCode,
       voicePackageName: plan.voicePackageName,
-      virtualPaymentProductId: plan.virtualPaymentProductId ?? '',
+      virtualPaymentProductId: hideVirtualProduct
+        ? ''
+        : plan.virtualPaymentProductId ?? '',
     };
   }
 

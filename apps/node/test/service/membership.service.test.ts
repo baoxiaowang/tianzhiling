@@ -374,6 +374,72 @@ describe('MembershipService user membership status', () => {
     expect(service.userMembershipModel.find).not.toHaveBeenCalled();
   });
 
+  it('iOS 请求不下发虚拟支付道具 ID，旧小程序据此回落普通微信支付', async () => {
+    const service = createService({
+      plans: [createVipPlan({ virtualPaymentProductId: 'vip_month_goods' })],
+    });
+
+    const iosResult = await service.getVipPurchaseCenter(
+      auth,
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) Mobile/15E148 MicroMessenger/8.0.78'
+    );
+
+    expect(iosResult.plans).toEqual([
+      expect.objectContaining({
+        id: VIP_PLAN_ID,
+        virtualPaymentProductId: '',
+      }),
+    ]);
+
+    // 非 iOS：照常下发，客户端继续走虚拟支付
+    const androidService = createService({
+      plans: [createVipPlan({ virtualPaymentProductId: 'vip_month_goods' })],
+    });
+    const androidResult = await androidService.getVipPurchaseCenter(
+      auth,
+      'Mozilla/5.0 (Linux; Android 12; BLK-AL80) MiniProgramEnv/android'
+    );
+
+    expect(androidResult.plans).toEqual([
+      expect.objectContaining({
+        id: VIP_PLAN_ID,
+        virtualPaymentProductId: 'vip_month_goods',
+      }),
+    ]);
+
+    // 缺 UA：不可信来源，不按 iOS 掩码（保持 fail-closed 语义之外的中性下发）
+    const unknownService = createService({
+      plans: [createVipPlan({ virtualPaymentProductId: 'vip_month_goods' })],
+    });
+    const unknownResult = await unknownService.getVipPurchaseCenter(auth);
+
+    expect(unknownResult.plans).toEqual([
+      expect.objectContaining({
+        id: VIP_PLAN_ID,
+        virtualPaymentProductId: 'vip_month_goods',
+      }),
+    ]);
+  });
+
+  it('iOS 请求在会员中心与会员状态接口同样掩掉虚拟支付道具 ID', async () => {
+    const service = createService({
+      memberships: [createMembership()],
+      plans: [createVipPlan({ virtualPaymentProductId: 'vip_month_goods' })],
+    });
+
+    const center = await service.getMembershipCenter(
+      auth,
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X)'
+    );
+    const status = await service.getMembershipStatus(
+      auth,
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X)'
+    );
+
+    expect(center.plans?.[0].virtualPaymentProductId).toBe('');
+    expect(status.membership?.plan?.virtualPaymentProductId).toBe('');
+  });
+
   it('rejects invalid purchase-center user ids before querying any tables', async () => {
     const service = createService();
 

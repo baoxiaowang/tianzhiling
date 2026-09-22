@@ -16,6 +16,7 @@ import type {
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import { AuthenticatedUserPayload } from '../interface';
+import { isTrustedIosRequest } from '../common/client-platform';
 
 @Provide()
 export class VoicePackageService {
@@ -33,12 +34,15 @@ export class VoicePackageService {
 
   async getAgentVoicePackageCenter(
     auth: AuthenticatedUserPayload,
-    agentId: string
+    agentId: string,
+    clientUserAgent?: string
   ): Promise<AgentVoicePackageCenterDTO> {
     const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
+    // iOS 不下发虚拟支付道具 ID：旧小程序据此回落到普通微信支付（详见 membership.service）。
+    const hideVirtualProduct = isTrustedIosRequest(clientUserAgent);
     const agent = await this.getUserAgent(userId, agentId);
     const [packages, task] = await Promise.all([
-      this.listActiveVoicePackages(),
+      this.listActiveVoicePackages(hideVirtualProduct),
       this.findLatestTaskByAgent(agent.id),
     ]);
 
@@ -48,7 +52,9 @@ export class VoicePackageService {
     };
   }
 
-  private async listActiveVoicePackages(): Promise<VoicePackageRecordDTO[]> {
+  private async listActiveVoicePackages(
+    hideVirtualProduct = false
+  ): Promise<VoicePackageRecordDTO[]> {
     const packages = await this.voicePackageModel.find({
       where: {
         status: VoicePackageStatus.active,
@@ -59,7 +65,9 @@ export class VoicePackageService {
       },
     });
 
-    return packages.map(item => this.buildPackageRecord(item));
+    return packages.map(item =>
+      this.buildPackageRecord(item, hideVirtualProduct)
+    );
   }
 
   private async findLatestTaskByAgent(
@@ -105,8 +113,12 @@ export class VoicePackageService {
     return agent;
   }
 
+  /**
+   * 组装客户端可见的语音套餐记录；`hideVirtualProduct` 语义同 VIP 套餐。
+   */
   private buildPackageRecord(
-    voicePackage: VoicePackageEntity
+    voicePackage: VoicePackageEntity,
+    hideVirtualProduct = false
   ): VoicePackageRecordDTO {
     return {
       id: this.stringifyObjectId(voicePackage.id),
@@ -119,7 +131,9 @@ export class VoicePackageService {
       deliverables: voicePackage.deliverables ?? [],
       materialRequirement: voicePackage.materialRequirement ?? '',
       estimatedServiceDays: voicePackage.estimatedServiceDays,
-      virtualPaymentProductId: voicePackage.virtualPaymentProductId ?? '',
+      virtualPaymentProductId: hideVirtualProduct
+        ? ''
+        : voicePackage.virtualPaymentProductId ?? '',
     };
   }
 
