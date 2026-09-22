@@ -951,10 +951,55 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(orderModel.save).toHaveBeenCalled();
   });
 
-  it('虚拟支付入口拒绝显式自报 iOS，仅 UA 命中的旧客户端放行但告警', async () => {
+  it('虚拟支付入口硬拒绝 iOS：UA 命中与自报 ios 都不允许创建虚拟订单', async () => {
     const ANDROID_UA =
       'Mozilla/5.0 (Linux; Android 12; BLK-AL80 Build/HUAWEIBLK-AL80; wv) AppleWebKit/537.36 MiniProgramEnv/android';
-    // 显式自报 ios：新客户端才会带，说明前端路由错了 → 拒绝，绝不落到 Apple 通道
+
+    // (a) 仅 UA 命中 iPhone（旧客户端 / 页面缓存旧数据）：一样硬拒绝
+    const uaIosVip = createService(
+      {},
+      { virtualPaymentProductId: 'vip_month_goods' }
+    );
+    await expect(
+      uaIosVip.service.createVipPlanVirtualPaymentOrder(
+        uaIosVip.auth,
+        { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+        { userAgent: IOS_UA }
+      )
+    ).rejects.toMatchObject({
+      code: 'WECHAT_VIRTUAL_PAY_IOS_NOT_ALLOWED',
+    });
+    expect(uaIosVip.orderModel.save).not.toHaveBeenCalled();
+    expect(
+      uaIosVip.wechatPayService.buildVirtualPaymentParams
+    ).not.toHaveBeenCalled();
+
+    // (b) 语音包虚拟支付入口同样硬拒绝
+    const uaIosVoice = createService(
+      {},
+      {},
+      {
+        voicePackageOverrides: {
+          virtualPaymentProductId: 'voice_standard_goods',
+        },
+      }
+    );
+    await expect(
+      uaIosVoice.service.createVoicePackageVirtualPaymentOrder(
+        uaIosVoice.auth,
+        {
+          voicePackageId: VOICE_PACKAGE_ID,
+          agentId: AGENT_ID,
+          jsCode: 'wx-code',
+        },
+        { userAgent: IOS_UA }
+      )
+    ).rejects.toMatchObject({
+      code: 'WECHAT_VIRTUAL_PAY_IOS_NOT_ALLOWED',
+    });
+    expect(uaIosVoice.orderModel.save).not.toHaveBeenCalled();
+
+    // (c) 显式自报 ios（新客户端路由写错）：同样拒绝
     const declaredIos = createService(
       {},
       { virtualPaymentProductId: 'vip_month_goods' }
@@ -970,22 +1015,18 @@ describe('OrderService payment expiration and reconciliation', () => {
     });
     expect(declaredIos.orderModel.save).not.toHaveBeenCalled();
 
-    // 仅 UA 命中 iPhone：可能是已发布旧客户端，放行但留告警
-    const legacy = createService(
-      {},
-      { virtualPaymentProductId: 'vip_month_goods' }
-    );
-    await legacy.service.createVipPlanVirtualPaymentOrder(
-      legacy.auth,
-      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
-      { userAgent: IOS_UA }
-    );
-    const legacyLog = (legacy.service.logger.warn as jest.Mock).mock.calls.find(
-      call => String(call[0]).includes('route=ios_virtual_legacy_client')
-    );
-    expect(legacyLog).toBeDefined();
+    // (d) 不再有「旧客户端放行」的兼容分支
+    const allLogs = [
+      ...(uaIosVip.service.logger.warn as jest.Mock).mock.calls,
+      ...(uaIosVoice.service.logger.warn as jest.Mock).mock.calls,
+      ...(declaredIos.service.logger.warn as jest.Mock).mock.calls,
+    ]
+      .map(call => String(call[0]))
+      .join('\n');
+    expect(allLogs).not.toContain('ios_virtual_legacy_client');
+    expect(allLogs).toContain('route=ios_virtual_blocked outcome=rejected');
 
-    // 安卓走虚拟支付是正常路径，不该出现 iOS 告警
+    // (e) 安卓走虚拟支付是正常路径，照常成功且无 iOS 告警
     const android = createService(
       {},
       { virtualPaymentProductId: 'vip_month_goods' }
@@ -995,10 +1036,31 @@ describe('OrderService payment expiration and reconciliation', () => {
       { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
       { userAgent: ANDROID_UA }
     );
-    const androidIosWarn = (
-      android.service.logger.warn as jest.Mock
-    ).mock.calls.find(call => String(call[0]).includes('ios_virtual'));
-    expect(androidIosWarn).toBeUndefined();
+    expect(android.orderModel.save).toHaveBeenCalled();
+    const androidLogs = (android.service.logger.warn as jest.Mock).mock.calls
+      .map(call => String(call[0]))
+      .join('\n');
+    expect(androidLogs).not.toContain('ios_virtual');
+
+    const androidVoice = createService(
+      {},
+      {},
+      {
+        voicePackageOverrides: {
+          virtualPaymentProductId: 'voice_standard_goods',
+        },
+      }
+    );
+    await androidVoice.service.createVoicePackageVirtualPaymentOrder(
+      androidVoice.auth,
+      {
+        voicePackageId: VOICE_PACKAGE_ID,
+        agentId: AGENT_ID,
+        jsCode: 'wx-code',
+      },
+      { userAgent: ANDROID_UA }
+    );
+    expect(androidVoice.orderModel.save).toHaveBeenCalled();
   });
 
   it('订单发放权已被并发回调占用时，重复回调不再发放权益', async () => {

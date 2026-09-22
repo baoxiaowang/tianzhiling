@@ -114,6 +114,52 @@ describe('VoicePackageService 虚拟支付道具 ID 下发', () => {
     ]);
   });
 
+  it('iOS 获取 120/180 元语音套餐时道具 ID 均为空', async () => {
+    const putonghua = createVoicePackage({
+      id: new MongoObjectId('665000000000000000000101'),
+      code: 'voice_putonghua',
+      name: '普通话套餐',
+      priceAmount: 12000,
+      virtualPaymentProductId: 'voice_putonghua',
+    });
+    const fanyan = createVoicePackage({
+      id: new MongoObjectId('665000000000000000000102'),
+      code: 'voice_fanyan',
+      name: '方言套餐',
+      priceAmount: 18000,
+      virtualPaymentProductId: 'voice_fanyan',
+    });
+
+    const service = createService();
+    service.voicePackageModel = {
+      find: jest.fn(async () => [putonghua, fanyan]),
+    } as never;
+
+    const ios = await service.getAgentVoicePackageCenter(
+      auth,
+      AGENT_ID,
+      IOS_UA
+    );
+    expect(
+      ios.packages.map(item => [item.code, item.virtualPaymentProductId])
+    ).toEqual([
+      ['voice_putonghua', ''],
+      ['voice_fanyan', ''],
+    ]);
+
+    const android = await service.getAgentVoicePackageCenter(
+      auth,
+      AGENT_ID,
+      ANDROID_UA
+    );
+    expect(
+      android.packages.map(item => [item.code, item.virtualPaymentProductId])
+    ).toEqual([
+      ['voice_putonghua', 'voice_putonghua'],
+      ['voice_fanyan', 'voice_fanyan'],
+    ]);
+  });
+
   it('缺 UA 时不按 iOS 掩码', async () => {
     const service = createService();
 

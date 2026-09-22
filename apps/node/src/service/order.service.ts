@@ -43,6 +43,7 @@ import { createHash, randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AuthenticatedUserPayload } from '../interface';
 import {
+  isTrustedIosRequest,
   readDeclaredPlatform,
   resolveClientPlatform,
 } from '../common/client-platform';
@@ -266,17 +267,17 @@ export class OrderService {
   }
 
   /**
-   * 虚拟支付下单入口的平台防线。
+   * 虚拟支付下单入口的平台防线（硬拒绝）。
    *
-   * **业务规则**：iOS 不走虚拟支付（Apple 通道手续费高、账期长），走普通微信支付。
+   * **业务规则**：iOS 绝对不允许创建微信虚拟支付订单——不论来自旧客户端、
+   * 页面缓存里的旧套餐数据，还是直接调用接口。非 iOS 的虚拟支付是唯一通道，
+   * 继续放行。
    *
-   * 处理分两档，避免误伤已发布客户端：
-   * - 显式自报 `platform=ios`：新客户端才会上报，说明前端路由走错了，**直接拒绝**；
-   * - 仅 UA 命中 iPhone/iPad：可能是已发布的旧客户端（旧版本会先试虚拟支付），
-   *   这里**不做硬拒绝**，只打告警，等客户端换版后自然消失；硬拒绝会让线上 iOS 用户无路可走。
+   * 判定以 **User-Agent 为唯一信任来源**（与普通支付入口一致）：UA 命中
+   * iPhone/iPad/iPod 即拒绝；客户端自报 `platform=ios` 同样拒绝，避免伪造。
    *
-   * 抛错不写进普通支付回退路径：非 iOS 虚拟支付失败时客户端也只提示重试，
-   * 绝不会改用普通微信支付（规则 2）。
+   * iOS 侧的兼容由「下发套餐时清空 virtualPaymentProductId」承担：旧客户端拿到
+   * 空值会走普通微信支付分支，因此这里硬拒绝不会让 iOS 用户无路可走。
    */
   private assertVirtualPaymentClientAllowed(input: {
     clientUserAgent?: string;
@@ -288,34 +289,28 @@ export class OrderService {
       clientUserAgent: input.clientUserAgent,
       declaredPlatform: input.declaredPlatform,
     });
+    const uaIos = isTrustedIosRequest(input.clientUserAgent);
     const declaredIos = readDeclaredPlatform(input.declaredPlatform) === 'ios';
 
-    if (declaredIos || resolved.conflict) {
-      this.logger?.warn?.(
-        'ORDER_PAY_ROUTE route=ios_virtual_blocked outcome=rejected platform=%s platformSource=%s uaEnv=%s userHash=%s targetCode=%s',
-        resolved.platform,
-        resolved.source,
-        this.readMiniProgramEnv(input.clientUserAgent),
-        this.hashLogUserId(input.userId),
-        input.targetCode || '-'
-      );
-      throw new AppError(
-        'WECHAT_VIRTUAL_PAY_IOS_NOT_ALLOWED',
-        'iOS 请使用普通微信支付下单',
-        400
-      );
+    if (!uaIos && !declaredIos) {
+      // 非 iOS：虚拟支付是唯一通道，正常放行。
+      return;
     }
 
-    if (resolved.platform === 'ios') {
-      // 已发布旧客户端的兼容路径，只告警不拦截。
-      this.logger?.warn?.(
-        'ORDER_PAY_ROUTE route=ios_virtual_legacy_client outcome=allowed platformSource=%s uaEnv=%s userHash=%s targetCode=%s',
-        resolved.source,
-        this.readMiniProgramEnv(input.clientUserAgent),
-        this.hashLogUserId(input.userId),
-        input.targetCode || '-'
-      );
-    }
+    this.logger?.warn?.(
+      'ORDER_PAY_ROUTE route=ios_virtual_blocked outcome=rejected platform=%s platformSource=%s uaEnv=%s userHash=%s targetCode=%s',
+      resolved.platform,
+      resolved.source,
+      this.readMiniProgramEnv(input.clientUserAgent),
+      this.hashLogUserId(input.userId),
+      input.targetCode || '-'
+    );
+
+    throw new AppError(
+      'WECHAT_VIRTUAL_PAY_IOS_NOT_ALLOWED',
+      'iOS 请使用普通微信支付下单',
+      400
+    );
   }
 
   async createVipPlanOrder(
