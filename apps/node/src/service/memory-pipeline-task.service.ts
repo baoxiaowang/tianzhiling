@@ -20,6 +20,7 @@ import {
   backgroundWindowStart,
   resolveBackgroundThrottleConfig,
 } from './memory-background-throttle';
+import { isMemoryWriteDisabled } from './memory-write-guard';
 
 export const MEMORY_PIPELINE_QUEUE = 'memory-pipeline';
 export const MEMORY_PIPELINE_RECONCILE_JOB_ID = 'memory-pipeline-reconcile-v1';
@@ -72,7 +73,8 @@ export type MemoryTaskDeferReason =
   | 'background_paused'
   | 'background_quota'
   | 'resource_guard'
-  | 'queue_unavailable';
+  | 'queue_unavailable'
+  | 'write_paused';
 
 export interface MemoryBackgroundAdmission {
   allowed: boolean;
@@ -648,6 +650,25 @@ export class MemoryPipelineTaskService {
       !this.isTaskDue(task, now)
     ) {
       return { task: null };
+    }
+
+    // 记忆写入总闸：暂停期间所有记忆任务只做可靠延后——不删除、不标成功、
+    // 不消耗 attemptCount（deferTask 只累加 deferCount），恢复后由运维决定是否继续消费。
+    if (isMemoryWriteDisabled()) {
+      const writePausedNextEligibleAt = new Date(
+        now.getTime() + MEMORY_RESOURCE_DEFER_COOLDOWN_MS
+      );
+      await this.deferTask(
+        task,
+        'write_paused',
+        writePausedNextEligibleAt,
+        now
+      );
+      return {
+        task: null,
+        deferredReason: 'write_paused',
+        nextEligibleAt: writePausedNextEligibleAt,
+      };
     }
 
     if (!options.budgetAllowed) {

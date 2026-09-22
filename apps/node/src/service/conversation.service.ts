@@ -197,6 +197,7 @@ import {
   SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
 } from './agents/recognition-journey';
 import { RecognitionJourneyObserverService } from './agents/recognition-journey-observer.service';
+import { isMemoryWriteDisabled, isMemoryWritePaused } from './memory-write-guard';
 import {
   PersonTemporalMemoryService,
   PersonTemporalQaContextItem,
@@ -2362,7 +2363,7 @@ export class ConversationService {
       if (
         task.kind === MemoryPipelineTaskKind.structuredMemory &&
         this.memoryValueService?.enabled(validMessages[0].userId) !== true &&
-        process.env.CHAT_SKIP_MEMORY_WRITE !== 'true' &&
+        !isMemoryWritePaused() &&
         this.agentProfileFactService &&
         typeof this.agentProfileFactService
           .extractAndUpsertBatchFromUserMessages === 'function'
@@ -3633,6 +3634,10 @@ export class ConversationService {
     message: MessageEntity,
     searchableText: string
   ): Promise<void> {
+    // 记忆写入总闸：暂停期间不再为聊天/异步/小使者消息派生结构化记忆任务。
+    if (isMemoryWriteDisabled()) {
+      return;
+    }
     await this.memoryPipelineTaskService.enqueueForMessage(
       message,
       searchableText,
@@ -3644,6 +3649,10 @@ export class ConversationService {
     message: MessageEntity,
     observations?: AgentVisualAppearanceObservation[]
   ): void {
+    // 记忆写入总闸：外观事实是直写（不经任务队列），必须在入口拦住。
+    if (isMemoryWriteDisabled()) {
+      return;
+    }
     if (
       !observations?.length ||
       !this.agentProfileFactService ||
@@ -3699,7 +3708,7 @@ export class ConversationService {
     previousAssistantContent?: string,
     contextMessages?: Array<{ role: 'user' | 'assistant'; content: string }>
   ): Promise<MemoryFactExtractionAudit> {
-    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+    if (isMemoryWritePaused()) {
       return { succeeded: true, count: 0 };
     }
     if (!this.agentProfileFactService) {
@@ -3782,7 +3791,7 @@ export class ConversationService {
     searchableText: string,
     qaContext?: PersonTemporalQaContextItem[]
   ): Promise<MemoryFactExtractionAudit> {
-    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+    if (isMemoryWritePaused()) {
       return { succeeded: true, count: 0 };
     }
     if (!this.personTemporalMemoryService) {
@@ -12352,7 +12361,7 @@ export class ConversationService {
     userId: string;
     searchableText: string;
   }): Promise<void> {
-    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+    if (isMemoryWritePaused()) {
       return;
     }
     const searchableText = options.searchableText?.trim();

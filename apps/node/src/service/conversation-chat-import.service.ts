@@ -39,6 +39,7 @@ import {
 } from '../dto/conversation.dto';
 import { AuthenticatedUserPayload } from '../interface';
 import { AgentProfileFactService } from './agents/agent-profile-fact.service';
+import { isMemoryWriteDisabled } from './memory-write-guard';
 import { OpenAIService } from './agents/openai';
 import {
   analyzeChatImportLanguage,
@@ -1460,6 +1461,11 @@ export class ConversationChatImportService {
     batch: ConversationChatImportBatchEntity,
     items: ConversationChatImportItemEntity[]
   ): Promise<void> {
+    // 记忆写入总闸：暂停期间导入不再自动写风格事实与语言画像。
+    // 注意：用户主动确认导入记忆候选（confirmMemoryCandidates）不受此闸影响。
+    if (isMemoryWriteDisabled()) {
+      return;
+    }
     const agentItems = items.filter(
       item => item.speaker === ConversationChatImportSpeaker.agent
     );
