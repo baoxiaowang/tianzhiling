@@ -204,7 +204,7 @@ services:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME:-admin}
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:-qwerasdf}
     ports:
-      - ${MONGO_PORT:-17271}:27017
+      - "127.0.0.1:${MONGO_PORT:-17271}:27017"
     volumes:
       # - tzl_mongo_data:/data/db
       # - tzl_mongo_logs:/var/log/mongodb
