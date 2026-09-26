@@ -147,9 +147,11 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     if (['GET', 'HEAD'].includes(method)) return true;
     if (method !== 'POST') return false;
     const normalized = path.replace(/^\/+/, '').replace(/\/+$/, '');
+    // Strip optional global prefix (e.g. 'api') if present.
+    const stripped = normalized.replace(/^api\//, '');
     // Allow signing ASR session and sending test messages in own conversations.
-    if (/^conversation\/[^/]+\/realtime-voice-session\/?$/.test(normalized)) return true;
-    if (/^conversation\/[^/]+\/messages\/?$/.test(normalized)) return true;
+    if (/^conversation\/[^/]+\/realtime-voice-session\/?$/.test(stripped)) return true;
+    if (/^conversation\/[^/]+\/messages\/?$/.test(stripped)) return true;
     return false;
   }
 
