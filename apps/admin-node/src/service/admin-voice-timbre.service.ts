@@ -49,6 +49,7 @@ import {
 } from './doubao-voice.service';
 import { MinimaxVoiceService } from './minimax-voice.service';
 import { QwenVoiceService } from './qwen-voice.service';
+import { TencentVrsVoiceService } from './tencent-vrs-voice.service';
 
 type MongoWhere = Record<string, unknown>;
 
@@ -97,6 +98,9 @@ export class AdminVoiceTimbreService {
 
   @Inject()
   doubaoVoiceService: DoubaoVoiceService;
+
+  @Inject()
+  tencentVrsVoiceService: TencentVrsVoiceService;
 
   async listVoiceTimbres(
     query: ListAdminVoiceTimbresQueryDTO
@@ -1714,6 +1718,18 @@ export class AdminVoiceTimbreService {
         );
       } else if (timbre.provider === VoiceTimbreProvider.doubao) {
         await this.doubaoVoiceService.releaseVoice(providerVoiceId);
+      } else if (timbre.provider === VoiceTimbreProvider.tencent_vrs) {
+        // 腾讯云声音复刻公开 API 无删除音色接口：只删本地 COS 产物，
+        // 云端音色需人工联系腾讯云删除，绝不能伪造“已全部删除”。
+        const result = await this.tencentVrsVoiceService.deleteVoice({
+          fastVoiceType: providerVoiceId,
+        });
+        this.logger?.warn?.(
+          '[voice-timbre-delete] tencent_vrs cloud voice cannot be deleted via API, timbreId=%s, fastVoiceType=%s, reason=%s',
+          this.stringifyObjectId(timbre.id),
+          providerVoiceId,
+          result.reason
+        );
       } else {
         throw new AppError(
           'VOICE_TIMBRE_PROVIDER_DELETE_UNSUPPORTED',
@@ -2114,7 +2130,8 @@ export class AdminVoiceTimbreService {
       provider === 'minimax' ||
       provider === 'cosyvoice' ||
       provider === 'qwen' ||
-      provider === 'doubao'
+      provider === 'doubao' ||
+      provider === 'tencent_vrs'
     ) {
       return provider;
     }

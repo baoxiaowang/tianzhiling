@@ -643,6 +643,75 @@ export default {
       120000
     ),
   },
+  tencentVrs: {
+    enabled: readBooleanFrom(
+      ['NODE_TENCENT_VRS_ENABLED', 'ADMIN_API_TENCENT_VRS_ENABLED'],
+      false
+    ),
+    secretId: readStringFrom(
+      ['NODE_TENCENT_VRS_SECRET_ID', 'ADMIN_API_TENCENT_VRS_SECRET_ID'],
+      ''
+    ),
+    secretKey: readStringFrom(
+      ['NODE_TENCENT_VRS_SECRET_KEY', 'ADMIN_API_TENCENT_VRS_SECRET_KEY'],
+      ''
+    ),
+    securityToken: readStringFrom(
+      [
+        'NODE_TENCENT_VRS_SECURITY_TOKEN',
+        'ADMIN_API_TENCENT_VRS_SECURITY_TOKEN',
+      ],
+      ''
+    ),
+    region: readStringFrom(
+      ['NODE_TENCENT_VRS_REGION', 'ADMIN_API_TENCENT_VRS_REGION'],
+      'ap-guangzhou'
+    ),
+    vrsEndpoint: readStringFrom(
+      ['NODE_TENCENT_VRS_ENDPOINT', 'ADMIN_API_TENCENT_VRS_ENDPOINT'],
+      'https://vrs.tencentcloudapi.com'
+    ),
+    ttsEndpoint: readStringFrom(
+      [
+        'NODE_TENCENT_VRS_TTS_ENDPOINT',
+        'ADMIN_API_TENCENT_VRS_TTS_ENDPOINT',
+      ],
+      'https://tts.tencentcloudapi.com'
+    ),
+    vrsVersion: readStringFrom(
+      ['NODE_TENCENT_VRS_VERSION', 'ADMIN_API_TENCENT_VRS_VERSION'],
+      '2020-08-24'
+    ),
+    ttsVersion: readStringFrom(
+      ['NODE_TENCENT_VRS_TTS_VERSION', 'ADMIN_API_TENCENT_VRS_TTS_VERSION'],
+      '2019-08-23'
+    ),
+    singleSentenceVoiceType: readStringFrom(
+      [
+        'NODE_TENCENT_VRS_SINGLE_SENTENCE_VOICE_TYPE',
+        'ADMIN_API_TENCENT_VRS_SINGLE_SENTENCE_VOICE_TYPE',
+      ],
+      '200000000'
+    ),
+    defaultVoiceGender: readStringFrom(
+      [
+        'NODE_TENCENT_VRS_DEFAULT_VOICE_GENDER',
+        'ADMIN_API_TENCENT_VRS_DEFAULT_VOICE_GENDER',
+      ],
+      '2'
+    ),
+    defaultSampleRate: readStringFrom(
+      [
+        'NODE_TENCENT_VRS_DEFAULT_SAMPLE_RATE',
+        'ADMIN_API_TENCENT_VRS_DEFAULT_SAMPLE_RATE',
+      ],
+      '16000'
+    ),
+    timeoutMs: readNumberFrom(
+      ['NODE_TENCENT_VRS_TIMEOUT_MS', 'ADMIN_API_TENCENT_VRS_TIMEOUT_MS'],
+      120000
+    ),
+  },
   bailianImage: {
     enabled: readBooleanFrom(
       ['NODE_BAILIAN_IMAGE_ENABLED', 'ADMIN_API_BAILIAN_IMAGE_ENABLED'],

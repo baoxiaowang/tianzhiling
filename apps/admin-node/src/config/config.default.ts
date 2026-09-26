@@ -444,6 +444,63 @@ export default {
       'default'
     ),
   },
+  tencentVrs: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_TENCENT_VRS_ENABLED', 'NODE_TENCENT_VRS_ENABLED'],
+      false
+    ),
+    secretId: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_SECRET_ID', 'NODE_TENCENT_VRS_SECRET_ID'],
+      ''
+    ),
+    secretKey: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_SECRET_KEY', 'NODE_TENCENT_VRS_SECRET_KEY'],
+      ''
+    ),
+    securityToken: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_SECURITY_TOKEN', 'NODE_TENCENT_VRS_SECURITY_TOKEN'],
+      ''
+    ),
+    region: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_REGION', 'NODE_TENCENT_VRS_REGION'],
+      'ap-guangzhou'
+    ),
+    vrsEndpoint: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_VRS_ENDPOINT', 'NODE_TENCENT_VRS_VRS_ENDPOINT'],
+      'https://vrs.tencentcloudapi.com'
+    ),
+    ttsEndpoint: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_TTS_ENDPOINT', 'NODE_TENCENT_VRS_TTS_ENDPOINT'],
+      'https://tts.tencentcloudapi.com'
+    ),
+    vrsVersion: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_VRS_VERSION', 'NODE_TENCENT_VRS_VRS_VERSION'],
+      '2020-08-24'
+    ),
+    ttsVersion: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_TTS_VERSION', 'NODE_TENCENT_VRS_TTS_VERSION'],
+      '2019-08-23'
+    ),
+    singleSentenceVoiceType: readStringFrom(
+      [
+        'ADMIN_API_TENCENT_VRS_SINGLE_SENTENCE_VOICE_TYPE',
+        'NODE_TENCENT_VRS_SINGLE_SENTENCE_VOICE_TYPE',
+      ],
+      '200000000'
+    ),
+    defaultVoiceGender: readNumberFrom(
+      ['ADMIN_API_TENCENT_VRS_DEFAULT_VOICE_GENDER'],
+      2
+    ),
+    defaultSampleRate: readStringFrom(
+      ['ADMIN_API_TENCENT_VRS_DEFAULT_SAMPLE_RATE'],
+      '16000'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_TENCENT_VRS_TIMEOUT_MS', 'NODE_TENCENT_VRS_TIMEOUT_MS'],
+      120000
+    ),
+  },
   wechatPay: {
     enabled: readBooleanFrom(
       ['ADMIN_API_WECHAT_PAY_ENABLED', 'NODE_WECHAT_PAY_ENABLED'],

@@ -156,7 +156,11 @@
                   {{ record.status === 'active' ? '重新训练' : '重试' }}
                 </a-button>
                 <a-popconfirm
-                  content="删除后该用户将无法使用此音色，且对象存储中的音频会被清理，确认删除？"
+                  :content="
+                    record.provider === 'tencent_vrs'
+                      ? '删除后将清理本地 COS 音频与绑定；腾讯云端音色需人工联系腾讯云处理，无法通过接口删除，可能产生存储费用。确认删除本地记录？'
+                      : '删除后该用户将无法使用此音色，且对象存储中的音频会被清理，确认删除？'
+                  "
                   @ok="handleDelete(record)"
                 >
                   <a-button
@@ -1910,6 +1914,7 @@
       cosyvoice: 'CosyVoice',
       qwen: '千问',
       doubao: '豆包',
+      tencent_vrs: '腾讯云声音复刻（一句话版）',
     };
     return map[provider] || provider;
   };
@@ -1920,6 +1925,7 @@
       cosyvoice: 'purple',
       qwen: 'gold',
       doubao: 'red',
+      tencent_vrs: 'cyan',
     };
     return map[provider] || 'gray';
   };

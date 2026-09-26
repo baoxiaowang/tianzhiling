@@ -17,6 +17,7 @@ import { createHash, randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import { QwenVoiceEnrollmentService } from './qwen-voice-enrollment.service';
+import { TencentVrsVoiceService } from './tencent-vrs-voice.service';
 import { TencentCosService } from './tencent-cos.service';
 
 const VOICE_OBJECT_PREFIXES = [
@@ -60,6 +61,9 @@ export class VoiceServiceDataDeletionService {
 
   @Inject()
   qwenVoiceEnrollmentService: QwenVoiceEnrollmentService;
+
+  @Inject()
+  tencentVrsVoiceService: TencentVrsVoiceService;
 
   async deleteRequiredObject(objectKey: string): Promise<void> {
     try {
@@ -383,6 +387,36 @@ export class VoiceServiceDataDeletionService {
           completed = false;
         }
       } else if (
+        timbre.provider === VoiceTimbreProvider.tencent_vrs &&
+        timbre.providerVoiceId &&
+        !timbre.providerVoiceId.startsWith('pending_')
+      ) {
+        // 腾讯云声音复刻（VRS）公开 API 没有删除音色的接口。
+        // 本地 COS 产物已在上方删除；复刻音色本体保留在腾讯云侧，
+        // 需由账号管理员联系腾讯云确认并人工删除；免费存储期结束后可能收费。
+        // 这里如实记录限制，绝不伪造删除成功。
+        const limitation = await this.tencentVrsVoiceService.deleteVoice({
+          fastVoiceType: timbre.providerVoiceId,
+        });
+        this.logger.warn(
+          '[voice-data-deletion] tencent_vrs voice model retained on provider, timbreId=%s, fastVoiceType=%s, reason=%s',
+          this.idOf(timbre),
+          timbre.providerVoiceId,
+          limitation.reason
+        );
+        failures.push(
+          this.buildFailure(
+            'voice_model',
+            timbre.providerVoiceId,
+            new AppError(
+              'VOICE_TIMBRE_PROVIDER_DELETE_UNSUPPORTED',
+              limitation.reason,
+              400
+            )
+          )
+        );
+        completed = false;
+      } else if (
         !timbre.providerVoiceId ||
         timbre.providerVoiceId.startsWith('pending_')
       ) {
@@ -431,7 +465,9 @@ export class VoiceServiceDataDeletionService {
         item => !deletedObjectKeys.has(item.objectKey)
       );
       timbre.deletionStatus = 'partial_failed';
-      timbre.deletionFailureReason = '部分声音数据删除失败，请重试';
+      timbre.deletionFailureReason = timbre.provider === VoiceTimbreProvider.tencent_vrs
+        ? '本地声音文件已删除；腾讯云声音复刻暂无公开删除接口，复刻音色保留在腾讯云侧，请到腾讯云控制台处理'
+        : '部分声音数据删除失败，请重试';
     }
     timbre.updatedAt = new Date();
     try {

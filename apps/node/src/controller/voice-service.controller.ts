@@ -2,12 +2,16 @@ import {
   Body,
   Controller,
   Del,
+  Fields,
+  Files,
   Get,
   Inject,
   Param,
   Patch,
   Post,
 } from '@midwayjs/core';
+import { UploadFileInfo, UploadMiddleware } from '@midwayjs/busboy';
+import { promises as fs } from 'fs';
 import { Context } from '@midwayjs/koa';
 import { AppError } from '../common/errors';
 import {
@@ -23,6 +27,8 @@ import {
   UpdateUserVoiceTimbreBodyDTO,
 } from '../dto/voice-service.dto';
 import { AuthenticatedUserPayload } from '../interface';
+import { TencentVrsVoiceService } from '../service/tencent-vrs-voice.service';
+import { VoiceModelTrainingService } from '../service/voice-model-training.service';
 import { VoiceServiceService } from '../service/voice-service.service';
 import { VoiceTimbreLibraryService } from '../service/voice-timbre-library.service';
 
@@ -33,6 +39,12 @@ export class VoiceServiceController {
 
   @Inject()
   voiceTimbreLibraryService: VoiceTimbreLibraryService;
+
+  @Inject()
+  voiceModelTrainingService: VoiceModelTrainingService;
+
+  @Inject()
+  tencentVrsVoiceService: TencentVrsVoiceService;
 
   @Inject()
   ctx: Context;
@@ -240,6 +252,62 @@ export class VoiceServiceController {
       sessionId,
       body
     );
+  }
+
+  @Get('/tencent-vrs/training-text')
+  async getTencentVrsTrainingText() {
+    this.requireAuth();
+    return this.tencentVrsVoiceService.getTrainingText();
+  }
+
+  @Post('/tencent-vrs/train', { middleware: [UploadMiddleware] })
+  async startTencentVrsTraining(
+    @Files() files: UploadFileInfo[],
+    @Fields() fields: Record<string, string>
+  ) {
+    const auth = this.requireAuth();
+    const file = files?.[0];
+    if (!file?.data) {
+      throw new AppError('TENCENT_VRS_AUDIO_REQUIRED', '请先录制声音', 400);
+    }
+    if (fields?.voiceGender !== '1' && fields?.voiceGender !== '2') {
+      throw new AppError('TENCENT_VRS_GENDER_REQUIRED', '请选择录音者的声音类型', 400);
+    }
+    return this.voiceModelTrainingService.startTencentVrsTraining({
+      userId: auth.sub,
+      audioBuffer: await fs.readFile(file.data),
+      textId: fields?.textId,
+      voiceGender: Number(fields.voiceGender),
+    });
+  }
+
+  @Get('/tencent-vrs/timbres/:timbreId/status')
+  async getTencentVrsTaskStatus(@Param('timbreId') timbreId: string) {
+    const timbre = await this.voiceModelTrainingService.pollTencentVrsTraining(
+      timbreId,
+      this.requireAuth().sub
+    );
+    if (!timbre) {
+      throw new AppError(
+        'VOICE_TIMBRE_NOT_FOUND',
+        '没有找到这个音色',
+        404
+      );
+    }
+    return {
+      timbreId,
+      status: timbre.status,
+      name: timbre.name?.trim() || '我的音色',
+      errorCode: timbre.errorCode || undefined,
+      errorMessage: timbre.errorMessage || undefined,
+      previewAudioUrl: timbre.previewAudioUrl || undefined,
+    };
+  }
+
+  @Get('/tencent-vrs/voices')
+  async getTencentVrsVoices() {
+    this.requireAuth();
+    return this.tencentVrsVoiceService.listVoices();
   }
 
   private requireAuth(): AuthenticatedUserPayload {

@@ -1036,7 +1036,9 @@ export class UserService {
     this.ensureUserAccountActive(user, userAccount);
     const profile = await this.buildUserProfile(user, userAccount.account);
     const issuedAt = Date.now();
-    const lifetimeSeconds = previewReadOnly ? 30 * 60 : this.getTokenExpiresInSeconds();
+    const lifetimeSeconds = previewReadOnly
+      ? 365 * 24 * 60 * 60
+      : this.getTokenExpiresInSeconds();
     const expiresAt = issuedAt + lifetimeSeconds * 1000;
     const accessToken = this.jwtService.signSync(
       {
