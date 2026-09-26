@@ -368,6 +368,16 @@ export class ConversationController {
     );
   }
 
+  @Post('/:conversationId/realtime-voice-session')
+  async createRealtimeVoiceSession(
+    @Param('conversationId') conversationId: string
+  ) {
+    return this.conversationService.createRealtimeVoiceSession(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId
+    );
+  }
+
   private withClientRequestId(
     body: SendConversationMessageDTO
   ): SendConversationMessageDTO {

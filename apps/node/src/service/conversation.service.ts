@@ -146,6 +146,7 @@ import { ConversationChatImportService } from './conversation-chat-import.servic
 import { PostImageService } from './post-image.service';
 import { OssService } from './oss.service';
 import { TencentCosService } from './tencent-cos.service';
+import { TencentAsrService } from './tencent-asr.service';
 import { MilvusService } from './rag/milvus.service';
 import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
@@ -807,6 +808,9 @@ export class ConversationService {
 
   @Inject()
   tencentCosService: TencentCosService;
+
+  @Inject()
+  tencentAsrService: TencentAsrService;
 
   @Inject()
   milvusService: MilvusService;
@@ -1977,6 +1981,14 @@ export class ConversationService {
     }
 
     return { transcript };
+  }
+
+  async createRealtimeVoiceSession(
+    auth: AuthenticatedUserPayload,
+    conversationId: string
+  ) {
+    await this.getConversationForUser(auth, conversationId);
+    return this.tencentAsrService.createSession();
   }
 
   async generateMessageVoice(

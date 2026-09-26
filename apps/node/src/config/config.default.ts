@@ -745,6 +745,15 @@ export default {
       900
     ),
   },
+  tencentAsr: {
+    appId: readStringFrom(['NODE_TENCENT_ASR_APP_ID'], ''),
+    secretId: readStringFrom(['NODE_TENCENT_ASR_SECRET_ID'], ''),
+    secretKey: readStringFrom(['NODE_TENCENT_ASR_SECRET_KEY'], ''),
+    engineModelType: readStringFrom(
+      ['NODE_TENCENT_ASR_ENGINE_MODEL_TYPE'],
+      '16k_zh'
+    ),
+  },
   voiceClipping: {
     binaryPath: readStringFrom(['NODE_FFMPEG_BINARY_PATH'], 'ffmpeg'),
     timeoutMs: readNumberFrom(['NODE_FFMPEG_TIMEOUT_MS'], 300000),
