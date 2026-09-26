@@ -20,6 +20,7 @@ import {
 import { UserService } from '../service/user.service';
 import { AccountCancellationService } from '../service/account-cancellation.service';
 import { AppPreviewGrantService } from '../service/app-preview-grant.service';
+import { AppTestGrantService } from '../service/app-test-grant.service';
 
 @Controller('/user')
 export class UserController {
@@ -31,6 +32,9 @@ export class UserController {
 
   @Inject()
   appPreviewGrantService: AppPreviewGrantService;
+
+  @Inject()
+  appTestGrantService: AppTestGrantService;
 
   @Inject()
   ctx: Context;
@@ -68,6 +72,11 @@ export class UserController {
   @Post('/preview-grants/redeem')
   async redeemPreviewGrant(@Body() body: RedeemAppPreviewGrantDTO) {
     return this.appPreviewGrantService.redeem(body.code, this.ctx.ip);
+  }
+
+  @Post('/test-grants/redeem')
+  async redeemTestGrant(@Body() body: RedeemAppPreviewGrantDTO) {
+    return this.appTestGrantService.redeem(body.code, this.ctx.ip);
   }
 
   @Post('/me/weapp-phone')

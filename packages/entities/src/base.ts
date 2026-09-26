@@ -7,6 +7,7 @@ export enum TableName {
   user = "user",
   user_account = "user_account",
   app_preview_grant = "app_preview_grant",
+  app_test_grant = "app_test_grant",
   user_identity_profile = "user_identity_profile",
   user_known_person = "user_known_person",
   user_relative_profile = "user_relative_profile",

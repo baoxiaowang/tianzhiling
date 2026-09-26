@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from 'path';
 import {
   AgentEntity,
   AppPreviewGrantEntity,
+  AppTestGrantEntity,
   AgentEntitlementEntity,
   AgentMemoryFactEntity,
   AgentProfileFactEntity,
@@ -948,6 +949,8 @@ export default {
         entities: [
           AgentEntity,
           AppPreviewGrantEntity,
+          AppTestGrantEntity,
+  AppTestGrantEntity,
           AgentEntitlementEntity,
           AgentMemoryFactEntity,
           AgentProfileFactEntity,

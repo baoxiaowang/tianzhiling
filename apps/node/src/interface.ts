@@ -33,6 +33,8 @@ export interface AuthenticatedUserPayload {
   nonce: string;
   /** Restricted session issued after an admin approves an app preview device. */
   previewReadOnly?: boolean;
+  /** Restricted test session for ASR integration; allows only whitelisted writes. */
+  testSession?: boolean;
 }
 
 export interface PasswordLoginResult {

@@ -101,6 +101,17 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
         );
       }
 
+      if (auth.testSession) {
+        const allowed = this.isTestSessionAllowed(ctx.method, ctx.path);
+        if (!allowed) {
+          throw new AppError(
+            'TEST_SESSION_RESTRICTED',
+            '测试会话仅允许读取和发送测试消息',
+            403
+          );
+        }
+      }
+
       ctx.state.auth = auth;
 
       return next();
@@ -130,6 +141,16 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
         this.isProtectedRoute(route, ctx.method, routePath)
       )
     );
+  }
+
+  private isTestSessionAllowed(method: string, path: string): boolean {
+    if (['GET', 'HEAD'].includes(method)) return true;
+    if (method !== 'POST') return false;
+    const normalized = path.replace(/^\/+/, '').replace(/\/+$/, '');
+    // Allow signing ASR session and sending test messages in own conversations.
+    if (/^conversation\/[^/]+\/realtime-voice-session\/?$/.test(normalized)) return true;
+    if (/^conversation\/[^/]+\/messages\/?$/.test(normalized)) return true;
+    return false;
   }
 
   static getName(): string {
