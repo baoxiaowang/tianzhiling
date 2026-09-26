@@ -9,6 +9,7 @@ import {
   MongoObjectId,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
+import * as bullmq from '@midwayjs/bullmq';
 import { randomUUID } from 'crypto';
 import { TencentVrsVoiceService } from './tencent-vrs-voice.service';
 import { AdminStorageFileService } from './admin-storage-file.service';
@@ -48,6 +49,9 @@ export class AdminTencentVrsService {
 
   @Inject()
   ffmpegService: AdminFfmpegService;
+
+  @Inject()
+  bullmqFramework: bullmq.Framework;
 
   /**
    * 状态查询并发锁：避免多个管理员/多个前端标签页同时轮询同一个 timbre，
@@ -95,13 +99,14 @@ export class AdminTencentVrsService {
       );
     }
 
-    // 归一化为腾讯云要求的 wav/单声道/16k。
+    // 归一化为腾讯云要求的 wav/单声道/16k（与训练 SampleRate:16000 一致）。
     const normalized = await this.ffmpegService.extractAudioToWav({
       buffer: downloaded.buffer,
       fileName: downloaded.fileName || 'vrs-input.wav',
+      sampleRate: 16000,
     });
 
-    // ffmpeg 输出固定 24k，腾讯云检测接受 16k/24k/48k；这里直接用归一化后的 wav。
+    // 音频实际已被 ffmpeg 重采样到 16k，声明的 sampleRate 与真实采样率一致。
     const result = await this.tencentVrsVoiceService.detectSoundQuality({
       textId,
       audioBuffer: normalized.buffer,
@@ -187,16 +192,111 @@ export class AdminTencentVrsService {
     const id = this.parseTimbreObjectId(timbreId);
     const cacheKey = this.stringifyObjectId(id);
 
+    // 进程内快速路径：同进程并发轮询复用同一个 in-flight Promise。
     const existing = this.statusLocks.get(cacheKey);
     if (existing) {
       return existing;
     }
 
-    const task = this.refreshTrainStatusUnderLock(id, cacheKey).finally(() => {
+    const task = this.refreshWithDistributedLock(id, cacheKey).finally(() => {
       this.statusLocks.delete(cacheKey);
     });
     this.statusLocks.set(cacheKey, task);
     return task;
+  }
+
+  /**
+   * 跨进程分布式锁（Redis SET NX PX）。进程内 statusLocks 只能合并同进程并发，
+   * 多后台进程同时轮询同一 timbre 在训练刚成功时仍可能重复付费试听；这里用
+   * Redis 锁串行化跨进程临界区。锁内仍会重新拉取 timbre 并 double-check 是否已
+   * active / 已写过 previewAudioUrl，锁竞争失败的进程在等待后进入临界区会直接
+   * 读到 active 状态而跳过试听合成。
+   */
+  private async refreshWithDistributedLock(
+    id: MongoObjectId,
+    cacheKey: string
+  ) {
+    const lockKey = `lock:tencent-vrs:train-status:${cacheKey}`;
+    const ttlMs = 10000;
+    // 锁被占用时最多等待 5s，让持锁进程完成试听合成后再进入临界区重查。
+    const maxWaitMs = 5000;
+    const retryDelayMs = 200;
+
+    const token = await this.acquireLockWithRetry(lockKey, ttlMs, maxWaitMs, retryDelayMs);
+    try {
+      return await this.refreshTrainStatusUnderLock(id, cacheKey);
+    } finally {
+      if (token) {
+        await this.releaseLock(lockKey, token);
+      }
+    }
+  }
+
+  private async acquireLockWithRetry(
+    key: string,
+    ttlMs: number,
+    maxWaitMs: number,
+    retryDelayMs: number
+  ): Promise<string | null> {
+    const start = Date.now();
+    let token = await this.tryAcquireLock(key, ttlMs);
+    while (!token && Date.now() - start < maxWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      token = await this.tryAcquireLock(key, ttlMs);
+    }
+    return token;
+  }
+
+  private async tryAcquireLock(key: string, ttlMs: number): Promise<string | null> {
+    try {
+      const client = await this.getRedisClient();
+      const token = randomUUID();
+      // SET key token NX PX ttl：仅当 key 不存在时设置成功。
+      const result = await client.set(key, token, 'PX', ttlMs, 'NX');
+      return result === 'OK' ? token : null;
+    } catch (error) {
+      // Redis 不可用时降级：不阻塞主流程，依赖锁内 DB double-check 兜底。
+      this.logger?.warn?.(
+        '[tencent-vrs] distributed lock acquire failed, falling back to db double-check: %s',
+        error instanceof Error ? error.message : String(error)
+      );
+      return null;
+    }
+  }
+
+  private async releaseLock(key: string, token: string): Promise<void> {
+    try {
+      const client = await this.getRedisClient();
+      // 仅当 value 仍是自己持有的 token 时才 DEL，避免误删他人锁。
+      await client.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1,
+        key,
+        token
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[tencent-vrs] distributed lock release failed: %s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  /**
+   * 复用 BullMQ 框架的 Redis 连接获取底层 Redis 客户端（ioredis）。
+   * BullMQ 已在 defaultConnection 配置好 host/port/password/db。
+   */
+  private async getRedisClient(): Promise<{
+    set: (...args: unknown[]) => Promise<unknown>;
+    eval: (...args: unknown[]) => Promise<unknown>;
+  }> {
+    const queue = this.bullmqFramework?.getQueue('tencent-vrs-lock')
+      ?? this.bullmqFramework?.createQueue('tencent-vrs-lock');
+    const client = await (queue as { client: Promise<{
+      set: (...args: unknown[]) => Promise<unknown>;
+      eval: (...args: unknown[]) => Promise<unknown>;
+    }> }).client;
+    return client;
   }
 
   private async refreshTrainStatusUnderLock(
