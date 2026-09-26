@@ -18,8 +18,11 @@ import {
 } from '../dto/admin-app-user.dto';
 import { ListAdminPostsQueryDTO } from '../dto/admin-post.dto';
 import type { SendAdminAppUserMessengerMessageRequestDTO } from '@tzl/shared';
+import { AdminAuthenticatedPayload } from '@tzl/shared';
+import { Context } from '@midwayjs/koa';
 import { AdminAppUserService } from '../service/admin-app-user.service';
 import { AdminPostService } from '../service/admin-post.service';
+import { AdminAppPreviewGrantService } from '../service/admin-app-preview-grant.service';
 
 @Controller('/app-users')
 export class AdminAppUserController {
@@ -28,6 +31,20 @@ export class AdminAppUserController {
 
   @Inject()
   adminPostService: AdminPostService;
+
+  @Inject()
+  adminAppPreviewGrantService: AdminAppPreviewGrantService;
+
+  @Inject()
+  ctx: Context;
+
+  @Post('/:id/preview-grants')
+  async issuePreviewGrant(@Param('id') id: string) {
+    return this.adminAppPreviewGrantService.issue(
+      id,
+      this.ctx.state.adminAuth as AdminAuthenticatedPayload
+    );
+  }
 
   @Get('/')
   async list(@Query() query: ListAdminAppUsersQueryDTO) {

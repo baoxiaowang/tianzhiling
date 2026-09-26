@@ -93,6 +93,14 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
       const auth = this.verifyAccessToken(token);
       await this.ensureTokenIsActive(auth);
 
+      if (auth.previewReadOnly && !['GET', 'HEAD'].includes(ctx.method)) {
+        throw new AppError(
+          'PREVIEW_READ_ONLY',
+          '此预览会话只能查看数据',
+          403
+        );
+      }
+
       ctx.state.auth = auth;
 
       return next();

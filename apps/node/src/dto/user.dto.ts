@@ -47,6 +47,11 @@ export class DevLoginDTO {
   openid: string;
 }
 
+export class RedeemAppPreviewGrantDTO {
+  @Rule(requiredStringRule.pattern(/^[A-Z2-9]{12}$/))
+  code: string;
+}
+
 export class BindWeappPhoneDTO {
   @Rule(requiredStringRule.max(512))
   phoneCode: string;

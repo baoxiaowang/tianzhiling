@@ -1,4 +1,5 @@
 export * from "./agent-entitlement.entity";
+export * from "./app-preview-grant.entity";
 export * from "./agent-memory-fact.entity";
 export * from "./agent-profile-fact.entity";
 export * from "./agent-relationship-signal.entity";

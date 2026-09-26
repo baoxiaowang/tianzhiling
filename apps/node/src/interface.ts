@@ -31,6 +31,8 @@ export interface AuthenticatedUserPayload {
   iat: number;
   exp: number;
   nonce: string;
+  /** Restricted session issued after an admin approves an app preview device. */
+  previewReadOnly?: boolean;
 }
 
 export interface PasswordLoginResult {

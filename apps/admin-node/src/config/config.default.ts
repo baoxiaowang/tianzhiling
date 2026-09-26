@@ -12,6 +12,7 @@ import {
   AdminAccountEntity,
   AdminDailyStatsEntity,
   AdminUserEntity,
+  AppPreviewGrantEntity,
   AgentEntitlementEntity,
   AgentEntity,
   AgentMemoryFactEntity,
@@ -702,6 +703,7 @@ export default {
         logging: readBooleanFrom(['ADMIN_API_DB_LOGGING'], false),
         entities: [
           AdminAccountEntity,
+          AppPreviewGrantEntity,
           AdminDailyStatsEntity,
           AdminUserEntity,
           AgentEntitlementEntity,

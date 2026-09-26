@@ -7,6 +7,7 @@ import {
   DevLoginDTO,
   PasswordLoginDTO,
   PhoneLoginDTO,
+  RedeemAppPreviewGrantDTO,
   SendSmsCodeDTO,
   UpdateUserAvatarDTO,
   UpdateUserGenderDTO,
@@ -18,6 +19,7 @@ import {
 } from '../dto/user.dto';
 import { UserService } from '../service/user.service';
 import { AccountCancellationService } from '../service/account-cancellation.service';
+import { AppPreviewGrantService } from '../service/app-preview-grant.service';
 
 @Controller('/user')
 export class UserController {
@@ -26,6 +28,9 @@ export class UserController {
 
   @Inject()
   accountCancellationService: AccountCancellationService;
+
+  @Inject()
+  appPreviewGrantService: AppPreviewGrantService;
 
   @Inject()
   ctx: Context;
@@ -58,6 +63,11 @@ export class UserController {
   @Post('/dev-login')
   async devLogin(@Body() body: DevLoginDTO) {
     return this.userService.devLogin(body);
+  }
+
+  @Post('/preview-grants/redeem')
+  async redeemPreviewGrant(@Body() body: RedeemAppPreviewGrantDTO) {
+    return this.appPreviewGrantService.redeem(body.code, this.ctx.ip);
   }
 
   @Post('/me/weapp-phone')

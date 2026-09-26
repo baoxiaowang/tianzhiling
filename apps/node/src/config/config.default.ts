@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { isAbsolute, resolve } from 'path';
 import {
   AgentEntity,
+  AppPreviewGrantEntity,
   AgentEntitlementEntity,
   AgentMemoryFactEntity,
   AgentProfileFactEntity,
@@ -868,6 +869,7 @@ export default {
         logging: readBooleanFrom(['NODE_DB_LOGGING'], false),
         entities: [
           AgentEntity,
+          AppPreviewGrantEntity,
           AgentEntitlementEntity,
           AgentMemoryFactEntity,
           AgentProfileFactEntity,

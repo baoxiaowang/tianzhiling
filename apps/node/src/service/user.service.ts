@@ -615,6 +615,19 @@ export class UserService {
     return this.buildLoginResult(user, userAccount, false);
   }
 
+  /** Called only after a one-use admin device grant has been redeemed. */
+  async issueReadOnlyPreviewSession(userId: string): Promise<PasswordLoginResult> {
+    const objectId = this.parseObjectId(userId);
+    const user = await this.findUserById(objectId);
+    const account = await this.userAccountModel.findOne({
+      where: { userId: objectId, account: /^weapp:/ } as never,
+    });
+    if (!user || !account) {
+      throw new AppError('USER_NOT_FOUND', '预览账号不存在', 404);
+    }
+    return this.buildLoginResult(user, account, false, true);
+  }
+
   async bindCurrentUserWeappPhone(
     auth: AuthenticatedUserPayload,
     payload: BindWeappPhoneDTO
@@ -1017,22 +1030,25 @@ export class UserService {
   private async buildLoginResult(
     user: UserEntity,
     userAccount: UserAccountEntity,
-    isNewUser: boolean
+    isNewUser: boolean,
+    previewReadOnly = false
   ): Promise<PasswordLoginResult> {
     this.ensureUserAccountActive(user, userAccount);
     const profile = await this.buildUserProfile(user, userAccount.account);
     const issuedAt = Date.now();
-    const expiresAt = issuedAt + this.getTokenExpiresInSeconds() * 1000;
+    const lifetimeSeconds = previewReadOnly ? 30 * 60 : this.getTokenExpiresInSeconds();
+    const expiresAt = issuedAt + lifetimeSeconds * 1000;
     const accessToken = this.jwtService.signSync(
       {
         sub: profile.id,
         accountId: this.stringifyObjectId(userAccount.id),
         account: userAccount.account,
         nonce: randomBytes(8).toString('hex'),
+        ...(previewReadOnly ? { previewReadOnly: true } : {}),
       },
       this.getTokenSecret(),
       {
-        expiresIn: this.getTokenExpiresInSeconds(),
+        expiresIn: lifetimeSeconds,
       }
     );
 
