@@ -190,7 +190,33 @@
         </div>
       </template>
 
+      <div class="voice-model-panel__training-method">
+        <span>训练方式</span>
+        <a-radio-group v-model="trainingMethod" type="button">
+          <a-radio value="standard">常规声音训练</a-radio>
+          <a-radio value="tencent-vrs">腾讯云声音复刻（一句话版）</a-radio>
+        </a-radio-group>
+      </div>
+
+      <div
+        v-if="trainingMethod === 'tencent-vrs'"
+        class="voice-model-panel__vrs-entry"
+      >
+        <a-alert type="info" show-icon>
+          腾讯云复刻需要先获取指定文案，再按文案录制 5～15
+          秒音频。当前上传任意素材的训练步骤不适用于此模型。
+        </a-alert>
+        <a-button
+          type="primary"
+          :disabled="!props.userId"
+          @click="openTencentVrsWizard"
+        >
+          为当前用户开始腾讯云复刻
+        </a-button>
+      </div>
+
       <a-steps
+        v-show="trainingMethod === 'standard'"
         :current="step + 1"
         type="arrow"
         changeable
@@ -212,7 +238,10 @@
       </a-steps>
 
       <!-- Step 1 上传声音素材 -->
-      <div v-show="step === 0" class="voice-model-panel__step">
+      <div
+        v-show="trainingMethod === 'standard' && step === 0"
+        class="voice-model-panel__step"
+      >
         <div class="voice-model-panel__upload">
           <input
             ref="fileInputRef"
@@ -272,7 +301,10 @@
       </div>
 
       <!-- Step 2 选择训练片段 -->
-      <div v-show="step === 1" class="voice-model-panel__step">
+      <div
+        v-show="trainingMethod === 'standard' && step === 1"
+        class="voice-model-panel__step"
+      >
         <div class="voice-model-panel__step-head">
           <a-typography-text>
             已剪出 {{ voiceClips.length }} 段片段，请逐段确认是否用于训练
@@ -388,7 +420,10 @@
       </div>
 
       <!-- Step 3 提交训练 -->
-      <div v-show="step === 2" class="voice-model-panel__step">
+      <div
+        v-show="trainingMethod === 'standard' && step === 2"
+        class="voice-model-panel__step"
+      >
         <a-form ref="trainFormRef" :model="form" layout="vertical">
           <a-grid :cols="2" :col-gap="16" :row-gap="4">
             <a-grid-item :span="{ xs: 24, md: 12 }">
@@ -617,7 +652,10 @@
       </div>
 
       <!-- 第三步确认信息 -->
-      <div v-show="step === 2" class="voice-model-panel__step">
+      <div
+        v-show="trainingMethod === 'standard' && step === 2"
+        class="voice-model-panel__step"
+      >
         <a-alert type="info" show-icon class="voice-model-panel__confirm-alert">
           <template #title>
             即将为该用户创建音色并提交训练，请确认以下信息
@@ -668,7 +706,10 @@
       </div>
 
       <!-- 步骤导航 -->
-      <div v-if="step < 3" class="voice-model-panel__nav">
+      <div
+        v-if="trainingMethod === 'standard' && step < 3"
+        class="voice-model-panel__nav"
+      >
         <a-button v-if="step > 0" @click="step -= 1">上一步</a-button>
         <div class="voice-model-panel__nav-spacer" />
         <a-button
@@ -772,6 +813,7 @@
 
 <script lang="ts" setup>
   import { computed, reactive, ref, watch } from 'vue';
+  import { useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import uploadAdminFile from '@/api/storage';
@@ -929,6 +971,16 @@
       embedded: false,
     }
   );
+
+  const router = useRouter();
+  const trainingMethod = ref<'standard' | 'tencent-vrs'>('standard');
+  const openTencentVrsWizard = () => {
+    if (!props.userId) return;
+    router.push({
+      name: 'VoiceTimbreList',
+      query: { section: 'tencent-vrs', userId: props.userId },
+    });
+  };
 
   const renderList = ref<VoiceTimbreRecord[]>([]);
   const loading = ref(false);
@@ -1991,6 +2043,22 @@
       :deep(.arco-card-body) {
         padding-top: 8px;
       }
+    }
+
+    &__training-method {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    &__vrs-entry {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 16px;
+      padding-bottom: 12px;
     }
 
     &__steps {

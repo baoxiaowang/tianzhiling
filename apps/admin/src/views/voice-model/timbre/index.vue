@@ -1043,7 +1043,8 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref } from 'vue';
+  import { computed, reactive, ref, watch } from 'vue';
+  import { useRoute } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type { FormInstance } from '@arco-design/web-vue/es/form';
@@ -1078,18 +1079,28 @@
     type TencentVrsTrainStatusRes,
   } from '@/api/tencent-vrs';
 
+  const route = useRoute();
   const { loading, setLoading } = useLoading();
   const activeSection = ref<'timbres' | 'doubao-slots' | 'tencent-vrs'>(
-    'timbres'
+    route.query.section === 'tencent-vrs' ? 'tencent-vrs' : 'timbres'
   );
 
   // ===== 腾讯云声音复刻（一句话版）工作台状态 =====
   const vrsForm = reactive({
-    userId: '',
+    userId: typeof route.query.userId === 'string' ? route.query.userId : '',
     voiceName: '',
     voiceGender: 2 as number,
     audioKey: '',
   });
+  watch(
+    () => [route.query.section, route.query.userId],
+    ([section, userId]) => {
+      if (section === 'tencent-vrs') {
+        activeSection.value = 'tencent-vrs';
+        vrsForm.userId = typeof userId === 'string' ? userId : '';
+      }
+    }
+  );
   const vrsLoading = reactive({
     text: false,
     upload: false,
