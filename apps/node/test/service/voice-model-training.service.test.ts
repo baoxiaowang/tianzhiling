@@ -278,4 +278,130 @@ describe('VoiceModelTrainingService', () => {
       })
     );
   });
+
+  it('startTencentVrsTraining: 音质检测通过后创建腾讯复刻任务并记录音色', async () => {
+    const service = new VoiceModelTrainingService();
+    service.logger = { info: jest.fn(), error: jest.fn() } as never;
+    let savedTimbre: VoiceTimbreEntity | undefined;
+    service.voiceTimbreModel = {
+      create: jest.fn((input: Partial<VoiceTimbreEntity>) =>
+        Object.assign(new VoiceTimbreEntity(), input)
+      ),
+      save: jest.fn(async (timbre: VoiceTimbreEntity) => {
+        timbre.id ||= new MongoObjectId(TIMBRE_ID);
+        savedTimbre = timbre;
+        return timbre;
+      }),
+      findOne: jest.fn().mockResolvedValue(null),
+    } as never;
+    service.tencentCosService = {
+      putBuffer: jest.fn().mockResolvedValue({
+        objectKey: 'voice-training-materials/vrs-recording.wav',
+        url: 'https://example.com/recording.wav',
+      }),
+    } as never;
+    jest
+      .spyOn(service as never, 'normalizeTencentVrsWav' as never)
+      .mockResolvedValue(Buffer.from('normalized-wav') as never);
+    service.tencentVrsVoiceService = {
+      getSingleSentenceVoiceType: jest.fn().mockReturnValue('200000000'),
+      detectSoundQuality: jest.fn().mockResolvedValue({
+        audioId: 'AUD-1',
+        detectionCode: 0,
+        detectionMsg: '通过',
+        detectionTip: [],
+      }),
+      createVrsTask: jest.fn().mockResolvedValue({ taskId: 'TASK-1' }),
+    } as never;
+
+    const result = await service.startTencentVrsTraining({
+      userId: '665000000000000000000303',
+      audioBuffer: Buffer.from('recording'),
+      textId: 'TID-1',
+      voiceGender: 2,
+    });
+
+    expect(service.tencentVrsVoiceService.detectSoundQuality).toHaveBeenCalledWith(
+      expect.objectContaining({ textId: 'TID-1', codec: 'wav' })
+    );
+    expect(service.tencentVrsVoiceService.createVrsTask).toHaveBeenCalledWith(
+      expect.objectContaining({ audioId: 'AUD-1', voiceGender: 2 })
+    );
+    expect(result).toEqual({ timbreId: TIMBRE_ID, taskId: 'TASK-1' });
+    expect(savedTimbre).toEqual(
+      expect.objectContaining({
+        provider: 'tencent_vrs',
+        providerTaskId: 'TASK-1',
+        providerVoiceType: '200000000',
+        status: VoiceTimbreStatus.creating,
+        previewText: '最近过得好吗？有没有好好吃饭，好好睡觉？',
+      })
+    );
+  });
+
+  it('startTencentVrsTraining: 音质检测失败时抛错且不落库音色', async () => {
+    const service = new VoiceModelTrainingService();
+    service.logger = { info: jest.fn(), error: jest.fn() } as never;
+    const saveMock = jest.fn();
+    service.voiceTimbreModel = {
+      create: jest.fn((input: Partial<VoiceTimbreEntity>) =>
+        Object.assign(new VoiceTimbreEntity(), input)
+      ),
+      save: saveMock,
+    } as never;
+    service.tencentCosService = {
+      putBuffer: jest.fn(),
+    } as never;
+    jest
+      .spyOn(service as never, 'normalizeTencentVrsWav' as never)
+      .mockResolvedValue(Buffer.from('normalized-wav') as never);
+    service.tencentVrsVoiceService = {
+      getSingleSentenceVoiceType: jest.fn().mockReturnValue('200000000'),
+      detectSoundQuality: jest.fn().mockRejectedValue(
+        new AppError(
+          'TENCENT_VRS_DETECTION_FAILED',
+          '录音与指定文本不一致',
+          422
+        )
+      ),
+    } as never;
+
+    await expect(
+      service.startTencentVrsTraining({
+        userId: '665000000000000000000303',
+        audioBuffer: Buffer.from('recording'),
+        textId: 'TID-1',
+      })
+    ).rejects.toMatchObject({ code: 'TENCENT_VRS_DETECTION_FAILED' });
+    // 检测失败不应创建任何持久化音色记录
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
+  });
+
+  it('pollTencentVrsTraining: 不查询或合成其他用户的音色', async () => {
+    const service = new VoiceModelTrainingService();
+    service.voiceTimbreModel = {
+      findOne: jest.fn().mockResolvedValue(
+        Object.assign(new VoiceTimbreEntity(), {
+          id: new MongoObjectId(TIMBRE_ID),
+          userId: new MongoObjectId('665000000000000000000303'),
+          provider: 'tencent_vrs',
+          providerTaskId: 'TASK-1',
+          status: VoiceTimbreStatus.creating,
+        })
+      ),
+    } as never;
+    service.tencentVrsVoiceService = {
+      describeVrsTaskStatus: jest.fn(),
+      synthesize: jest.fn(),
+    } as never;
+
+    const result = await service.pollTencentVrsTraining(
+      TIMBRE_ID,
+      '665000000000000000000304'
+    );
+    expect(result).toBeNull();
+    expect(service.tencentVrsVoiceService.describeVrsTaskStatus).not.toHaveBeenCalled();
+    expect(service.tencentVrsVoiceService.synthesize).not.toHaveBeenCalled();
+  });
 });

@@ -23,6 +23,7 @@
         >
           <a-radio value="timbres">音色</a-radio>
           <a-radio value="doubao-slots">豆包槽位</a-radio>
+          <a-radio value="tencent-vrs">腾讯云声音复刻（一句话版）</a-radio>
         </a-radio-group>
       </div>
 
@@ -51,6 +52,7 @@
             <a-option value="cosyvoice">CosyVoice</a-option>
             <a-option value="qwen">千问</a-option>
             <a-option value="doubao">豆包</a-option>
+            <a-option value="tencent_vrs">腾讯云声音复刻</a-option>
           </a-select>
         </a-form-item>
         <a-form-item field="status" label="状态">
@@ -463,6 +465,167 @@
 
         <div class="voice-timbre-page__slot-sync">
           最近同步：{{ formatDate(doubaoSlotSummary.syncedAt) }}
+        </div>
+      </div>
+
+      <!-- 腾讯云声音复刻（一句话版）工作台 -->
+      <div v-show="activeSection === 'tencent-vrs'" class="tencent-vrs-wizard">
+        <a-alert type="warning" style="margin-bottom: 16px">
+          必须使用接口返回的指定文案录音，不能上传历史录音合并冒充；
+          腾讯云无删除音色接口，删除本地音色后云端音色需人工处理，可能产生存储费用。
+        </a-alert>
+
+        <a-steps :current="vrsStep" style="margin-bottom: 20px">
+          <a-step title="选择性别" />
+          <a-step title="获取文案" />
+          <a-step title="上传录音" />
+          <a-step title="音质检测" />
+          <a-step title="创建训练" />
+          <a-step title="训练结果 / 试听" />
+        </a-steps>
+
+        <a-form :model="vrsForm" layout="vertical" style="max-width: 720px">
+          <a-form-item label="音色归属用户 ID（Mongo ObjectId）" required>
+            <a-input
+              v-model="vrsUserId"
+              placeholder="必填：该音色绑定到哪个用户"
+            />
+          </a-form-item>
+          <a-form-item label="音色名称" required>
+            <a-input
+              v-model="vrsForm.voiceName"
+              placeholder="例如：爸爸的声音"
+            />
+          </a-form-item>
+          <a-form-item label="性别" required>
+            <a-radio-group v-model="vrsForm.voiceGender">
+              <a-radio :value="1">男（VoiceGender=1）</a-radio>
+              <a-radio :value="2">女（VoiceGender=2）</a-radio>
+            </a-radio-group>
+          </a-form-item>
+
+          <a-form-item label="训练文案">
+            <a-space style="width: 100%; justify-content: space-between">
+              <a-button
+                :loading="vrsLoading.text"
+                @click="fetchVrsTrainingText"
+              >
+                获取指定文案
+              </a-button>
+              <span
+                v-if="vrsTrainingText"
+                style="color: #86909c; font-size: 12px"
+              >
+                TextId: {{ vrsTrainingText.textId }}
+              </span>
+            </a-space>
+            <a-alert
+              v-if="vrsTrainingText"
+              type="info"
+              style="margin-top: 12px; white-space: pre-wrap"
+              >{{ vrsTrainingText.text }}</a-alert
+            >
+            <ul
+              v-if="vrsTrainingText"
+              style="margin-top: 8px; color: #86909c; font-size: 12px"
+            >
+              <li v-for="(req, i) in vrsTrainingText.requirements" :key="i">{{
+                req
+              }}</li>
+            </ul>
+          </a-form-item>
+
+          <a-form-item label="上传录音（先上传到 COS）">
+            <a-upload
+              :show-file-list="false"
+              :before-upload="handleVrsBeforeUpload"
+              :disabled="!vrsTrainingText || vrsLoading.text"
+              accept=".wav,.mp3,.aac,.m4a"
+            >
+              <template #upload-button>
+                <a-button
+                  :loading="vrsLoading.upload"
+                  :disabled="!vrsTrainingText || vrsLoading.text"
+                >
+                  选择录音文件（≤2MB）
+                </a-button>
+              </template>
+            </a-upload>
+            <span
+              v-if="vrsForm.audioKey"
+              style="margin-left: 12px; color: #00b42a"
+            >
+              已上传：{{ vrsForm.audioKey }}
+            </span>
+          </a-form-item>
+
+          <a-form-item>
+            <a-space>
+              <a-button
+                type="primary"
+                :loading="vrsLoading.detect"
+                :disabled="!vrsForm.audioKey || !vrsTrainingText"
+                @click="runVrsDetect"
+                >音质检测</a-button
+              >
+              <a-button
+                type="primary"
+                status="success"
+                :loading="vrsLoading.train"
+                :disabled="!vrsDetectedAudioId || !!vrsResult.timbreId"
+                @click="runVrsTrain"
+                >创建训练任务</a-button
+              >
+              <a-button
+                :loading="vrsLoading.status"
+                :disabled="!vrsResult.timbreId"
+                @click="pollVrsStatus"
+                >刷新训练状态</a-button
+              >
+            </a-space>
+          </a-form-item>
+        </a-form>
+
+        <a-alert
+          v-if="vrsDetectError"
+          type="error"
+          style="margin-top: 8px; white-space: pre-wrap"
+          >音质检测未通过：{{ vrsDetectError }}</a-alert
+        >
+        <a-alert v-if="vrsQuotaError" type="error" style="margin-top: 8px"
+          >腾讯云声音复刻额度不足或未开通，请先在腾讯云控制台开通。</a-alert
+        >
+
+        <a-descriptions
+          v-if="vrsResult.timbreId"
+          :column="1"
+          style="margin-top: 16px"
+          bordered
+        >
+          <a-descriptions-item label="任务 ID">{{
+            vrsResult.providerTaskId
+          }}</a-descriptions-item>
+          <a-descriptions-item label="训练状态">
+            <a-tag :status="vrsStatusTag">{{
+              vrsResult.phase || vrsResult.status
+            }}</a-tag>
+          </a-descriptions-item>
+          <a-descriptions-item v-if="vrsResult.errorMessage" label="失败原因">
+            {{ vrsResult.errorMessage }}
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <div v-if="vrsResult.phase === 'success'" style="margin-top: 16px">
+          <a-alert type="success">训练成功，可试听。</a-alert>
+          <div v-if="vrsAuditionUrl" style="margin-top: 12px">
+            <audio :src="vrsAuditionUrl" controls style="width: 100%" />
+          </div>
+          <a-button
+            style="margin-top: 12px"
+            :loading="vrsLoading.audition"
+            @click="runVrsAudition"
+            >播放试听</a-button
+          >
         </div>
       </div>
     </a-card>
@@ -886,7 +1049,8 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref } from 'vue';
+  import { computed, reactive, ref, watch } from 'vue';
+  import { useRoute } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type { FormInstance } from '@arco-design/web-vue/es/form';
@@ -911,9 +1075,48 @@
     VoiceTimbreRecord,
   } from '@/api/voice-model';
   import type { ValidateVoiceTimbreRes } from '@/api/voice-model';
+  import useTencentVrsWizard from '@/hooks/use-tencent-vrs-wizard';
 
+  const route = useRoute();
   const { loading, setLoading } = useLoading();
-  const activeSection = ref<'timbres' | 'doubao-slots'>('timbres');
+  const activeSection = ref<'timbres' | 'doubao-slots' | 'tencent-vrs'>(
+    route.query.section === 'tencent-vrs' ? 'tencent-vrs' : 'timbres'
+  );
+
+  // ===== 腾讯云声音复刻（一句话版）工作台：复用共享 composable =====
+  // userId 仍从 route.query.userId 读取（兼容从用户详情/旧链接带 query 进入），
+  // 管理员可在表单中手动修改归属用户。
+  const vrsUserId = ref(
+    typeof route.query.userId === 'string' ? route.query.userId : ''
+  );
+  watch(
+    () => [route.query.section, route.query.userId],
+    ([section, userId]) => {
+      if (section === 'tencent-vrs') {
+        activeSection.value = 'tencent-vrs';
+        vrsWizard.reset();
+        vrsUserId.value = typeof userId === 'string' ? userId : '';
+      }
+    }
+  );
+  const vrsWizard = useTencentVrsWizard(vrsUserId);
+  const vrsForm = vrsWizard.form;
+  const vrsLoading = vrsWizard.loading;
+  const vrsTrainingText = vrsWizard.trainingText;
+  const vrsDetectedAudioId = vrsWizard.detectedAudioId;
+  const vrsDetectError = vrsWizard.detectError;
+  const vrsQuotaError = vrsWizard.quotaError;
+  const vrsResult = vrsWizard.result;
+  const vrsAuditionUrl = vrsWizard.auditionUrl;
+  const vrsStep = vrsWizard.step;
+  const vrsStatusTag = vrsWizard.statusTag;
+  const fetchVrsTrainingText = vrsWizard.fetchTrainingText;
+  const handleVrsBeforeUpload = vrsWizard.handleBeforeUpload;
+  const runVrsDetect = vrsWizard.runDetect;
+  const runVrsTrain = vrsWizard.runTrain;
+  const pollVrsStatus = vrsWizard.pollStatus;
+  const runVrsAudition = vrsWizard.runAudition;
+
   const renderList = ref<VoiceTimbreRecord[]>([]);
   const doubaoSlots = ref<AdminDoubaoVoiceSlotDTO[]>([]);
   const doubaoSlotsLoading = ref(false);
@@ -1813,6 +2016,7 @@
       cosyvoice: 'CosyVoice',
       qwen: '千问',
       doubao: '豆包',
+      tencent_vrs: '腾讯云声音复刻（一句话版）',
     };
 
     return map[provider] || provider;

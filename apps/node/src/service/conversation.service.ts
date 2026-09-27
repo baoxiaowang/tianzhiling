@@ -161,6 +161,7 @@ import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { DoubaoVoiceSpeechService } from './doubao-voice-speech.service';
+import { TencentVrsVoiceService } from './tencent-vrs-voice.service';
 import { VoiceTimbreLibraryService } from './voice-timbre-library.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
 import { BailianImageService } from './bailian-image.service';
@@ -841,6 +842,9 @@ export class ConversationService {
 
   @Inject()
   doubaoVoiceSpeechService: DoubaoVoiceSpeechService;
+
+  @Inject()
+  tencentVrsVoiceService: TencentVrsVoiceService;
 
   @Inject()
   voiceTimbreLibraryService: VoiceTimbreLibraryService;
@@ -10210,11 +10214,59 @@ export class ConversationService {
       };
     }
 
+    if (input.voiceTimbre.provider === VoiceTimbreProvider.tencent_vrs) {
+      const synthesized = await this.tencentVrsVoiceService.synthesize({
+        text: input.text,
+        fastVoiceType: input.voiceTimbre.providerVoiceId,
+        speed: this.voiceSpeechSpeedToTencent(input.voiceTimbre.speechSpeed),
+        volume: this.voiceSpeechVolumeToTencent(input.voiceTimbre.speechVolume),
+      });
+      return {
+        audioUrl: '',
+        audioBuffer: synthesized.audioBuffer,
+        mimeType: synthesized.mimeType,
+      };
+    }
+
     throw new AppError(
       'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
       'voice timbre provider is not supported for speech synthesis',
       400
     );
+  }
+
+  /** 语速倍率（0.5~2.0）映射为腾讯云 Speed（-2~6），按官方档位分段线性插值。 */
+  private voiceSpeechSpeedToTencent(multiplier: unknown): number {
+    const speed = this.voiceSpeechSetting(multiplier, 1, 0.5, 2);
+    const points: Array<[number, number]> = [
+      [0.6, -2],
+      [0.8, -1],
+      [1.0, 0],
+      [1.2, 1],
+      [1.5, 2],
+      [2.5, 6],
+    ];
+    if (speed <= points[0][0]) {
+      return points[0][1];
+    }
+    if (speed >= points[points.length - 1][0]) {
+      return points[points.length - 1][1];
+    }
+    for (let i = 1; i < points.length; i += 1) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
+      if (speed <= x1) {
+        return Math.round((y0 + ((speed - x0) / (x1 - x0)) * (y1 - y0)) * 100) / 100;
+      }
+    }
+    return 0;
+  }
+
+  /** 音量倍率（0.25~2.0）映射为腾讯云 Volume（-10~10 dB）。 */
+  private voiceSpeechVolumeToTencent(multiplier: unknown): number {
+    const volume = this.voiceSpeechSetting(multiplier, 1, 0.25, 2);
+    const db = 20 * Math.log10(volume);
+    return Math.round(Math.max(-10, Math.min(10, db)) * 100) / 100;
   }
 
   private voiceSpeechSetting(

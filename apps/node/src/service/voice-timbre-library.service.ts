@@ -40,6 +40,7 @@ import { DoubaoVoiceSpeechService } from './doubao-voice-speech.service';
 import { QwenVoiceEnrollmentService } from './qwen-voice-enrollment.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { TencentCosService } from './tencent-cos.service';
+import { TencentVrsVoiceService } from './tencent-vrs-voice.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
 import { VoiceServiceDataDeletionService } from './voice-service-data-deletion.service';
 import {
@@ -114,6 +115,9 @@ export class VoiceTimbreLibraryService {
 
   @Inject()
   tencentCosService: TencentCosService;
+
+  @Inject()
+  tencentVrsVoiceService: TencentVrsVoiceService;
 
   @Inject()
   redisService: RedisService;
@@ -328,10 +332,12 @@ export class VoiceTimbreLibraryService {
     }
     const isCosyVoiceV35Plus = this.isCosyVoiceV35PlusTimbre(timbre);
     const isDoubaoIcl2 = timbre.provider === VoiceTimbreProvider.doubao;
+    const isTencentVrs = timbre.provider === VoiceTimbreProvider.tencent_vrs;
     if (
       timbre.provider !== VoiceTimbreProvider.qwen &&
       !isCosyVoiceV35Plus &&
-      !isDoubaoIcl2
+      !isDoubaoIcl2 &&
+      !isTencentVrs
     ) {
       throw new AppError(
         'VOICE_TIMBRE_CUSTOM_SPEECH_UNSUPPORTED',
@@ -368,6 +374,13 @@ export class VoiceTimbreLibraryService {
             speed: timbre.speechSpeed,
             volume: timbre.speechVolume,
           })
+        : isTencentVrs
+        ? await this.tencentVrsVoiceService.synthesize({
+            text,
+            fastVoiceType: timbre.providerVoiceId,
+            speed: this.tencentSpeedFromMultiplier(timbre.speechSpeed),
+            volume: this.tencentVolumeFromMultiplier(timbre.speechVolume),
+          })
         : await this.qwenVoiceSpeechService.synthesize({
             text,
             voiceId: timbre.providerVoiceId,
@@ -391,6 +404,7 @@ export class VoiceTimbreLibraryService {
       );
       const outputSpeed =
         isCosyVoiceV35Plus ||
+        isTencentVrs ||
         Boolean(
           (synthesized as { nativeSpeechSpeedApplied?: boolean })
             .nativeSpeechSpeedApplied
@@ -399,6 +413,7 @@ export class VoiceTimbreLibraryService {
           : speed;
       const outputVolume =
         isCosyVoiceV35Plus ||
+        isTencentVrs ||
         Boolean(
           (synthesized as { nativeSpeechVolumeApplied?: boolean })
             .nativeSpeechVolumeApplied
@@ -952,7 +967,10 @@ export class VoiceTimbreLibraryService {
 
     return {
       ...record,
-      providerName: '阿里云百炼（千问）',
+      providerName:
+        timbre.provider === VoiceTimbreProvider.tencent_vrs
+          ? '腾讯云声音复刻（一句话版）'
+          : '阿里云百炼（千问）',
       voiceAccessEligible,
       trainingAudioUrl:
         timbre.audioUrl ||
@@ -1615,5 +1633,45 @@ export class VoiceTimbreLibraryService {
       return 'ogg';
     }
     return 'wav';
+  }
+
+  /**
+   * 把语速倍率（0.5~2.0）映射为腾讯云基础合成的 Speed 参数（-2~6）。
+   * 依据腾讯云文档的离散档位做分段线性插值。
+   */
+  private tencentSpeedFromMultiplier(multiplier: number): number {
+    const speed = this.normalizeSpeechSpeed(multiplier);
+    const points: Array<[number, number]> = [
+      [0.6, -2],
+      [0.8, -1],
+      [1.0, 0],
+      [1.2, 1],
+      [1.5, 2],
+      [2.5, 6],
+    ];
+    if (speed <= points[0][0]) {
+      return points[0][1];
+    }
+    if (speed >= points[points.length - 1][0]) {
+      return points[points.length - 1][1];
+    }
+    for (let i = 1; i < points.length; i += 1) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
+      if (speed <= x1) {
+        const ratio = (speed - x0) / (x1 - x0);
+        return Math.round((y0 + ratio * (y1 - y0)) * 100) / 100;
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * 把音量倍率（0.25~2.0）映射为腾讯云基础合成的 Volume 参数（-10~10，单位 dB）。
+   */
+  private tencentVolumeFromMultiplier(multiplier: number): number {
+    const volume = this.normalizeSpeechVolume(multiplier);
+    const db = 20 * Math.log10(volume);
+    return Math.round(Math.max(-10, Math.min(10, db)) * 100) / 100;
   }
 }

@@ -28,11 +28,14 @@ export class AdminFfmpegService {
   async extractAudioToWav(input: {
     buffer: Buffer;
     fileName: string;
+    /** 输出采样率，默认 24000（保持历史路径行为）。VRS 等需要 16k 的场景显式传 16000。 */
+    sampleRate?: number;
   }): Promise<ExtractedAudioFile> {
     if (!Buffer.isBuffer(input.buffer) || input.buffer.length === 0) {
       throw new AppError('FFMPEG_INVALID_INPUT', 'media file is required', 400);
     }
 
+    const sampleRate = this.normalizeSampleRate(input.sampleRate, 24000);
     const chunks: Buffer[] = [];
     const errorChunks: Buffer[] = [];
     const ffmpeg = spawn(this.binaryPath, [
@@ -45,7 +48,7 @@ export class AdminFfmpegService {
       '-acodec',
       'pcm_s16le',
       '-ar',
-      '24000',
+      String(sampleRate),
       '-ac',
       '1',
       '-f',
@@ -372,6 +375,14 @@ export class AdminFfmpegService {
         .replace(/[^a-zA-Z0-9._-]/g, '_') || 'voice';
 
     return `${base || 'voice'}.wav`;
+  }
+
+  private normalizeSampleRate(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+    return fallback;
   }
 
   private numberInRange(

@@ -139,6 +139,12 @@ function createService() {
       openApiSyncSucceeded: false,
     }),
   } as any;
+  service.tencentVrsVoiceService = {
+    deleteVoice: jest.fn().mockResolvedValue({
+      supported: false,
+      reason: '腾讯云无删除接口，需人工处理',
+    }),
+  } as any;
   service.bullmqFramework = {
     getQueue: jest.fn(name =>
       name === VOICE_TIMBRE_CREATE_QUEUE ? queue : undefined
@@ -1247,5 +1253,36 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     ).rejects.toMatchObject({
       code: 'INVALID_USER_ID',
     });
+  });
+});
+
+describe('AdminVoiceTimbreService tencent_vrs support', () => {
+  it('accepts tencent_vrs as a valid provider for list/detail filtering', () => {
+    const { service } = createService();
+    // normalizeProvider is private; exercise it indirectly via the search where builder.
+    const where = (service as any).buildSearchWhere({
+      provider: 'tencent_vrs',
+    });
+    expect(where.provider).toBe('tencent_vrs');
+  });
+
+  it('deleteProviderVoice calls tencent deleteVoice (unsupported) and does not push a failure', async () => {
+    const { service } = createService();
+    const timbre = {
+      id: '65f1a2b3c4d5e6f7a8b9c0d1',
+      provider: 'tencent_vrs',
+      providerVoiceId: 'fast-voice-xyz',
+      providerFileId: '',
+    } as any;
+    const failures: string[] = [];
+
+    await (service as any).deleteProviderVoice(timbre, failures, false);
+
+    expect(service.tencentVrsVoiceService.deleteVoice).toHaveBeenCalledWith({
+      fastVoiceType: 'fast-voice-xyz',
+    });
+    // 腾讯云无删除接口：本地删除流程不应把它当成失败，只记录人工处理日志。
+    expect(failures).toEqual([]);
+    expect(timbre.providerDeletedAt).toBeInstanceOf(Date);
   });
 });
