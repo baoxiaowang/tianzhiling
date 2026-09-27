@@ -6,7 +6,6 @@ export enum VoiceTimbreProvider {
   cosyvoice = "cosyvoice",
   qwen = "qwen",
   doubao = "doubao",
-  tencent_vrs = "tencent_vrs",
 }
 
 export enum VoiceTimbreStatus {
@@ -55,19 +54,6 @@ export class VoiceTimbreEntity extends BaseEntity {
 
   @Column()
   providerFileId?: string;
-
-  /**
-   * 腾讯云声音复刻（一句话版）专用：复刻训练任务 TaskId。
-   * 用于 CreateVRSTask 之后 DescribeVRSTaskStatus 轮询。
-   */
-  @Column()
-  providerTaskId?: string;
-
-  /**
-   * 腾讯云声音复刻（一句话版）专用：合成音色固定 VoiceType，取值 "200000000"。
-   */
-  @Column()
-  providerVoiceType?: string;
 
   @Column()
   voiceServiceSessionId?: MongoObjectId;

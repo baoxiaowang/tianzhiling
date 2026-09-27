@@ -5,8 +5,7 @@ const providerRule = RuleType.string().valid(
   'minimax',
   'cosyvoice',
   'qwen',
-  'doubao',
-  'tencent_vrs'
+  'doubao'
 );
 const statusRule = RuleType.string().valid(
   'creating',

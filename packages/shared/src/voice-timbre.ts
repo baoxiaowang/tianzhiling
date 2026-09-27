@@ -2,8 +2,7 @@ export type VoiceTimbreProviderDTO =
   | "minimax"
   | "cosyvoice"
   | "qwen"
-  | "doubao"
-  | "tencent_vrs";
+  | "doubao";
 
 export type VoiceTimbreStatusDTO =
   | "creating"

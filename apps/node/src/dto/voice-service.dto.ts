@@ -72,8 +72,3 @@ export class GenerateUserVoiceTimbreSpeechBodyDTO
 {
   text: string;
 }
-
-export class StartTencentVrsTrainingBodyDTO {
-  textId: string;
-  voiceGender: '1' | '2';
-}
