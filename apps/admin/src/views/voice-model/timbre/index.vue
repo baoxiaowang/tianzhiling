@@ -539,11 +539,17 @@
             <a-upload
               :show-file-list="false"
               :before-upload="handleVrsBeforeUpload"
+              :disabled="!vrsTrainingText || vrsLoading.text"
               accept=".wav,.mp3,.aac,.m4a"
             >
-              <a-button :loading="vrsLoading.upload">
-                选择录音文件（≤2MB）
-              </a-button>
+              <template #upload-button>
+                <a-button
+                  :loading="vrsLoading.upload"
+                  :disabled="!vrsTrainingText || vrsLoading.text"
+                >
+                  选择录音文件（≤2MB）
+                </a-button>
+              </template>
             </a-upload>
             <span
               v-if="vrsForm.audioKey"

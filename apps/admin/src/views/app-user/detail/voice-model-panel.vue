@@ -342,14 +342,17 @@
           <a-upload
             :show-file-list="false"
             :before-upload="vrsWizard.handleBeforeUpload"
+            :disabled="!vrsTrainingText || vrsLoading.text"
             accept=".wav,.mp3,.aac,.m4a"
           >
-            <a-button
-              :loading="vrsLoading.upload"
-              :disabled="!vrsTrainingText || vrsLoading.text"
-            >
-              选择按稿录制的录音（≤2MB，5～15 秒）
-            </a-button>
+            <template #upload-button>
+              <a-button
+                :loading="vrsLoading.upload"
+                :disabled="!vrsTrainingText || vrsLoading.text"
+              >
+                选择按稿录制的录音（≤2MB，5～15 秒）
+              </a-button>
+            </template>
           </a-upload>
           <span
             v-if="vrsForm.audioKey"
@@ -1175,12 +1178,21 @@
   const renderList = ref<VoiceTimbreRecord[]>([]);
   const loading = ref(false);
   // 顶部导航步骤项：工作流与导航进度一一对应
-  const stepItems = [
-    { title: '上传声音素材', desc: '保存并管理原始素材' },
-    { title: '选择声音片段', desc: '试听、返工并确认片段' },
-    { title: '提交训练', desc: '填写模型与训练参数' },
-    { title: '音色管理', desc: '试听、删除与绑定智能体' },
-  ];
+  const stepItems = computed(() =>
+    trainingMethod.value === 'tencent-vrs'
+      ? [
+          { title: '上传声音素材', desc: '获取文案并上传按稿录音' },
+          { title: '选择声音片段', desc: '试听并通过音质检测' },
+          { title: '提交训练', desc: '创建任务并查看状态' },
+          { title: '音色管理', desc: '试听、删除与绑定智能体' },
+        ]
+      : [
+          { title: '上传声音素材', desc: '保存并管理原始素材' },
+          { title: '选择声音片段', desc: '试听、返工并确认片段' },
+          { title: '提交训练', desc: '填写模型与训练参数' },
+          { title: '音色管理', desc: '试听、删除与绑定智能体' },
+        ]
+  );
   const pagination = reactive({
     current: 1,
     pageSize: 10,
