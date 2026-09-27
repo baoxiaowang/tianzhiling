@@ -198,25 +198,17 @@
         </a-radio-group>
       </div>
 
-      <div
+      <a-alert
         v-if="trainingMethod === 'tencent-vrs'"
-        class="voice-model-panel__vrs-entry"
+        type="info"
+        show-icon
+        style="margin-bottom: 16px"
       >
-        <a-alert type="info" show-icon>
-          腾讯云复刻需要先获取指定文案，再按文案录制 5～15
-          秒音频。当前上传任意素材的训练步骤不适用于此模型。
-        </a-alert>
-        <a-button
-          type="primary"
-          :disabled="!props.userId"
-          @click="openTencentVrsWizard"
-        >
-          为当前用户开始腾讯云复刻
-        </a-button>
-      </div>
+        腾讯云复刻（一句话版）：先获取指定文案，再按文案录制 5～15
+        秒单条音频；不支持上传历史素材或多段剪辑拼接。
+      </a-alert>
 
       <a-steps
-        v-show="trainingMethod === 'standard'"
         :current="step + 1"
         type="arrow"
         changeable
@@ -298,6 +290,78 @@
             请选择本段或多段音频上传，用于复刻音色
           </a-typography-text>
         </a-empty>
+      </div>
+
+      <!-- Step 1 腾讯云复刻：获取文案 + 上传按稿录音 -->
+      <div
+        v-show="trainingMethod === 'tencent-vrs' && step === 0"
+        class="voice-model-panel__step"
+      >
+        <div class="voice-model-panel__vrs-row">
+          <a-form-item label="复刻音色性别" style="margin-bottom: 0">
+            <a-radio-group v-model="vrsForm.voiceGender">
+              <a-radio :value="1">男</a-radio>
+              <a-radio :value="2">女</a-radio>
+            </a-radio-group>
+          </a-form-item>
+        </div>
+
+        <div class="voice-model-panel__vrs-row">
+          <a-space style="width: 100%; justify-content: space-between">
+            <a-button
+              :loading="vrsLoading.text"
+              @click="vrsWizard.fetchTrainingText"
+            >
+              获取指定训练文案
+            </a-button>
+            <span
+              v-if="vrsTrainingText"
+              style="color: #86909c; font-size: 12px"
+            >
+              TextId: {{ vrsTrainingText.textId }}
+            </span>
+          </a-space>
+          <a-alert
+            v-if="vrsTrainingText"
+            type="info"
+            style="margin-top: 12px; white-space: pre-wrap"
+          >
+            {{ vrsTrainingText.text }}
+          </a-alert>
+          <ul
+            v-if="vrsTrainingText"
+            style="margin-top: 8px; color: #86909c; font-size: 12px"
+          >
+            <li v-for="(req, i) in vrsTrainingText.requirements" :key="i">
+              {{ req }}
+            </li>
+          </ul>
+        </div>
+
+        <div class="voice-model-panel__vrs-row">
+          <a-upload
+            :show-file-list="false"
+            :before-upload="vrsWizard.handleBeforeUpload"
+            accept=".wav,.mp3,.aac,.m4a"
+          >
+            <a-button
+              :loading="vrsLoading.upload"
+              :disabled="!vrsTrainingText || vrsLoading.text"
+            >
+              选择按稿录制的录音（≤2MB，5～15 秒）
+            </a-button>
+          </a-upload>
+          <span
+            v-if="vrsForm.audioKey"
+            style="margin-left: 12px; color: #00b42a"
+          >
+            已上传：{{ vrsForm.audioKey }}
+          </span>
+        </div>
+
+        <a-alert v-if="vrsQuotaError" type="error" style="margin-top: 8px">
+          腾讯云声音复刻额度不足或未开通，请先在腾讯云控制台开通。
+        </a-alert>
       </div>
 
       <!-- Step 2 选择训练片段 -->
@@ -417,6 +481,59 @@
             />
           </div>
         </div>
+      </div>
+
+      <!-- Step 2 腾讯云复刻：试听按稿录音 + 音质检测 -->
+      <div
+        v-show="trainingMethod === 'tencent-vrs' && step === 1"
+        class="voice-model-panel__step"
+      >
+        <a-empty v-if="!vrsForm.audioKey" description="尚未上传按稿录音">
+          <a-typography-text type="secondary">
+            请先在上一步获取文案并上传按稿录制的单条录音
+          </a-typography-text>
+        </a-empty>
+
+        <template v-else>
+          <a-typography-text>请试听确认本条按稿录音</a-typography-text>
+          <div style="margin: 12px 0">
+            <audio
+              :src="vrsUploadedAudioUrl"
+              controls
+              preload="metadata"
+              style="width: 100%; max-width: 480px"
+              @play="pauseOtherAudio"
+            />
+          </div>
+          <a-checkbox v-model="vrsRecordingConfirmed">
+            已试听并确认这是按当前指定文案录制的单条音频
+          </a-checkbox>
+          <a-space>
+            <a-button
+              type="primary"
+              :loading="vrsLoading.detect"
+              :disabled="
+                !vrsForm.audioKey || !vrsTrainingText || !vrsRecordingConfirmed
+              "
+              @click="vrsWizard.runDetect"
+            >
+              音质检测
+            </a-button>
+            <a-tag v-if="vrsDetectedAudioId" color="green">
+              检测通过，可提交训练
+            </a-tag>
+          </a-space>
+          <a-alert
+            v-if="vrsDetectError"
+            type="error"
+            style="margin-top: 12px; white-space: pre-wrap"
+          >
+            音质检测未通过：{{ vrsDetectError }}
+          </a-alert>
+          <a-alert v-if="vrsQuotaError" type="error" style="margin-top: 12px">
+            腾讯云声音复刻额度不足或未开通，请先在腾讯云控制台开通。
+          </a-alert>
+        </template>
       </div>
 
       <!-- Step 3 提交训练 -->
@@ -705,11 +822,66 @@
         </a-descriptions>
       </div>
 
-      <!-- 步骤导航 -->
+      <!-- Step 3 腾讯云复刻：提交训练 + 状态轮询 -->
       <div
-        v-if="trainingMethod === 'standard' && step < 3"
-        class="voice-model-panel__nav"
+        v-show="trainingMethod === 'tencent-vrs' && step === 2"
+        class="voice-model-panel__step"
       >
+        <a-alert type="info" show-icon class="voice-model-panel__confirm-alert">
+          <template #title
+            >即将为该用户提交腾讯云声音复刻训练，请确认以下信息</template
+          >
+        </a-alert>
+        <a-descriptions
+          class="voice-model-panel__confirm"
+          :column="{ xs: 1, md: 2 }"
+          bordered
+          size="medium"
+        >
+          <a-descriptions-item label="音色名称">
+            {{ vrsForm.voiceName || '-' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="性别">
+            {{ vrsForm.voiceGender === 1 ? '男' : '女' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="训练文案" :span="2">
+            {{ vrsTrainingText?.text || '-' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="录音文件" :span="2">
+            {{ vrsForm.audioKey || '-' }}
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <div v-if="vrsResult.timbreId" style="margin-top: 16px">
+          <a-descriptions :column="1" bordered size="medium">
+            <a-descriptions-item label="任务 ID">
+              {{ vrsResult.providerTaskId }}
+            </a-descriptions-item>
+            <a-descriptions-item label="训练状态">
+              <a-tag :status="vrsStatusTag">
+                {{ vrsResult.phase || vrsResult.status }}
+              </a-tag>
+            </a-descriptions-item>
+            <a-descriptions-item v-if="vrsResult.errorMessage" label="失败原因">
+              {{ vrsResult.errorMessage }}
+            </a-descriptions-item>
+          </a-descriptions>
+          <a-alert
+            v-if="vrsResult.phase === 'success'"
+            type="success"
+            style="margin-top: 12px"
+          >
+            训练成功，可前往音色管理试听与绑定智能体。
+          </a-alert>
+        </div>
+
+        <a-alert v-if="vrsQuotaError" type="error" style="margin-top: 12px">
+          腾讯云声音复刻额度不足或未开通，请先在腾讯云控制台开通。
+        </a-alert>
+      </div>
+
+      <!-- 步骤导航 -->
+      <div v-if="step < 3" class="voice-model-panel__nav">
         <a-button v-if="step > 0" @click="step -= 1">上一步</a-button>
         <div class="voice-model-panel__nav-spacer" />
         <a-button
@@ -723,7 +895,14 @@
         <a-button
           v-if="step === 2"
           type="primary"
-          :loading="saving"
+          :loading="
+            trainingMethod === 'standard'
+              ? saving
+              : vrsLoading.train || vrsLoading.status
+          "
+          :disabled="
+            trainingMethod === 'tencent-vrs' && Boolean(vrsResult.timbreId)
+          "
           @click="submitTrain"
         >
           提交训练
@@ -812,11 +991,11 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref, watch } from 'vue';
-  import { useRouter } from 'vue-router';
+  import { computed, reactive, ref, toRef, watch } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import uploadAdminFile from '@/api/storage';
+  import useTencentVrsWizard from '@/hooks/use-tencent-vrs-wizard';
   import {
     mergeCreateVoiceTimbre,
     queryVoiceTimbreList,
@@ -972,15 +1151,26 @@
     }
   );
 
-  const router = useRouter();
   const trainingMethod = ref<'standard' | 'tencent-vrs'>('standard');
-  const openTencentVrsWizard = () => {
-    if (!props.userId) return;
-    router.push({
-      name: 'VoiceTimbreList',
-      query: { section: 'tencent-vrs', userId: props.userId },
-    });
-  };
+  // 腾讯云声音复刻（一句话版）：状态机 / API / 轮询复用 composable，userId 自动带入当前用户
+  const vrsWizard = useTencentVrsWizard(toRef(props, 'userId'));
+  // 模板中直接使用这些顶层 ref/reactive（自动解包），脚本中仍通过 vrsWizard 访问
+  const vrsForm = vrsWizard.form;
+  const vrsLoading = vrsWizard.loading;
+  const vrsTrainingText = vrsWizard.trainingText;
+  const vrsDetectedAudioId = vrsWizard.detectedAudioId;
+  const vrsDetectError = vrsWizard.detectError;
+  const vrsQuotaError = vrsWizard.quotaError;
+  const vrsResult = vrsWizard.result;
+  const vrsUploadedAudioUrl = vrsWizard.uploadedAudioUrl;
+  const vrsStatusTag = vrsWizard.statusTag;
+  const vrsRecordingConfirmed = ref(false);
+  watch(
+    () => [vrsForm.audioKey, vrsTrainingText.value?.textId],
+    () => {
+      vrsRecordingConfirmed.value = false;
+    }
+  );
 
   const renderList = ref<VoiceTimbreRecord[]>([]);
   const loading = ref(false);
@@ -1250,6 +1440,13 @@
 
   // 各步骤「下一步」是否可用
   const canGoNext = computed(() => {
+    // 腾讯云复刻：第 1 步需已上传按稿录音；第 2 步需已通过音质检测
+    if (trainingMethod.value === 'tencent-vrs') {
+      if (step.value === 0)
+        return Boolean(vrsWizard.trainingText.value && vrsWizard.form.audioKey);
+      if (step.value === 1) return Boolean(vrsWizard.detectedAudioId.value);
+      return true;
+    }
     if (step.value === 0) {
       return uploadedClips.value.length > 0;
     }
@@ -1517,6 +1714,14 @@
   };
 
   const goNext = async () => {
+    // 腾讯云复刻：不触发素材剪辑 / AI 描述分析，仅推进步骤
+    if (trainingMethod.value === 'tencent-vrs') {
+      if (step.value === 1 && !vrsWizard.form.voiceName.trim()) {
+        vrsWizard.form.voiceName = buildDefaultTimbreName();
+      }
+      step.value = Math.min(step.value + 1, 2);
+      return;
+    }
     // 先切换内容和顶部导航，再在第二步内展示剪辑进度。
     if (step.value === 0) {
       step.value = 1;
@@ -1553,6 +1758,8 @@
       return;
     }
     step.value = Math.min(Math.max(nextStep, 0), 3);
+    // 以下素材剪辑 / AI 描述分析仅适用于常规训练流程
+    if (trainingMethod.value !== 'standard') return;
     if (step.value === 2 && !form.name.trim()) {
       form.name = buildDefaultTimbreName();
     }
@@ -1755,6 +1962,17 @@
       return;
     }
 
+    // 腾讯云复刻：提交训练并由 composable 轮询状态，成功后跳转音色管理
+    if (trainingMethod.value === 'tencent-vrs') {
+      if (!vrsWizard.detectedAudioId.value) {
+        Message.error('请先完成音质检测');
+        step.value = 1;
+        return;
+      }
+      await vrsWizard.runTrain();
+      return;
+    }
+
     if (!selectedVoiceClips.value.length) {
       Message.error('请至少选择一段用于训练的片段');
       step.value = 1;
@@ -1802,6 +2020,7 @@
     step.value = 0;
     clipping.value = false;
     clipError.value = '';
+    vrsWizard.reset();
     form.name = '';
     form.provider = 'qwen';
     form.previewModel = 'qwen3-tts-vc-2026-01-22';
@@ -1819,6 +2038,34 @@
       fileInputRef.value.value = '';
     }
   };
+
+  // 切换训练方式：回到第 1 步并重置对应流程（停止 VRS 轮询）
+  watch(trainingMethod, () => {
+    step.value = 0;
+    vrsWizard.reset();
+  });
+
+  // 切换用户：重置两种流程并停止 VRS 轮询
+  watch(
+    () => props.userId,
+    () => {
+      step.value = 0;
+      vrsWizard.reset();
+    }
+  );
+
+  // 腾讯云复刻训练成功：刷新该用户音色列表并进入音色管理
+  watch(
+    () => vrsWizard.result.value.phase,
+    (phase) => {
+      if (phase === 'success') {
+        Message.success('腾讯云复刻训练完成');
+        pagination.current = 1;
+        fetchList();
+        step.value = 3;
+      }
+    }
+  );
 
   const submitRecut = async () => {
     const target = recutTarget.value;
@@ -2051,14 +2298,6 @@
       gap: 12px;
       flex-wrap: wrap;
       margin-bottom: 20px;
-    }
-
-    &__vrs-entry {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 16px;
-      padding-bottom: 12px;
     }
 
     &__steps {
