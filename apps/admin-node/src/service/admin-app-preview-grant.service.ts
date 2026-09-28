@@ -26,12 +26,16 @@ export class AdminAppPreviewGrantService {
 
   async issue(userId: string, admin: AdminAuthenticatedPayload) {
     this.assertAllowed(userId, admin);
-    const user = await this.userModel.findOne({
-      where: { id: new MongoObjectId(userId) },
-    });
+    const objectId = new MongoObjectId(userId);
+    const user =
+      (await this.userModel.findOne({ where: { id: objectId } })) ??
+      (await this.userModel.findOne({ where: { _id: objectId } as never }));
     if (!user) throw new AppError('USER_NOT_FOUND', '用户不存在', 404);
 
-    const code = Array.from(randomBytes(12), byte => CODE_ALPHABET[byte & 31]).join('');
+    const code = Array.from(
+      randomBytes(12),
+      byte => CODE_ALPHABET[byte & 31]
+    ).join('');
     const now = new Date();
     const grant = new AppPreviewGrantEntity();
     grant.codeHash = createHash('sha256').update(code).digest('hex');
@@ -68,7 +72,11 @@ export class AdminAppPreviewGrantService {
       !allowedAdmins.includes(admin.sub) ||
       !admin.roles?.includes('admin')
     ) {
-      throw new AppError('PREVIEW_GRANT_FORBIDDEN', '无权为此账号生成预览授权码', 403);
+      throw new AppError(
+        'PREVIEW_GRANT_FORBIDDEN',
+        '无权为此账号生成预览授权码',
+        403
+      );
     }
   }
 }

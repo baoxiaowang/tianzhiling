@@ -10,14 +10,19 @@ describe('AdminAppPreviewGrantService', () => {
   afterEach(() => {
     if (oldUsers === undefined) delete process.env.APP_PREVIEW_ALLOWED_USER_IDS;
     else process.env.APP_PREVIEW_ALLOWED_USER_IDS = oldUsers;
-    if (oldAdmins === undefined) delete process.env.APP_PREVIEW_APPROVER_ADMIN_IDS;
+    if (oldAdmins === undefined)
+      delete process.env.APP_PREVIEW_APPROVER_ADMIN_IDS;
     else process.env.APP_PREVIEW_APPROVER_ADMIN_IDS = oldAdmins;
   });
 
   function createService() {
     const service = new AdminAppPreviewGrantService();
-    service.userModel = { findOne: jest.fn().mockResolvedValue({ id: userId }) } as any;
-    service.grantModel = { save: jest.fn().mockImplementation(async value => value) } as any;
+    service.userModel = {
+      findOne: jest.fn().mockResolvedValue({ id: userId }),
+    } as any;
+    service.grantModel = {
+      save: jest.fn().mockImplementation(async value => value),
+    } as any;
     service.logger = { warn: jest.fn() } as any;
     return service;
   }
@@ -43,5 +48,35 @@ describe('AdminAppPreviewGrantService', () => {
     const saved = (service.grantModel.save as jest.Mock).mock.calls[0][0];
     expect(saved.codeHash).not.toBe(result.code);
     expect(saved).not.toHaveProperty('code');
+  });
+
+  it('finds users stored with native _id before issuing a grant', async () => {
+    const service = createService();
+    process.env.APP_PREVIEW_ALLOWED_USER_IDS = userId;
+    process.env.APP_PREVIEW_APPROVER_ADMIN_IDS = admin.sub;
+    (service.userModel.findOne as jest.Mock)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ _id: userId });
+
+    const result = await service.issue(userId, admin);
+
+    const calls = (service.userModel.findOne as jest.Mock).mock.calls;
+    expect(calls[0][0].where.id.toString()).toBe(userId);
+    expect(calls[1][0].where._id.toString()).toBe(userId);
+    expect(result.targetUserId).toBe(userId);
+    expect(result.readOnly).toBe(true);
+    expect(service.grantModel.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not issue a grant when neither id nor _id identifies a user', async () => {
+    const service = createService();
+    process.env.APP_PREVIEW_ALLOWED_USER_IDS = userId;
+    process.env.APP_PREVIEW_APPROVER_ADMIN_IDS = admin.sub;
+    (service.userModel.findOne as jest.Mock).mockResolvedValue(null);
+
+    await expect(service.issue(userId, admin)).rejects.toMatchObject({
+      code: 'USER_NOT_FOUND',
+    });
+    expect(service.grantModel.save).not.toHaveBeenCalled();
   });
 });
