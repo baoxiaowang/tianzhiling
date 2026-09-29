@@ -6,7 +6,7 @@ import type { ReplyBrief } from '../../src/service/agents/reply-brief.service';
 import type { ReplySceneRoute } from '../../src/service/agents/reply-scene-router';
 
 describe('agent chat mode', () => {
-  it('uses the same context budget across open-chat route labels', () => {
+  it('uses the same complete-turn history budget across open-chat route labels', () => {
     const modes = ['emotional', 'relationship', 'family', 'daily', 'general'];
     const policies = modes.map(mode =>
       resolveAgentChatModePolicy({ mode } as ReplyBrief)
@@ -14,6 +14,7 @@ describe('agent chat mode', () => {
 
     expect(
       policies.map(policy => ({
+        turns: policy.historyTurnLimit,
         history: policy.historyMessageLimit,
         profile: policy.profileFactLimit,
         legacy: policy.legacyFactLimit,
@@ -21,12 +22,25 @@ describe('agent chat mode', () => {
       }))
     ).toEqual(
       Array.from({ length: modes.length }, () => ({
-        history: 10,
+        turns: 8,
+        history: 32,
         profile: 5,
         legacy: 4,
         retrieved: 3,
       }))
     );
+  });
+
+  it('does not shorten history for identity or correction routes', () => {
+    const general = resolveAgentChatModePolicy({
+      mode: 'general',
+    } as ReplyBrief);
+    const boundary = resolveAgentChatModePolicy({
+      mode: 'boundary',
+    } as ReplyBrief);
+
+    expect(boundary.historyTurnLimit).toBe(general.historyTurnLimit);
+    expect(boundary.historyMessageLimit).toBe(general.historyMessageLimit);
   });
 
   it('keeps ordinary route labels as weak hints', () => {

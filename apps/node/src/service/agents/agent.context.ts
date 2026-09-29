@@ -31,6 +31,12 @@ import {
   stripPromptLeakageContent,
 } from '../../common/message-content-safety';
 import {
+  RECENT_HISTORY_MESSAGE_CAP,
+  RECENT_HISTORY_TURNS,
+  RecentHistoryTurnSelection,
+  selectRecentHistoryTurns,
+} from '../../common/conversation-turns';
+import {
   buildDepartedCompanionCorePrompt,
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
@@ -282,6 +288,17 @@ export interface AgentContextDiagnostics {
   replyTargetCharacters: number;
   replyReviewCharacters: number;
   historyMessageCount: number;
+  historyTurnCount: number;
+  historyOmittedMessageCount: number;
+  historyOmittedTurnCount: number;
+  historyPartialTurnRetained: boolean;
+  historyPinnedOmittedMessageCount: number;
+  historySummaryGapMessageCount: number;
+  historyCoverageExtended: boolean;
+  historyCoverageBoundaryVerifiable: boolean;
+  historyCoversSummaryBoundary: boolean;
+  historyLoadBoundaryTruncated: boolean;
+  historyLoadBoundaryTurnUnconfirmed: boolean;
   relevantMemoryCount: number;
   relevantHardFactKeys: string[];
   conversationReadingAnchorCount: number;
@@ -728,9 +745,10 @@ export function isInjectableMemoryEvidenceLoose(
   if (core && normalize(content) === normalize(currentQuery)) return false;
   return true;
 }
-const RECENT_HISTORY_MESSAGE_LIMIT = 16;
 // 上下文构建只需要最近若干轮；长会话不再全量加载，避免 V8 堆顶满。
 const CONVERSATION_MESSAGE_LOAD_LIMIT = 50;
+// 有界余量：多取一小段，尽量让最旧一轮的加载边界落在轮首，而不是轮中。
+const CONVERSATION_BOUNDARY_FETCH_LIMIT = 16;
 const RELEVANCE_TOKEN_LIMIT = 48;
 const HARD_FACT_RELEVANCE_CANDIDATE_LIMIT = 48;
 const MEMORY_PLAN_CANDIDATE_LIMIT = 10;
@@ -819,16 +837,26 @@ export class AgentContextService {
       conversationMessages,
       options.currentTurnMessageIds
     );
+    // 加载边界核验：取满有界余量且最早一条是助手消息时，它的用户输入可能在更早处，
+    // 标记最早一轮可能不完整；不做全量加载。
+    const historyLoadBoundaryTruncated =
+      conversationMessages.length >=
+        CONVERSATION_MESSAGE_LOAD_LIMIT + CONVERSATION_BOUNDARY_FETCH_LIMIT &&
+      conversationMessages[0]?.role === MessageRole.assistant;
     const historicalConversationMessages =
       this.excludeCurrentTurnMessagesFromHistory(
         conversationMessages,
         options.currentTurnMessageIds
       );
-    const routingHistoryMessages = this.buildRecentHistoryMessages(
-      historicalConversationMessages,
-      RECENT_HISTORY_MESSAGE_LIMIT,
-      options.pinnedHistoryMessageIds
-    );
+    const routingHistoryMessages = selectRecentHistoryTurns({
+      messages: this.filterEligibleHistoryMessages(
+        historicalConversationMessages
+      ),
+      turnLimit: RECENT_HISTORY_TURNS,
+      messageCap: RECENT_HISTORY_MESSAGE_CAP,
+      stringifyId: message => this.stringifyObjectId(message.id),
+      pinnedMessageIds: options.pinnedHistoryMessageIds,
+    }).messages;
     const [profileFacts, userIdentity, knownPeople, relatives] =
       await Promise.all([
         this.withTraceSpan(
@@ -1232,11 +1260,21 @@ export class AgentContextService {
       plan: returnTurnPlan,
       modeLimit: modePolicy.historyMessageLimit,
     });
-    const recentHistoryMessages = this.buildRecentHistoryMessages(
-      historicalConversationMessages,
-      effectiveHistoryLimit,
-      options.pinnedHistoryMessageIds
-    );
+    const historySelection = selectRecentHistoryTurns({
+      messages: this.filterEligibleHistoryMessages(
+        historicalConversationMessages
+      ),
+      turnLimit: modePolicy.historyTurnLimit,
+      messageCap: effectiveHistoryLimit,
+      coveredMessageId: this.stringifyObjectId(
+        options.conversation.continuitySummaryCoveredMessageId
+      ),
+      stringifyId: message => this.stringifyObjectId(message.id),
+      pinnedMessageIds: options.pinnedHistoryMessageIds,
+      loadBoundaryTruncated: historyLoadBoundaryTruncated,
+    });
+    const recentHistoryMessages = historySelection.messages;
+    const historyCoverageNote = this.buildHistoryCoverageNote(historySelection);
     const returnTurnMaterial = await this.buildReturnTurnMaterial({
       options,
       plan: returnTurnPlan,
@@ -1367,7 +1405,8 @@ export class AgentContextService {
           returnTurnMaterial.hasItems,
           acceptedLocalCandidateIds,
           recentHistoryMessages.map(message => memoryEvidenceCore(message.content || '').toLowerCase()).filter(Boolean),
-          effectiveLocalCandidates
+          effectiveLocalCandidates,
+          historyCoverageNote
         ),
       {
         evidenceCount: evidence.length,
@@ -1399,6 +1438,20 @@ export class AgentContextService {
           Boolean(item.subjectRef && item.subjectRef !== 'mixed')
         ).length,
         historyCount: recentHistoryMessages.length,
+        historyTurnCount: historySelection.turnCount,
+        historyOmittedMessageCount: historySelection.omittedMessageCount,
+        historyOmittedTurnCount: historySelection.omittedTurnCount,
+        historyPartialTurnRetained: historySelection.partialTurnRetained,
+        historyPinnedOmittedMessageCount:
+          historySelection.pinnedOmittedMessageCount,
+        historySummaryGapMessageCount: historySelection.summaryGapMessageCount,
+        historyCoverageExtended: historySelection.coverageExtended,
+        historyCoverageBoundaryVerifiable:
+          historySelection.coverageBoundaryVerifiable,
+        historyCoversSummaryBoundary: historySelection.coversSummaryBoundary,
+        historyLoadBoundaryTruncated: historySelection.loadBoundaryTruncated,
+        historyLoadBoundaryTurnUnconfirmed:
+          historySelection.loadBoundaryTurnUnconfirmed,
       }
     );
     const historyLayer = this.buildHistoryLayer(
@@ -1524,6 +1577,20 @@ export class AgentContextService {
         replyTargetCharacters: replyBrief.lengthPlan.targetCharacters,
         replyReviewCharacters: replyBrief.lengthPlan.reviewCharacters,
         historyMessageCount: historyLayer.messages.length,
+        historyTurnCount: historySelection.turnCount,
+        historyOmittedMessageCount: historySelection.omittedMessageCount,
+        historyOmittedTurnCount: historySelection.omittedTurnCount,
+        historyPartialTurnRetained: historySelection.partialTurnRetained,
+        historyPinnedOmittedMessageCount:
+          historySelection.pinnedOmittedMessageCount,
+        historySummaryGapMessageCount: historySelection.summaryGapMessageCount,
+        historyCoverageExtended: historySelection.coverageExtended,
+        historyCoverageBoundaryVerifiable:
+          historySelection.coverageBoundaryVerifiable,
+        historyCoversSummaryBoundary: historySelection.coversSummaryBoundary,
+        historyLoadBoundaryTruncated: historySelection.loadBoundaryTruncated,
+        historyLoadBoundaryTurnUnconfirmed:
+          historySelection.loadBoundaryTurnUnconfirmed,
         relevantMemoryCount: replyBrief.correctionPolicy
           ? 0
           : relevantProfileFacts.length +
@@ -1677,7 +1744,8 @@ export class AgentContextService {
     returnTurnRequired = false,
     localCandidateIds?: Set<string>,
     localCandidateVisibleTexts?: string[],
-    localCandidates?: LocalMemoryCandidateInput[]
+    localCandidates?: LocalMemoryCandidateInput[],
+    historyCoveragePrompt = ''
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -1698,7 +1766,8 @@ export class AgentContextService {
       identityContract: identity,
     });
     const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
-      options.conversation
+      options.conversation,
+      historyCoveragePrompt
     );
     const sessionContinuityPrompt =
       this.buildSessionContinuityPromptFromConversation(
@@ -3011,7 +3080,12 @@ export class AgentContextService {
     return interleaved;
   }
 
-  private resolveFactSemanticSlot(key: string): string {
+  private resolveFactSemanticSlot(key?: string | null): string {
+    // 事实对象可能缺失 key（历史数据/测试注入/跨版本字段）；缺失或异常 key
+    // 不参与语义槽匹配，返回空槽，避免对 undefined 调用 startsWith 崩溃。
+    if (typeof key !== 'string' || !key.trim()) {
+      return '';
+    }
     if (key === 'relationship.agent_calls_user') {
       return 'address.current';
     }
@@ -3874,11 +3948,12 @@ export class AgentContextService {
   }
 
   private buildContinuitySummaryPrompt(
-    conversation: ConversationEntity
+    conversation: ConversationEntity,
+    historyCoveragePrompt = ''
   ): string {
     const summary = conversation.continuitySummary?.trim();
 
-    if (!summary) {
+    if (!summary && !historyCoveragePrompt) {
       return '';
     }
 
@@ -3887,7 +3962,10 @@ export class AgentContextService {
       summary,
       // "摘要只用于理解此前聊到哪里、不是事实证据"的边界约束由稳定段
       // `# 会话连续感` 逐轮给出，这里不再重复渲染同一结论。
-    ].join('\n');
+      historyCoveragePrompt,
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   /**
@@ -4308,7 +4386,7 @@ export class AgentContextService {
       order: {
         createdAt: 'DESC',
       },
-      take: CONVERSATION_MESSAGE_LOAD_LIMIT,
+      take: CONVERSATION_MESSAGE_LOAD_LIMIT + CONVERSATION_BOUNDARY_FETCH_LIMIT,
     });
 
     let messages = recentMessages.reverse();
@@ -4366,33 +4444,65 @@ export class AgentContextService {
     );
   }
 
-  private buildRecentHistoryMessages(
-    messages: MessageEntity[],
-    limit = RECENT_HISTORY_MESSAGE_LIMIT,
-    pinnedMessageIds: string[] = []
+  /**
+   * 只保留真正会进入历史的消息（无法构建 chat message 的跳过）。
+   * 轮次分组与窗口选择都以这份列表为准，避免“空消息”占位。
+   */
+  private filterEligibleHistoryMessages(
+    messages: MessageEntity[]
   ): MessageEntity[] {
-    const eligible = messages.filter(message => this.buildChatMessage(message));
-    const recent = eligible.slice(
-      -Math.max(1, Math.min(limit, RECENT_HISTORY_MESSAGE_LIMIT))
-    );
-    const pinnedIds = new Set(
-      pinnedMessageIds
-        .map(id => id.trim())
-        .filter(Boolean)
-        .slice(0, 8)
-    );
-    if (!pinnedIds.size) return recent;
+    return messages.filter(message => this.buildChatMessage(message));
+  }
 
-    const selectedIds = new Set(
-      recent.map(message => this.stringifyObjectId(message.id))
-    );
-    for (const message of eligible) {
-      const id = this.stringifyObjectId(message.id);
-      if (pinnedIds.has(id)) selectedIds.add(id);
+  /**
+   * 历史窗口与摘要覆盖不完整时，向模型明说省略范围，避免静默假设摘要已包含省略内容。
+   */
+  private buildHistoryCoverageNote(
+    selection: RecentHistoryTurnSelection<MessageEntity>
+  ): string {
+    const notes: string[] = [];
+
+    if (selection.summaryGapMessageCount > 0) {
+      notes.push(
+        `摘要覆盖位置之后有 ${selection.summaryGapMessageCount} 条消息因长度预算未进入本轮历史；不要假设摘要已经包含这些内容。`
+      );
+    } else if (!selection.coverageBoundaryVerifiable) {
+      notes.push(
+        '对话连续性摘要的覆盖位置无法在当前加载的历史中核实；不要假设摘要已经覆盖全部更早内容。'
+      );
+    } else if (!selection.coversSummaryBoundary) {
+      notes.push(
+        '本轮历史与摘要覆盖之间仍有未说明的缺口；不要假设摘要已经覆盖全部更早内容。'
+      );
     }
-    return eligible.filter(message =>
-      selectedIds.has(this.stringifyObjectId(message.id))
-    );
+
+    if (selection.omittedMessageCount > 0) {
+      notes.push(
+        `本轮历史已按长度预算省略 ${selection.omittedMessageCount} 条较早消息（整轮删除 ${selection.omittedTurnCount} 轮）。`
+      );
+    }
+
+    if (selection.partialTurnRetained) {
+      notes.push(
+        '最早保留的一轮超出预算，只保留了其中的用户依据，该轮不完整。'
+      );
+    }
+
+    if (selection.pinnedOmittedMessageCount > 0) {
+      notes.push(
+        `有 ${selection.pinnedOmittedMessageCount} 条固定消息因预算不足未能进入本轮历史。`
+      );
+    }
+
+    if (selection.loadBoundaryTurnUnconfirmed) {
+      notes.push(
+        '最早一段历史落在轮次中间，最早一轮不完整，未计入确认完整轮次。'
+      );
+    } else if (selection.loadBoundaryTruncated) {
+      notes.push('加载边界落在轮次中间，开始处可能不完整。');
+    }
+
+    return notes.join('');
   }
 
   private buildChatMessage(

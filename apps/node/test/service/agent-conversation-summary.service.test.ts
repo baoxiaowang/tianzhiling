@@ -12,7 +12,8 @@ const CONVERSATION_ID = new MongoObjectId('665000000000000000000020');
 const USER_ID = new MongoObjectId('665000000000000000000001');
 const AGENT_ID = new MongoObjectId('665000000000000000000010');
 
-function createMessage(index: number): MessageEntity {
+function createMessage(index: number, forceRole?: MessageRole): MessageEntity {
+  const role = forceRole ?? (index % 2 === 1 ? MessageRole.user : MessageRole.assistant);
   const message = new MessageEntity();
   Object.assign(message, {
     id: new MongoObjectId(
@@ -21,9 +22,9 @@ function createMessage(index: number): MessageEntity {
     conversationId: CONVERSATION_ID,
     userId: USER_ID,
     agentId: AGENT_ID,
-    role: index % 2 === 0 ? MessageRole.user : MessageRole.assistant,
+    role,
     type: MessageType.text,
-    content: index % 2 === 0 ? `用户消息${index}` : `助手回复${index}`,
+    content: role === MessageRole.user ? `用户消息${index}` : `助手回复${index}`,
     status: MessageStatus.sent,
     createdAt: new Date(1_700_000_000_000 + index * 1000),
     updatedAt: new Date(1_700_000_000_000 + index * 1000),
@@ -41,7 +42,7 @@ describe('AgentConversationSummaryService', () => {
       userId: USER_ID,
       agentId: AGENT_ID,
     });
-    const messages = Array.from({ length: 20 }, (_, index) =>
+    const messages = Array.from({ length: 40 }, (_, index) =>
       createMessage(index + 1)
     );
     service.messageModel = {
@@ -66,7 +67,7 @@ describe('AgentConversationSummaryService', () => {
 
     expect(service.messageModel.find).toHaveBeenCalledWith(
       expect.objectContaining({
-        take: 52,
+        take: 96,
         order: {
           createdAt: 'DESC',
         },
@@ -85,7 +86,14 @@ describe('AgentConversationSummaryService', () => {
         continuitySummaryVersion: 'continuity_summary_v2',
       })
     );
-    expect(conversation.continuitySummaryEvidenceMessageIds?.length).toBe(4);
+    // 20 个完整轮次：摘要只覆盖最近 8 轮之前的部分（前 24 条），
+    // 其中用户消息 12 条；最近 8 轮留给原始历史。
+    expect(conversation.continuitySummaryEvidenceMessageIds?.length).toBe(12);
+    const generatedPrompt = (
+      service.openAIService.generateText as jest.Mock
+    ).mock.calls[0][0].prompt as string;
+    expect(generatedPrompt).not.toContain('用户消息39');
+    expect(generatedPrompt).not.toContain('助手回复40');
     expect(service.conversationModel.save).toHaveBeenCalledWith(conversation);
   });
 

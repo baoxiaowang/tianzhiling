@@ -11,13 +11,23 @@ import {
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
+import {
+  countTurnMessages,
+  groupMessagesIntoTurns,
+  RECENT_HISTORY_TURNS,
+} from '../../common/conversation-turns';
 import { OpenAIService } from './openai';
 
 const SUMMARY_VERSION = 'continuity_summary_v2';
-const RECENT_MESSAGES_TO_EXCLUDE = 12;
 const MIN_NEW_MESSAGES_TO_SUMMARIZE = 8;
 const MAX_SUMMARY_SOURCE_MESSAGES = 40;
 const MAX_SUMMARY_LENGTH = 500;
+/**
+ * 摘要与历史层共用同一套“完整轮次”边界：最近 RECENT_HISTORY_TURNS 轮由原始历史承载，
+ * 摘要只压缩更早的消息，消除“摘要覆盖一段、原始历史又只留几条”的独立参数冲突。
+ * 多取一些消息用于还原轮次边界。
+ */
+const SUMMARY_MESSAGE_FETCH_LIMIT = 96;
 
 @Provide()
 export class AgentConversationSummaryService {
@@ -69,7 +79,7 @@ export class AgentConversationSummaryService {
         order: {
           createdAt: 'DESC',
         },
-        take: RECENT_MESSAGES_TO_EXCLUDE + MAX_SUMMARY_SOURCE_MESSAGES,
+        take: SUMMARY_MESSAGE_FETCH_LIMIT,
       })
     )
       .filter(
@@ -90,7 +100,7 @@ export class AgentConversationSummaryService {
               this.stringifyObjectId(right.id)
             );
       });
-    const summaryEndIndex = messages.length - RECENT_MESSAGES_TO_EXCLUDE;
+    const summaryEndIndex = this.resolveSummaryEndIndex(messages);
 
     if (summaryEndIndex < MIN_NEW_MESSAGES_TO_SUMMARIZE) {
       return;
@@ -164,6 +174,20 @@ export class AgentConversationSummaryService {
     conversation.continuitySummaryUpdatedAt = new Date();
 
     await this.conversationModel.save(conversation);
+  }
+
+  /**
+   * 摘要覆盖到“原始历史窗口”之前：最近 RECENT_HISTORY_TURNS 个完整轮次留给原始历史，
+   * 这里返回可纳入摘要的消息条数（不含该窗口）。
+   */
+  private resolveSummaryEndIndex(messages: MessageEntity[]): number {
+    const turns = groupMessagesIntoTurns(messages);
+    const rawTurnCount = Math.min(RECENT_HISTORY_TURNS, turns.length);
+    const rawMessageCount = countTurnMessages(
+      turns.slice(turns.length - rawTurnCount)
+    );
+
+    return messages.length - rawMessageCount;
   }
 
   private parseSummary(value: string): string {

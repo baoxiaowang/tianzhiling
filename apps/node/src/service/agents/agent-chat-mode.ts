@@ -4,13 +4,22 @@ import type { ReplyScene, ReplySceneRoute } from './reply-scene-router';
 export interface AgentChatModePolicy {
   mode: ReplyBriefMode;
   instruction: string;
+  /**
+   * 历史窗口的完整轮次上限。历史选择以“用户输入批次 + 助手回复组”为一轮，
+   * 不再按单条气泡计数，避免多泡回复把关系澄清挤出上下文。
+   */
+  historyTurnLimit: number;
+  /**
+   * 历史窗口的消息条数硬上限（安全预算）。完整轮次超限时从最旧一侧整条裁剪。
+   */
   historyMessageLimit: number;
   profileFactLimit: number;
   legacyFactLimit: number;
   retrievedMemoryLimit: number;
 }
 
-const OPEN_CHAT_HISTORY_MESSAGE_LIMIT = 16;
+const OPEN_CHAT_HISTORY_TURN_LIMIT = 8;
+const OPEN_CHAT_HISTORY_MESSAGE_LIMIT = 32;
 const OPEN_CHAT_PROFILE_FACT_LIMIT = 5;
 const OPEN_CHAT_LEGACY_FACT_LIMIT = 4;
 const OPEN_CHAT_RETRIEVED_MEMORY_LIMIT = 3;
@@ -20,6 +29,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
     mode: 'safety',
     instruction:
       '先像真实亲人一样理解强烈痛苦；若用户明确表达当前自伤意图，要坚定留住用户，并用自然口吻确认眼下是否安全、是否已经行动。不要用整段固定危机模板压过关系回应，也绝不邀请现在或近期赴死。',
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -29,7 +39,8 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
     mode: 'memory_control',
     instruction:
       '记忆管理只按“系统操作”证据确认结果；无成功证据不声称完成，简短作答。',
-    historyMessageLimit: 6,
+    historyTurnLimit: 2,
+    historyMessageLimit: 8,
     profileFactLimit: 2,
     legacyFactLimit: 2,
     retrievedMemoryLimit: 0,
@@ -37,7 +48,10 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   boundary: {
     mode: 'boundary',
     instruction: '直接回答质疑或现实边界，不用玄学或新故事回避。',
-    historyMessageLimit: 8,
+    // 身份/关系纠正轮与普通聊天使用同一套完整轮次预算：不再机械缩短历史，
+    // 否则用户给的关系依据会被助手自己的多泡回复挤出窗口。
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
+    historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: 4,
     legacyFactLimit: 4,
     retrievedMemoryLimit: 2,
@@ -46,6 +60,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
     mode: 'memory',
     instruction:
       '旧事的具体细节只按可陈述证据；不足时沿用户已说片段回应感受和意义，不反复声明“记不清”，不诱导用户补故事。',
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: 6,
     legacyFactLimit: 5,
@@ -54,6 +69,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   emotional: {
     mode: 'emotional',
     instruction: '情绪标签仅作弱参考。',
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -62,6 +78,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   relationship: {
     mode: 'relationship',
     instruction: '关系标签仅作弱参考。',
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -70,6 +87,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   family: {
     mode: 'family',
     instruction: '家庭标签仅作弱参考。',
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -78,7 +96,8 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   status: {
     mode: 'status',
     instruction: '直接回应状态关心；离世生活可自然想象，不推断用户现实。',
-    historyMessageLimit: 8,
+    historyTurnLimit: 4,
+    historyMessageLimit: 16,
     profileFactLimit: 3,
     legacyFactLimit: 2,
     retrievedMemoryLimit: 1,
@@ -86,6 +105,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   daily: {
     mode: 'daily',
     instruction: '日常标签仅作弱参考。',
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -94,7 +114,8 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   platform: {
     mode: 'platform',
     instruction: '产品、AI 身份或功能问题准确简答；不知道就直说。',
-    historyMessageLimit: 6,
+    historyTurnLimit: 3,
+    historyMessageLimit: 10,
     profileFactLimit: 2,
     legacyFactLimit: 1,
     retrievedMemoryLimit: 0,
@@ -102,6 +123,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   general: {
     mode: 'general',
     instruction: '开放聊天，以当前明确意图为准。',
+    historyTurnLimit: OPEN_CHAT_HISTORY_TURN_LIMIT,
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
