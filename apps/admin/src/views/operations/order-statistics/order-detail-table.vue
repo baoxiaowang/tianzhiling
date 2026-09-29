@@ -2,7 +2,7 @@
   <a-table
     :data="data"
     :pagination="false"
-    :scroll="{ x: abnormal ? 1880 : 1500, y: 600 }"
+    :scroll="{ x: abnormal ? 1880 : 1500 }"
     row-key="id"
   >
     <template #columns>
