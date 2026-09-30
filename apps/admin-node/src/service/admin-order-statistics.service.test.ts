@@ -17,25 +17,29 @@ describe('AdminOrderStatisticsService', () => {
       updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
     } as never;
     service.orderModel = {
-      aggregate: jest.fn(() =>
-        aggregateResult([
-          {
-            _id: { toString: () => 'purchase-1' },
-            orderNo: 'VIP-PURCHASE-1',
-            createdAt: new Date('2026-09-01T02:00:00.000Z'),
-            targetCode: 'vip_master',
-            payableAmount: 19900,
-            status: OrderStatus.completed,
-            source: 'wechat',
-            paymentProvider: 'wechat_pay',
-            user: {
-              name: '用户甲',
-              createdAt: new Date('2026-08-01T02:00:00.000Z'),
-            },
-            agents: [],
-            interactionCount: 36,
-          },
-        ])
+      // 按真实管道分流：遗留退款聚合（含 independentRefundOrders）与订单聚合并不同源，
+      // 避免用一份固定数组同时冒充两种查询结果。
+      aggregate: jest.fn((pipeline: unknown[]) =>
+        JSON.stringify(pipeline).includes('independentRefundOrders')
+          ? aggregateResult([])
+          : aggregateResult([
+              {
+                _id: { toString: () => 'purchase-1' },
+                orderNo: 'VIP-PURCHASE-1',
+                createdAt: new Date('2026-09-01T02:00:00.000Z'),
+                targetCode: 'vip_master',
+                payableAmount: 19900,
+                status: OrderStatus.completed,
+                source: 'wechat',
+                paymentProvider: 'wechat_pay',
+                user: {
+                  name: '用户甲',
+                  createdAt: new Date('2026-08-01T02:00:00.000Z'),
+                },
+                agents: [],
+                interactionCount: 36,
+              },
+            ])
       ),
     } as never;
     service.orderRefundModel = {
@@ -288,6 +292,48 @@ describe('AdminOrderStatisticsService', () => {
 
   // 历史遗留退款（订单自带 refundAmount、无独立退款单）金额进净值公式，
   // 但不在 refundOrders 明细里；必须单独列出笔数与金额才能勾稽。
+  it('遗留退款管道排除已有独立退款单的订单，独立退款仅取已完成', async () => {
+    const service = new AdminOrderStatisticsService();
+    service.snapshotModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      updateOne: jest.fn().mockResolvedValue({}),
+    } as never;
+    service.orderModel = {
+      aggregate: jest.fn((pipeline: unknown[]) =>
+        JSON.stringify(pipeline).includes('independentRefundOrders')
+          ? aggregateResult([])
+          : aggregateResult([])
+      ),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+
+    await service.getMonthlyReport('2026-09', true);
+
+    const orderPipelines = jest
+      .mocked(service.orderModel.aggregate)
+      .mock.calls.map(call => JSON.stringify(call[0]));
+    const legacyPipeline = orderPipelines.find(p =>
+      p.includes('independentRefundOrders')
+    );
+    expect(legacyPipeline).toBeDefined();
+    // 排除已有独立退款单的订单：同一笔退款不会既进独立流水又进遗留流水
+    expect(legacyPipeline).toContain(
+      '"independentRefundOrders.0":{"$exists":false}'
+    );
+    // 遗留退款按退款完成时间归属月份
+    expect(legacyPipeline).toContain('"refundedAt"');
+
+    const refundPipeline = JSON.stringify(
+      jest.mocked(service.orderRefundModel.aggregate).mock.calls[0][0]
+    );
+    // 独立退款只取已完成
+    expect(refundPipeline).toContain('"status":"completed"');
+    // 独立退款按完成时间归属月份，而不是申请时间
+    expect(refundPipeline).toContain('"completedAt"');
+  });
+
   it('历史遗留退款在总计里单独列出，净额可与明细勾稽', async () => {
     const service = new AdminOrderStatisticsService();
     service.snapshotModel = {
@@ -297,8 +343,24 @@ describe('AdminOrderStatisticsService', () => {
     service.orderModel = {
       aggregate: jest.fn((pipeline: unknown[]) => {
         if (JSON.stringify(pipeline).includes('independentRefundOrders')) {
-          // 1 笔历史遗留退款 ¥30
-          return aggregateResult([{ amount: 3000, count: 1 }]);
+          // 1 笔历史遗留退款 ¥30，返回明细行（不再是预设合计）
+          return aggregateResult([
+            {
+              _id: { toString: () => 'legacy-1' },
+              refundNo: 'VIP-LEGACY-1',
+              originalOrderNo: 'VIP-LEGACY-1',
+              requestedAt: new Date('2026-09-04T04:00:00.000Z'),
+              completedAt: new Date('2026-09-04T05:00:00.000Z'),
+              refundType: 'legacy_refund',
+              amount: 3000,
+              status: 'completed',
+              source: 'wechat',
+              paymentProvider: 'wechat_pay',
+              targetCode: 'vip_year',
+              user: { name: '丙' },
+              legacy: true,
+            },
+          ]);
         }
 
         // 当月 1 笔实付 ¥100
@@ -343,15 +405,30 @@ describe('AdminOrderStatisticsService', () => {
 
     const result = await service.getMonthlyReport('2026-09', true);
 
-    expect(result.totals.completedRefunds).toBe(1);
-    expect(result.totals.refundedAmount).toBe(20);
+    // 遗留退款已并入退款流水与笔数
+    expect(result.totals.completedRefunds).toBe(2);
+    expect(result.totals.refundedAmount).toBe(50);
     expect(result.totals.legacyRefundCount).toBe(1);
     expect(result.totals.legacyRefundedAmount).toBe(30);
-    // 勾稽：净额 = 实付 100 − 独立退款 20 − 遗留退款 30 = 50
+    // 不变量：净额 = 当月实付 100 − refundedAmount 50 = 50
     expect(result.totals.netAmount).toBe(50);
-    // 遗留退款不进 refundOrders 明细，因此明细求和只有独立退款
+    expect(result.totals.netAmount).toBe(
+      Number(
+        (result.totals.validAmount - result.totals.refundedAmount).toFixed(2)
+      )
+    );
+    // 退款流水明细求和 = refundedAmount，且遗留退款有可追溯行与类型标签
     expect(
       result.refundOrders.reduce((sum, item) => sum + item.amount, 0)
-    ).toBe(20);
+    ).toBe(50);
+    const legacyRow = result.refundOrders.find(
+      item => item.refundType === 'legacy_refund'
+    );
+    expect(legacyRow).toMatchObject({
+      refundNo: 'VIP-LEGACY-1',
+      originalOrderNo: 'VIP-LEGACY-1',
+      amount: 30,
+      refundTypeLabel: '遗留退款（订单内扣减）',
+    });
   });
 });

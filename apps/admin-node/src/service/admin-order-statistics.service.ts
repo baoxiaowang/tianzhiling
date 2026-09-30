@@ -24,7 +24,9 @@ const CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
  */
 const PAST_MONTH_TTL_MS = 30 * 60 * 1000;
 // 7 → 8：totals 新增 legacyRefundedAmount / legacyRefundCount，旧快照需重算
-export const CALCULATION_VERSION = 8;
+// 8 → 9：历史遗留退款并入 refundOrders/completedRefunds/refundedAmount，
+//        netAmount = 当月实付 − refundedAmount（不再单独再减一次遗留退款）
+export const CALCULATION_VERSION = 9;
 
 type RawMonthlyOrder = {
   _id: { toString(): string };
@@ -66,6 +68,8 @@ type RawMonthlyRefund = {
   status?: string;
   targetCode?: string;
   user?: { name?: string; phone?: string };
+  /** 历史遗留退款（订单文档内扣减、无独立 order_refund 记录） */
+  legacy?: boolean;
 };
 
 @Provide()
@@ -114,13 +118,20 @@ export class AdminOrderStatisticsService {
     const monthIndex = Number(monthText) - 1;
     const start = new Date(Date.UTC(year, monthIndex, 1) - BEIJING_OFFSET_MS);
     const end = new Date(Date.UTC(year, monthIndex + 1, 1) - BEIJING_OFFSET_MS);
-    const [rows, refundRows, legacyRefund] = await Promise.all([
+    const [rows, refundRows, legacyRefundRows] = await Promise.all([
       this.loadMonthlyOrders(start, end),
       this.loadMonthlyRefunds(start, end),
       this.loadMonthlyLegacyRefund(start, end),
     ]);
     const records = rows.map(row => this.toRecord(row));
-    const refundOrders = refundRows.map(row => this.toRefundRecord(row));
+    // 独立退款与遗留退款合并成同一份退款流水，按完成时间排序；
+    // 遗留退款已排除存在独立退款单的订单，因此不会重复计入同一笔退款。
+    const allRefundRows = [...refundRows, ...legacyRefundRows].sort(
+      (left, right) =>
+        this.timestampOf(left.completedAt ?? left.requestedAt) -
+        this.timestampOf(right.completedAt ?? right.requestedAt)
+    );
+    const refundOrders = allRefundRows.map(row => this.toRefundRecord(row));
     const validOrders = records.filter(
       record => record.abnormalTypes.length === 0
     );
@@ -139,13 +150,16 @@ export class AdminOrderStatisticsService {
         (sum, row) => sum + (Number(row.paidAmount ?? row.payableAmount) || 0),
         0
       );
-    const netRefundAmount = refundRows.reduce(
+    // refundedAmount 现在已包含历史遗留退款，净额只减一次，避免重复扣减。
+    const netRefundAmount = allRefundRows.reduce(
       (sum, row) => sum + (Number(row.amount) || 0),
       0
     );
-    const netAmount = this.roundMoney(
-      (netPaidAmount - netRefundAmount - legacyRefund.amount) / 100
+    const legacyRefundAmount = legacyRefundRows.reduce(
+      (sum, row) => sum + (Number(row.amount) || 0),
+      0
     );
+    const netAmount = this.roundMoney((netPaidAmount - netRefundAmount) / 100);
     const validOrderAmount = validOrders.reduce(
       (sum, order) => sum + order.amount,
       0
@@ -168,10 +182,10 @@ export class AdminOrderStatisticsService {
         refundedAmount: this.roundMoney(
           refundOrders.reduce((sum, refund) => sum + refund.amount, 0)
         ),
-        // 历史遗留退款金额不在 refundOrders 明细里，单独列出保证总计可勾稽：
-        // netAmount = 当月实付 − refundedAmount − legacyRefundedAmount
-        legacyRefundedAmount: this.roundMoney(legacyRefund.amount / 100),
-        legacyRefundCount: legacyRefund.count,
+        // 遗留退款已并入 refundedAmount / completedRefunds，这里保留小计便于勾稽：
+        // 不变量：当月实付 − refundedAmount = netAmount
+        legacyRefundedAmount: this.roundMoney(legacyRefundAmount / 100),
+        legacyRefundCount: legacyRefundRows.length,
         netAmount,
       },
       validOrders,
@@ -356,12 +370,20 @@ export class AdminOrderStatisticsService {
    * 历史遗留退款（订单自身带 refundAmount 且没有独立退款单）的金额与笔数。
    * 两者都要返回：金额进净值公式，笔数用于和 completedRefunds 勾稽总笔数。
    */
+  /**
+   * 历史遗留退款：订单文档自身记录 `refundAmount`（无独立 order_refund 记录）
+   * 且退款完成在本月的记录。
+   *
+   * 返回**明细行**而不是仅汇总，使这些退款能作为独立退款流水出现在
+   * refundOrders 里并计入 completedRefunds / refundedAmount；
+   * `legacy` 标记用于给出可追溯的类型标签。
+   */
   private async loadMonthlyLegacyRefund(
     start: Date,
     end: Date
-  ): Promise<{ amount: number; count: number }> {
-    const rows = await this.orderModel
-      .aggregate<{ amount: number; count: number }>([
+  ): Promise<RawMonthlyRefund[]> {
+    return this.orderModel
+      .aggregate<RawMonthlyRefund>([
         {
           $match: {
             targetCode: { $ne: 'voice_one' },
@@ -393,27 +415,45 @@ export class AdminOrderStatisticsService {
         },
         { $match: { 'independentRefundOrders.0': { $exists: false } } },
         {
-          $group: {
-            _id: null,
-            amount: {
-              $sum: {
-                $cond: [
-                  { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
-                  '$refundAmount',
-                  '$payableAmount',
-                ],
-              },
+          $lookup: {
+            from: TableName.user,
+            localField: 'userId',
+            foreignField: '_id',
+            as: 'userRows',
+          },
+        },
+        { $sort: { updatedAt: 1, _id: 1 } },
+        {
+          $project: {
+            // 遗留退款没有独立退款单号，用原订单号占位，保证行可追溯且不重复
+            refundNo: '$orderNo',
+            originalOrderNo: '$orderNo',
+            requestedAt: { $ifNull: ['$refundRequestedAt', '$refundedAt'] },
+            completedAt: {
+              $cond: [
+                { $ne: [{ $ifNull: ['$refundedAt', null] }, null] },
+                '$refundedAt',
+                '$updatedAt',
+              ],
             },
-            count: { $sum: 1 },
+            refundType: { $literal: 'legacy_refund' },
+            amount: {
+              $cond: [
+                { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                '$refundAmount',
+                '$payableAmount',
+              ],
+            },
+            paymentProvider: 1,
+            source: 1,
+            status: { $literal: 'completed' },
+            targetCode: 1,
+            user: { $arrayElemAt: ['$userRows', 0] },
+            legacy: { $literal: true },
           },
         },
       ])
       .toArray();
-
-    return {
-      amount: Number(rows[0]?.amount) || 0,
-      count: Number(rows[0]?.count) || 0,
-    };
   }
 
   private toRefundRecord(row: RawMonthlyRefund): AdminMonthlyRefundRecordDTO {
@@ -452,7 +492,11 @@ export class AdminOrderStatisticsService {
       .map(agent => agent.createdAt)
       .filter((value): value is Date => value instanceof Date)
       .sort((left, right) => left.getTime() - right.getTime())[0];
-    const orderTime = row.paidAt ? new Date(row.paidAt) : row.createdAt ? new Date(row.createdAt) : undefined;
+    const orderTime = row.paidAt
+      ? new Date(row.paidAt)
+      : row.createdAt
+      ? new Date(row.createdAt)
+      : undefined;
     const userCreatedAt = row.user?.createdAt
       ? new Date(row.user.createdAt)
       : undefined;
@@ -653,8 +697,15 @@ export class AdminOrderStatisticsService {
       order_refund: '普通退订退款',
       voice_membership_downgrade: '会员降级退款',
       voice_membership_final_refund: '最终退订退款',
+      legacy_refund: '遗留退款（订单内扣减）',
     };
     return labels[type ?? ''] ?? type ?? '未知退款';
+  }
+
+  private timestampOf(value?: Date): number {
+    return value instanceof Date && !Number.isNaN(value.getTime())
+      ? value.getTime()
+      : 0;
   }
 
   private normalizeMonth(value: string | undefined, fallback: string): string {

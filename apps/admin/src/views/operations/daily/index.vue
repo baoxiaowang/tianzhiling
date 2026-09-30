@@ -70,6 +70,13 @@
                         class="cohort-detail__empty"
                       >
                         {{ cohortError[record.date] }}
+                        <a-link
+                          @click="
+                            loadCohortOrders(record.date, record.cohortRevenue)
+                          "
+                        >
+                          重试
+                        </a-link>
                       </div>
                       <div
                         v-else-if="!cohortItems(record.date).length"
@@ -87,9 +94,15 @@
                             {{ formatTime(item.occurredAt) }}
                           </span>
                           <span class="cohort-detail__tag">
-                            {{
-                              item.kind === 'refund' ? '退款' : item.targetCode
-                            }}
+                            <span class="cohort-detail__code">
+                              {{ item.targetCode }}
+                            </span>
+                            <span
+                              v-if="item.kind === 'refund'"
+                              class="cohort-detail__badge"
+                            >
+                              退款
+                            </span>
                           </span>
                           <span
                             class="cohort-detail__amount"
@@ -234,33 +247,68 @@
       ? `-${formatMoney(Math.abs(Number(value || 0)))}`
       : formatMoney(value);
 
+  /** 弹层当前是否打开；刷新后需要对已打开的日期重新拉取。 */
+  const cohortOpenDates = reactive<Record<string, boolean>>({});
+  /**
+   * 世代号：每次清缓存（刷新/切换月份）自增。
+   * 在途请求返回时若世代已变，说明数据已过期，必须丢弃而不是写回，
+   * 否则旧响应会把新列表的弹层覆盖成旧明细或「暂无明细」。
+   */
+  let cohortGeneration = 0;
+
+  /**
+   * 按需加载某注册日的明细。
+   * @param fallbackTotal 未返回 total（或重试）时用于展示的兜底金额
+   */
+  const loadCohortOrders = async (date: string, fallbackTotal = 0) => {
+    const generation = cohortGeneration;
+    cohortLoading[date] = true;
+    delete cohortError[date];
+    try {
+      const { data } = await queryDailyCohortOrders(date);
+      if (generation !== cohortGeneration) {
+        return;
+      }
+      cohortRows[date] = data?.items || [];
+      cohortTotals[date] = data?.total ?? fallbackTotal;
+      cohortTruncated[date] = Boolean(data?.truncated);
+    } catch {
+      if (generation !== cohortGeneration) {
+        return;
+      }
+      cohortError[date] = '明细加载失败';
+    } finally {
+      if (generation === cohortGeneration) {
+        cohortLoading[date] = false;
+      }
+    }
+  };
+
   const clearCohortDetails = () => {
+    cohortGeneration += 1;
     Object.keys(cohortRows).forEach((key) => delete cohortRows[key]);
     Object.keys(cohortTotals).forEach((key) => delete cohortTotals[key]);
     Object.keys(cohortTruncated).forEach((key) => delete cohortTruncated[key]);
     Object.keys(cohortError).forEach((key) => delete cohortError[key]);
+    Object.keys(cohortLoading).forEach((key) => delete cohortLoading[key]);
+    // 仍打开的弹层立刻按新列表重拉，避免被清成「暂无明细」
+    Object.keys(cohortOpenDates).forEach((date) => {
+      if (cohortOpenDates[date]) {
+        loadCohortOrders(date);
+      }
+    });
   };
 
   /** 点击累计收入时才拉取明细；同一日期只拉一次。 */
-  const onCohortVisible = async (
+  const onCohortVisible = (
     record: AdminOperationsDailyPointDTO,
     visible: boolean
   ) => {
+    cohortOpenDates[record.date] = visible;
     if (!visible || cohortLoading[record.date] || cohortRows[record.date]) {
       return;
     }
-    cohortLoading[record.date] = true;
-    delete cohortError[record.date];
-    try {
-      const { data } = await queryDailyCohortOrders(record.date);
-      cohortRows[record.date] = data?.items || [];
-      cohortTotals[record.date] = data?.total ?? record.cohortRevenue;
-      cohortTruncated[record.date] = Boolean(data?.truncated);
-    } catch {
-      cohortError[record.date] = '明细加载失败，请重试';
-    } finally {
-      cohortLoading[record.date] = false;
-    }
+    loadCohortOrders(record.date, record.cohortRevenue);
   };
 
   const clearPromotionTimer = (date: string) => {
@@ -602,11 +650,28 @@
     }
 
     &__tag {
+      display: flex;
       flex: 1 1 auto;
+      align-items: center;
+      gap: 6px;
       overflow: hidden;
       color: var(--color-text-3);
       white-space: nowrap;
+    }
+
+    &__code {
+      overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    &__badge {
+      flex: 0 0 auto;
+      padding: 0 6px;
+      color: rgb(var(--danger-6));
+      font-size: 12px;
+      line-height: 18px;
+      background: var(--color-danger-light-1);
+      border-radius: 9px;
     }
 
     &__amount {
