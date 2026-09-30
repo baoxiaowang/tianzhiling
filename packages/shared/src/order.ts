@@ -207,9 +207,12 @@ export interface AdminOrderListParamsDTO {
 
 export interface AdminOrderListDTO {
   items: AdminOrderRecordDTO[];
-  /** 购买订单 + 退款行的合计条数（保持原 `total` 语义） */
+  /**
+   * `includeRefunds=false`（默认）：购买订单数，与改动前语义一致；
+   * `includeRefunds=true`：购买 + 退款行的合计条数。
+   */
   total: number;
-  /** 其中的购买订单笔数 */
+  /** 其中的购买订单笔数；`total` 的拆分项 */
   orderTotal?: number;
   /** 其中的退款笔数（含遗留退款） */
   refundTotal?: number;

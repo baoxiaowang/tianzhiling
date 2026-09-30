@@ -202,6 +202,7 @@ export class AdminOrderService {
       this.normalizePositiveInteger(query?.pageSize, 20),
       100
     );
+    const includeRefunds = this.normalizeBoolean(query?.includeRefunds);
     const filter = await this.buildUnifiedOrderFilter(query);
     const skip = (page - 1) * pageSize;
     const [facet] = await this.orderModel
@@ -251,11 +252,18 @@ export class AdminOrderService {
       );
     });
 
+    const orderTotal = this.firstCount(facet?.orderCount);
+    const refundTotal = includeRefunds
+      ? this.firstCount(facet?.refundCount)
+      : 0;
+
     return {
       items,
-      total: this.firstCount(facet?.totalCount),
-      orderTotal: this.firstCount(facet?.orderCount),
-      refundTotal: this.firstCount(facet?.refundCount),
+      // 兼容语义：不合并退款时 total = 购买订单数（与改动前一致）；
+      // 合并时 total = 购买 + 退款行数，并由 orderTotal/refundTotal 拆分告知。
+      total: includeRefunds ? this.firstCount(facet?.totalCount) : orderTotal,
+      orderTotal,
+      refundTotal,
       page,
       pageSize,
     };
@@ -275,6 +283,9 @@ export class AdminOrderService {
       {
         $addFields: {
           kind: 'order',
+          // 聚合结果是原始文档，只有 _id；TypeORM 实体主键是 id，
+          // 不透传会让 order.id 变成空串，影响详情与操作。
+          id: '$_id',
           orderId: '$_id',
           sortAt: { $ifNull: ['$createdAt', '$updatedAt'] },
         },
@@ -385,8 +396,14 @@ export class AdminOrderService {
     query: ListAdminOrdersQueryDTO
   ): Promise<Record<string, unknown>> {
     const and: Record<string, unknown>[] = [];
+    const includeRefunds = this.normalizeBoolean(query?.includeRefunds);
     const kind = query?.kind?.trim();
-    if (kind === 'order' || kind === 'refund') {
+
+    // 不合并退款时（默认，兼容既有客户端）：只返回购买订单，
+    // total 仍是"购买订单数"，items 与分页行为与改动前一致。
+    if (!includeRefunds) {
+      and.push({ kind: 'order' });
+    } else if (kind === 'order' || kind === 'refund') {
       and.push({ kind });
     }
 
@@ -4057,11 +4074,13 @@ export class AdminOrderService {
     agentUserMessageCount?: number
   ): AdminOrderRecordDTO {
     const userId = this.stringifyObjectId(order.userId);
+    // 显式标记行类型：退款行是 'refund'，其余一律 'order'（旧数据缺省时前端按购买处理）
     const voiceMembershipDowngrade = this.getVoiceMembershipDowngrade(order);
     const voiceMembershipFinalRefund =
       this.getVoiceMembershipFinalRefund(order);
 
     return {
+      kind: 'order',
       id: this.stringifyObjectId(order.id),
       orderNo: order.orderNo,
       userId,

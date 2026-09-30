@@ -61,6 +61,21 @@
             <a-option value="refund_requested">申请退款</a-option>
             <a-option value="refunded">已退款</a-option>
             <a-option value="grant_failed">发放失败</a-option>
+            <template v-if="!refundMode">
+              <a-option value="processing">退款处理中</a-option>
+              <a-option value="failed">退款失败</a-option>
+            </template>
+          </a-select>
+        </a-form-item>
+        <a-form-item v-if="!refundMode" field="kind" label="行类型">
+          <a-select
+            v-model="searchForm.kind"
+            allow-clear
+            placeholder="购买 + 退款"
+            class="order-page__filter"
+          >
+            <a-option value="order">仅购买</a-option>
+            <a-option value="refund">仅退款</a-option>
           </a-select>
         </a-form-item>
         <a-form-item v-if="!refundMode" field="source" label="来源">
@@ -86,7 +101,7 @@
             <a-option value="virtual">虚拟支付</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item field="createdAtRange" label="下单时间">
+        <a-form-item field="createdAtRange" label="支付时间 / 退款完成时间">
           <a-range-picker
             v-model="searchForm.createdAtRange"
             allow-clear
@@ -197,8 +212,18 @@
           <a-table-column title="金额" data-index="payableAmount" :width="150">
             <template #cell="{ record }">
               <template v-if="record.kind === 'refund'">
-                <div class="order-page__refund-negative">
-                  -{{ formatAmount(record.payableAmount) }}
+                <div
+                  :class="
+                    record.refundStatus === 'completed'
+                      ? 'order-page__refund-negative'
+                      : 'order-page__refund-pending'
+                  "
+                >
+                  <template v-if="record.refundStatus === 'completed'"
+                    >-</template
+                  >
+                  <template v-else>拟退 </template>
+                  {{ formatAmount(record.payableAmount) }}
                 </div>
               </template>
               <template v-else>
@@ -996,6 +1021,8 @@
   let agentSearchRequestId = 0;
   const searchForm = reactive<{
     keyword: string;
+    /** 行类型：order=仅购买，refund=仅退款，缺省=两者 */
+    kind?: 'order' | 'refund' | '';
     status?: OrderStatusDTO | '';
     source?: OrderSourceDTO | '';
     paymentType?: AdminOrderPaymentTypeDTO | '';
@@ -1003,6 +1030,7 @@
     registeredMonth?: string;
   }>({
     keyword: '',
+    kind: undefined,
     status: props.status,
     source: undefined,
     paymentType: undefined,
@@ -1125,6 +1153,9 @@
     createdAtEnd: normalizedCreatedAtRange.value.createdAtEnd,
     registeredMonth: searchForm.registeredMonth || undefined,
     userId: props.userId || undefined,
+    // 订单明细页把退款并入同一份列表；退款处理页维持仅订单，避免其操作错配
+    includeRefunds: props.refundMode ? undefined : 1,
+    kind: props.refundMode ? undefined : searchForm.kind || undefined,
     page: pagination.current,
     pageSize: pagination.pageSize,
   }));
@@ -2557,6 +2588,12 @@
 
     &__refund-negative {
       color: rgb(var(--danger-6));
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 处理中/失败的退款尚未冲减收入，不用红色负数以免误读 */
+    &__refund-pending {
+      color: var(--color-text-3);
       font-variant-numeric: tabular-nums;
     }
 

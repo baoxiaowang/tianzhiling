@@ -59,7 +59,16 @@ export class ListAdminOrdersQueryDTO {
   @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
   excludeAdminManual?: boolean | string;
 
-  /** 行类型筛选：order=只看购买订单，refund=只看退款，缺省=两者都看 */
+  /**
+   * 是否把退款并入同一份分页列表。
+   * 缺省 false：只返回购买订单，`total` 仍为购买订单数（兼容既有客户端）；
+   * true：购买 + 独立退款 + 遗留退款合并，`total` 为两者之和，
+   * 并返回 `orderTotal` / `refundTotal` 供页面分别展示。
+   */
+  @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
+  includeRefunds?: boolean | string;
+
+  /** 行类型筛选（仅 includeRefunds 时生效）：order=只看购买订单，refund=只看退款 */
   @Rule(RuleType.string().valid('order', 'refund').allow('').optional())
   kind?: string;
 

@@ -235,14 +235,30 @@ function evaluateAggregateExpression(expression: any, row: any): any {
   return expression;
 }
 
+/**
+ * 真实 Mongo 文档只有 `_id`，没有 `id`。
+ * 夹具用 `id` 承载主键方便断言，这里统一转成 `_id` 并删掉 `id`，
+ * 以覆盖「聚合行缺 id 导致 order.id 为空串」这类差异。
+ */
+function toMongoDocument(row: any) {
+  const copy = cloneMongoValue(row);
+
+  if (copy._id === undefined && copy.id !== undefined) {
+    copy._id = copy.id;
+    // 仅当 _id 由夹具 id 推导出来时才移除 id；
+    // 管道 $addFields 之后的行本就带 id，必须保留（否则会掩盖/误报主键问题）
+    delete copy.id;
+  }
+
+  return copy;
+}
+
 function runOrderListPipeline(
   seedRows: any[] | undefined,
   stages: any[],
   collections: Record<string, any[]>
 ): any {
-  let rows: any[] = (seedRows ?? collections.order ?? []).map(row =>
-    cloneMongoValue(row)
-  );
+  let rows: any[] = (seedRows ?? collections.order ?? []).map(toMongoDocument);
 
   for (const stage of stages) {
     if (stage.$addFields) {
@@ -258,7 +274,7 @@ function runOrderListPipeline(
     } else if (stage.$unionWith) {
       // 必须从 $unionWith.coll 指定的集合取源，否则会把订单误当成退款
       const unionRows = runOrderListPipeline(
-        collections[stage.$unionWith.coll] ?? [],
+        (collections[stage.$unionWith.coll] ?? []).map(toMongoDocument),
         stage.$unionWith.pipeline,
         collections
       );
@@ -990,11 +1006,15 @@ describe('AdminOrderService', () => {
 
     // 合并查询走聚合管道，不再走 find/count
     expect(service.orderModel.aggregate).toHaveBeenCalled();
+    // 购买行主键必须非空（聚合行只有 _id）
+    expect(result.items[0].id).toBe(ORDER_ID.toHexString());
+    expect(result.items[0].id).not.toBe('');
     // 用户信息合并结果由下方 result 断言精确校验
     expect(service.userModel.find).toHaveBeenCalled();
     expect(result).toEqual({
       items: [
         expect.objectContaining({
+          // 回归：聚合只返回 _id，服务必须把它转成实体主键 id
           id: ORDER_ID.toHexString(),
           orderNo: 'VIP202605020001',
           userId: USER_ID.toHexString(),
@@ -4259,6 +4279,40 @@ describe('AdminOrderService', () => {
     });
   });
 
+  it('默认不合并退款：items 与 total 保持改动前的购买订单语义', async () => {
+    const { service, orders, refundOrders } = createService();
+
+    orders.push(createCompletedVipOrder({ orderNo: 'VIP-ONLY' }));
+    refundOrders.push({
+      id: new MongoObjectId('665000000000000000000940'),
+      refundNo: 'RF-HIDDEN',
+      originalOrderId: ORDER_ID,
+      originalOrderNo: 'VIP-ONLY',
+      userId: USER_ID,
+      orderType: OrderType.vipPlan,
+      targetCode: 'vip_year',
+      refundType: OrderRefundType.orderRefund,
+      amount: 1000,
+      status: OrderRefundStatus.completed,
+      source: OrderSource.weapp,
+      paymentProvider: 'wechat_pay',
+      requestedAt: ORDER_CREATED_AT,
+      completedAt: ORDER_CREATED_AT,
+      createdAt: ORDER_CREATED_AT,
+      updatedAt: ORDER_CREATED_AT,
+    } as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listOrders({});
+
+    // 兼容既有客户端：不传 includeRefunds 时只有购买订单，total 仍是购买数
+    expect(result.total).toBe(1);
+    expect(result.orderTotal).toBe(1);
+    expect(result.refundTotal).toBe(0);
+    expect(result.items.every(item => item.kind !== 'refund')).toBe(true);
+  });
+
   it('独立退款作为单独一行返回，并与购买订单一起计数', async () => {
     const { service, orders, refundOrders } = createService();
 
@@ -4285,7 +4339,7 @@ describe('AdminOrderService', () => {
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
     jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
 
-    const result = await service.listOrders({});
+    const result = await service.listOrders({ includeRefunds: true });
 
     expect(result.total).toBe(2);
     expect(result.orderTotal).toBe(1);
@@ -4331,7 +4385,7 @@ describe('AdminOrderService', () => {
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
     jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
 
-    const result = await service.listOrders({});
+    const result = await service.listOrders({ includeRefunds: true });
 
     expect(result.refundTotal).toBe(2);
     expect(
@@ -4357,7 +4411,9 @@ describe('AdminOrderService', () => {
       .mocked(legacy.service.userAccountModel.find)
       .mockResolvedValue([] as never);
 
-    const legacyResult = await legacy.service.listOrders({});
+    const legacyResult = await legacy.service.listOrders({
+      includeRefunds: true,
+    });
     const legacyRow = legacyResult.items.find(item => item.kind === 'refund');
 
     // 已退款订单本身仍作为购买行出现，退款另占一行
@@ -4405,7 +4461,9 @@ describe('AdminOrderService', () => {
       .mocked(withIndependent.service.userAccountModel.find)
       .mockResolvedValue([] as never);
 
-    const dedupResult = await withIndependent.service.listOrders({});
+    const dedupResult = await withIndependent.service.listOrders({
+      includeRefunds: true,
+    });
 
     expect(dedupResult.refundTotal).toBe(1);
     expect(
@@ -4452,18 +4510,32 @@ describe('AdminOrderService', () => {
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
     jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
 
-    const virtualOnly = await service.listOrders({ paymentType: 'virtual' });
+    const virtualOnly = await service.listOrders({
+      includeRefunds: true,
+      paymentType: 'virtual',
+    });
 
     expect(virtualOnly.refundTotal).toBe(1);
     expect(virtualOnly.orderTotal).toBe(1);
 
-    const refundOnly = await service.listOrders({ kind: 'refund' });
+    const refundOnly = await service.listOrders({
+      includeRefunds: true,
+      kind: 'refund',
+    });
 
     expect(refundOnly.total).toBe(1);
     expect(refundOnly.items[0].refundNo).toBe('RF-VIRTUAL');
 
-    const firstPage = await service.listOrders({ page: '1', pageSize: '1' });
-    const secondPage = await service.listOrders({ page: '2', pageSize: '1' });
+    const firstPage = await service.listOrders({
+      includeRefunds: true,
+      page: '1',
+      pageSize: '1',
+    });
+    const secondPage = await service.listOrders({
+      includeRefunds: true,
+      page: '2',
+      pageSize: '1',
+    });
 
     // 2 笔购买 + 1 笔退款 = 3 行，分页覆盖退款行
     expect(firstPage.items).toHaveLength(1);
