@@ -101,7 +101,15 @@
             <a-option value="virtual">虚拟支付</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item field="createdAtRange" label="支付时间 / 退款完成时间">
+        <a-form-item
+          field="createdAtRange"
+          :label="refundMode ? '下单时间' : '支付时间(购买) / 完成时间(退款)'"
+          :tooltip="
+            refundMode
+              ? '按订单创建时间筛选'
+              : '合并流水模式：购买行按支付时间、退款行按退款完成时间分别筛选'
+          "
+        >
           <a-range-picker
             v-model="searchForm.createdAtRange"
             allow-clear
@@ -110,6 +118,9 @@
             format="YYYY-MM-DD HH:mm"
             class="order-page__range-filter"
           />
+          <span v-if="!refundMode" class="order-page__filter-hint">
+            购买按支付时间、退款按完成时间
+          </span>
         </a-form-item>
         <a-form-item field="registeredMonth" label="用户注册月">
           <a-month-picker
@@ -2512,6 +2523,13 @@
 
     &__filter {
       width: 140px;
+    }
+
+    &__filter-hint {
+      margin-left: 8px;
+      color: var(--color-text-3);
+      font-size: 12px;
+      font-weight: 400;
     }
 
     &__range-filter {

@@ -217,7 +217,11 @@ export class AdminOrderService {
         {
           $facet: {
             items: [
-              { $sort: { sortAt: -1, _id: -1 } },
+              {
+                $sort: includeRefunds
+                  ? { sortAt: -1, _id: -1 }
+                  : { createdAt: -1 },
+              },
               { $skip: skip },
               { $limit: pageSize },
             ],
@@ -485,12 +489,19 @@ export class AdminOrderService {
         range.$lte = createdAtEnd;
       }
 
-      and.push({
-        $or: [
-          { kind: 'order', paidAt: range },
-          { kind: 'refund', completedAt: range },
-        ],
-      });
+      if (includeRefunds) {
+        // 合并流水模式：购买按支付时间、退款按完成时间分别归入
+        and.push({
+          $or: [
+            { kind: 'order', paidAt: range },
+            { kind: 'refund', completedAt: range },
+          ],
+        });
+      } else {
+        // 旧模式（默认，兼容既有客户端）：仍按订单 createdAt 筛选，
+        // 待支付订单不会被排除，退款处理页行为与改动前一致。
+        and.push({ createdAt: range });
+      }
     }
 
     const keyword = query?.keyword?.trim() ?? '';

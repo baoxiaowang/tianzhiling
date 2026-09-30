@@ -84,39 +84,31 @@ function cloneMongoValue<T>(value: T): T {
 
 function matchesMongoValue(actual: any, expected: any): boolean {
   if (expected && typeof expected === 'object' && !expected.toHexString) {
+    // 同一字段可带多个操作符（如 { $gte, $lte }），必须全部成立，
+    // 否则区间筛选的下界会被忽略，掩盖真实行为。
+    const checks: boolean[] = [];
+
     if ('$exists' in expected) {
-      return expected.$exists ? actual !== undefined : actual === undefined;
+      checks.push(
+        expected.$exists ? actual !== undefined : actual === undefined
+      );
     }
 
     if ('$in' in expected) {
-      return expected.$in.some((value: unknown) =>
-        matchesMongoValue(actual, value)
+      checks.push(
+        expected.$in.some((value: unknown) => matchesMongoValue(actual, value))
       );
     }
 
     if ('$ne' in expected) {
-      return !matchesMongoValue(actual, expected.$ne);
-    }
-
-    if ('$lte' in expected) {
-      return actual <= expected.$lte;
-    }
-
-    if ('$lt' in expected) {
-      return actual < expected.$lt;
-    }
-
-    if ('$gte' in expected) {
-      return actual >= expected.$gte;
-    }
-
-    if ('$gt' in expected) {
-      return actual > expected.$gt;
+      checks.push(!matchesMongoValue(actual, expected.$ne));
     }
 
     if ('$nin' in expected) {
-      return !expected.$nin.some((value: unknown) =>
-        matchesMongoValue(actual, value)
+      checks.push(
+        !expected.$nin.some((value: unknown) =>
+          matchesMongoValue(actual, value)
+        )
       );
     }
 
@@ -126,7 +118,27 @@ function matchesMongoValue(actual: any, expected: any): boolean {
         String(expected.$options ?? '')
       );
 
-      return typeof actual === 'string' && regex.test(actual);
+      checks.push(typeof actual === 'string' && regex.test(actual));
+    }
+
+    if ('$gte' in expected) {
+      checks.push(actual >= expected.$gte);
+    }
+
+    if ('$gt' in expected) {
+      checks.push(actual > expected.$gt);
+    }
+
+    if ('$lte' in expected) {
+      checks.push(actual <= expected.$lte);
+    }
+
+    if ('$lt' in expected) {
+      checks.push(actual < expected.$lt);
+    }
+
+    if (checks.length > 0) {
+      return checks.every(Boolean);
     }
   }
 
@@ -1170,16 +1182,11 @@ describe('AdminOrderService', () => {
       $lte: new Date('2026-05-02T23:59:59.999Z'),
     };
 
+    // 未开启 includeRefunds 时仍是旧的订单 createdAt 语义
     expect(getUnifiedListMatch(service).$and).toEqual(
       expect.arrayContaining([
         { paymentProvider: 'wechat_virtual_pay' },
-        // 购买按支付时间、退款按完成时间分别归入
-        {
-          $or: [
-            { kind: 'order', paidAt: range },
-            { kind: 'refund', completedAt: range },
-          ],
-        },
+        { createdAt: range },
       ])
     );
   });
@@ -4543,6 +4550,90 @@ describe('AdminOrderService', () => {
     expect(firstPage.total).toBe(3);
     expect(firstPage.orderTotal).toBe(2);
     expect(firstPage.refundTotal).toBe(1);
+  });
+
+  it('旧模式日期查询仍按订单 createdAt，待支付订单不丢且不含退款', async () => {
+    const { service, orders, refundOrders } = createService();
+
+    // 待支付订单：createdAt 在范围内，但没有 paidAt
+    orders.push(
+      createCompletedVipOrder({
+        orderNo: 'VIP-PENDING',
+        status: OrderStatus.pending,
+        paidAt: undefined,
+        createdAt: new Date('2026-05-02T08:00:00.000Z'),
+      })
+    );
+    orders.push(
+      createCompletedVipOrder({
+        orderNo: 'VIP-OUT-RANGE',
+        createdAt: new Date('2026-04-01T00:00:00.000Z'),
+      })
+    );
+    refundOrders.push({
+      id: new MongoObjectId('665000000000000000000950'),
+      refundNo: 'RF-OLD',
+      originalOrderId: ORDER_ID,
+      originalOrderNo: 'VIP-PENDING',
+      userId: USER_ID,
+      orderType: OrderType.vipPlan,
+      targetCode: 'vip_year',
+      refundType: OrderRefundType.orderRefund,
+      amount: 1000,
+      status: OrderRefundStatus.completed,
+      source: OrderSource.weapp,
+      paymentProvider: 'wechat_pay',
+      requestedAt: new Date('2026-05-02T09:00:00.000Z'),
+      completedAt: new Date('2026-05-02T09:00:00.000Z'),
+      createdAt: new Date('2026-05-02T09:00:00.000Z'),
+      updatedAt: new Date('2026-05-02T09:00:00.000Z'),
+    } as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listOrders({
+      createdAtStart: '2026-05-01T00:00:00.000Z',
+      createdAtEnd: '2026-05-03T00:00:00.000Z',
+    });
+
+    // 待支付订单仍在结果里（按 createdAt 命中），范围外订单被排除
+    expect(result.total).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].orderNo).toBe('VIP-PENDING');
+    expect(result.items[0].id).toBe(ORDER_ID.toHexString());
+    // 旧模式（退款处理页）：不混入退款行
+    expect(result.items.every(item => item.kind !== 'refund')).toBe(true);
+    expect(result.refundTotal).toBe(0);
+  });
+
+  it('日期筛选字段按模式区分：旧模式用 createdAt，合并模式用 paidAt/completedAt', async () => {
+    const { service } = createService();
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({
+      createdAtStart: '2026-05-01T00:00:00.000Z',
+      createdAtEnd: '2026-05-03T00:00:00.000Z',
+    });
+
+    const legacyMatch = JSON.stringify(getUnifiedListMatch(service));
+
+    expect(legacyMatch).toContain('"createdAt"');
+    expect(legacyMatch).not.toContain('paidAt');
+    expect(legacyMatch).not.toContain('completedAt');
+
+    await service.listOrders({
+      includeRefunds: true,
+      createdAtStart: '2026-05-01T00:00:00.000Z',
+      createdAtEnd: '2026-05-03T00:00:00.000Z',
+    });
+
+    const mergedMatch = JSON.stringify(getUnifiedListMatch(service));
+
+    // 合并模式：购买按支付时间、退款按完成时间
+    expect(mergedMatch).toContain('paidAt');
+    expect(mergedMatch).toContain('completedAt');
+    expect(mergedMatch).toContain('refund');
   });
 
   it('lists orders with the account to agent message count', async () => {
