@@ -392,7 +392,10 @@ describe('AdminOperationsService', () => {
     expect(result.items[0].month).toBe('2026-01');
     expect(result.items[result.items.length - 1].month).toBe('2026-09');
     expect(result.items).toHaveLength(9);
-    expect(result.items[0]).toMatchObject({ newUsers: 7, isCurrentMonth: false });
+    expect(result.items[0]).toMatchObject({
+      newUsers: 7,
+      isCurrentMonth: false,
+    });
   });
 
   it('月度统计非法区间回落到 12 个月并命中缓存', async () => {
@@ -452,6 +455,12 @@ describe('AdminOperationsService', () => {
     // 历史月整月都有汇总行，避免踩到「缺失日期实时补算」
     seedMonth('2026-05', 31);
     service.statsModel = statsModel as never;
+    // 累计收入改为实时同期群重算：9-19 注册用户实际贡献 99 元
+    service.orderModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-09-19', revenue: 9900 }])
+      ),
+    } as never;
     const recompute = jest
       .spyOn(service, 'computeAndPersistDailyStats')
       .mockResolvedValue({ date: '2026-09-19' } as never);
@@ -464,6 +473,9 @@ describe('AdminOperationsService', () => {
       date: '2026-09-19',
       userMessages: 190,
     });
+    // 累计收入用实时同期群口径覆盖快照里的旧值（快照 seeded 为 19）
+    expect(result.daily[18].cohortRevenue).toBe(99);
+    expect(result.daily[0].cohortRevenue).toBe(0);
     // 普通读取不该触发任何重算
     expect(recompute).not.toHaveBeenCalled();
 
@@ -820,6 +832,49 @@ describe('AdminOperationsService', () => {
     );
   });
 
+  it('注册日快照为 0、订单后至时，每日明细展示实时累计收入', async () => {
+    // 把「今天」定在 9-25，保证当月就是 25 天，不会触发缺失日期补算
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-25T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+    const { stats, statsModel } = createPromotionExpenseStore();
+    for (let day = 1; day <= 25; day += 1) {
+      const date = `2026-09-${String(day).padStart(2, '0')}`;
+      stats.set(date, {
+        date,
+        newUsers: day === 25 ? 690 : 100,
+        newAgents: 0,
+        newUserChatUsers: 0,
+        newUserMessages: 0,
+        newUserFiveMessageUsers: 0,
+        allChatUsers: 0,
+        userMessages: 0,
+        paidUsers: 0,
+        paidOrders: 0,
+        sameDayPayingUsers: 0,
+        paidRevenue: 0,
+        refundedRevenue: 0,
+        netRevenue: 0,
+        // 快照在订单发生前写入，因此为 0
+        cohortRevenue: 0,
+        promotionExpense: 0,
+        profit: 0,
+      });
+    }
+    service.statsModel = statsModel as never;
+    service.orderModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-09-25', revenue: 9900 }])
+      ),
+    } as never;
+
+    const result = await service.getDailyDetail('2026-09');
+    const row = result.daily.find(item => item.date === '2026-09-25');
+
+    expect(row?.cohortRevenue).toBe(99);
+    expect(row?.profit).toBe(99);
+    jest.useRealTimers();
+  });
+
   it('保存每日推广费手动覆盖并支持恢复默认', async () => {
     const service = new AdminOperationsService();
     const { stats, overrides, statsModel, queryRunner } =
@@ -844,6 +899,12 @@ describe('AdminOperationsService', () => {
       profit: 190,
     });
     service.statsModel = statsModel as never;
+    // 累计收入实时重算：2026-08-23 注册用户贡献 500 元
+    service.orderModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08-23', revenue: 50000 }])
+      ),
+    } as never;
 
     const saved = await service.updateDailyPromotionExpense('2026-08-23', {
       promotionExpense: 250,

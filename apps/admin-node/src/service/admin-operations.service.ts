@@ -133,10 +133,12 @@ const orderAnalyticsCache = new Map<
   string,
   { expiresAt: number; value: AdminOrderAnalyticsDTO }
 >();
-let allTimeCache: {
-  expiresAt: number;
-  value: AdminOperationsReportDTO['allTime'];
-} | undefined;
+let allTimeCache:
+  | {
+      expiresAt: number;
+      value: AdminOperationsReportDTO['allTime'];
+    }
+  | undefined;
 const hourlyCountCache = new Map<
   string,
   { expiresAt: number; value: HourlyCountRow[] }
@@ -204,7 +206,6 @@ export interface AdminDailyNoteResult {
 
 @Provide()
 export class AdminOperationsService {
-
   @InjectEntityModel(AdminDailyStatsEntity)
   statsModel: MongoRepository<AdminDailyStatsEntity>;
 
@@ -493,9 +494,10 @@ export class AdminOperationsService {
     const dayMap = await this.ensureDaysFromStats([date]);
     const point = dayMap.get(date);
     const promotionExpense = override ?? getDouyinPromotionExpense(date);
-    const profit = this.roundMoney(
-      (point?.cohortRevenue ?? 0) - promotionExpense
-    );
+    // 累计收入是同期群终身口径，必须实时重算，否则会把过期快照值算进 profit。
+    const liveCohortRevenue = await this.loadLiveCohortRevenue(date, date);
+    const cohortRevenue = this.roundMoney(liveCohortRevenue.get(date) ?? 0);
+    const profit = this.roundMoney(cohortRevenue - promotionExpense);
 
     // 先写覆盖值集合（null 表示恢复默认 → 删除覆盖文档），再回写汇总行的有效值。
     await this.savePromotionExpenseOverride(date, override);
@@ -503,6 +505,7 @@ export class AdminOperationsService {
       { date },
       {
         $set: {
+          cohortRevenue,
           promotionExpense,
           profit,
           computedAt: new Date(),
@@ -516,6 +519,7 @@ export class AdminOperationsService {
     return {
       ...(point ?? this.emptyDailyPoint(date)),
       date,
+      cohortRevenue,
       promotionExpense,
       profit,
       promotionExpenseManual: override !== undefined,
@@ -870,7 +874,10 @@ export class AdminOperationsService {
       );
       const yesterday = `${yesterdayDate.getUTCFullYear()}-${String(
         yesterdayDate.getUTCMonth() + 1
-      ).padStart(2, '0')}-${String(yesterdayDate.getUTCDate()).padStart(2, '0')}`;
+      ).padStart(2, '0')}-${String(yesterdayDate.getUTCDate()).padStart(
+        2,
+        '0'
+      )}`;
       for (const date of [yesterday, today]) {
         if (date.startsWith(normalizedMonth)) {
           await this.computeAndPersistDailyStats(date);
@@ -914,7 +921,10 @@ export class AdminOperationsService {
   }
 
   /** 写入/清除某日运营笔记。空文本表示清除。 */
-  async setDailyNote(date: string, rawNote: unknown): Promise<AdminDailyNoteResult> {
+  async setDailyNote(
+    date: string,
+    rawNote: unknown
+  ): Promise<AdminDailyNoteResult> {
     if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)) {
       throw new AppError('INVALID_DATE', `invalid date: ${date}`);
     }
@@ -974,7 +984,9 @@ export class AdminOperationsService {
     const year = Number(yearText);
     const monthIndex = Number(monthText) - 1;
     const day = Number(dayText);
-    const dayStart = new Date(Date.UTC(year, monthIndex, day) - BEIJING_OFFSET_MS);
+    const dayStart = new Date(
+      Date.UTC(year, monthIndex, day) - BEIJING_OFFSET_MS
+    );
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
     const liveUserMessageMatch = {
@@ -988,37 +1000,46 @@ export class AdminOperationsService {
       paymentProvider: { $ne: 'admin_manual' },
     };
 
-    const [users, agents, messageStats, orderStats, refunded, legacyRefunded, cohortDaily] =
-      await Promise.all([
-        this.aggregateDailyCount(this.userModel, dayStart, dayEnd),
-        this.aggregateDailyCount(this.agentModel, dayStart, dayEnd, {
-          $or: [
-            { messengerOfAgentId: { $exists: false } },
-            { messengerOfAgentId: null },
-          ],
-        }),
-        this.aggregateDailyMessageStats(dayStart, dayEnd, liveUserMessageMatch),
-        this.aggregateDailyOrderStats(dayStart, dayEnd, realOrderMatch),
-        this.aggregateDailyAmount(
-          this.orderRefundModel,
-          {
-            ...realOrderMatch,
-            status: OrderRefundStatus.completed,
-            completedAt: { $gte: dayStart, $lt: dayEnd },
-          },
-          '$completedAt',
-          '$amount'
-        ),
-        this.aggregateLegacyDailyRefundAmounts(dayStart, dayEnd, realOrderMatch),
-        this.aggregateCohortDailyRevenue(dayStart, dayEnd, realOrderMatch),
-      ]);
+    const [
+      users,
+      agents,
+      messageStats,
+      orderStats,
+      refunded,
+      legacyRefunded,
+      cohortDaily,
+    ] = await Promise.all([
+      this.aggregateDailyCount(this.userModel, dayStart, dayEnd),
+      this.aggregateDailyCount(this.agentModel, dayStart, dayEnd, {
+        $or: [
+          { messengerOfAgentId: { $exists: false } },
+          { messengerOfAgentId: null },
+        ],
+      }),
+      this.aggregateDailyMessageStats(dayStart, dayEnd, liveUserMessageMatch),
+      this.aggregateDailyOrderStats(dayStart, dayEnd, realOrderMatch),
+      this.aggregateDailyAmount(
+        this.orderRefundModel,
+        {
+          ...realOrderMatch,
+          status: OrderRefundStatus.completed,
+          completedAt: { $gte: dayStart, $lt: dayEnd },
+        },
+        '$completedAt',
+        '$amount'
+      ),
+      this.aggregateLegacyDailyRefundAmounts(dayStart, dayEnd, realOrderMatch),
+      this.aggregateCohortDailyRevenue(dayStart, dayEnd, realOrderMatch),
+    ]);
 
     const userMap = this.countMap(users);
     const agentMap = this.countMap(agents);
     const messageMap = new Map(messageStats.map(row => [row._id, row]));
     const orderMap = new Map(orderStats.map(row => [row._id, row]));
     const refundMap = this.mergeAmountMaps(refunded, legacyRefunded);
-    const cohortMap = new Map(cohortDaily.map(row => [row._id, Number(row.revenue) || 0]));
+    const cohortMap = new Map(
+      cohortDaily.map(row => [row._id, Number(row.revenue) || 0])
+    );
 
     const messageRow = messageMap.get(date);
     const orderRow = orderMap.get(date);
@@ -1202,11 +1223,36 @@ export class AdminOperationsService {
     const lastDay = isCurrentMonth
       ? Math.min(Number(today.split('-')[2]), daysInMonth)
       : daysInMonth;
-    const dates = Array.from({ length: lastDay }, (_, i) =>
-      `${month}-${String(i + 1).padStart(2, '0')}`
+    const dates = Array.from(
+      { length: lastDay },
+      (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`
     );
     const map = await this.ensureDaysFromStats(dates);
-    return dates.map(d => map.get(d)!).filter(Boolean);
+    // 汇总表里的累计收入是写入时的快照，会漏掉该同期群之后产生的订单，
+    // 这里按整月实时重算覆盖，并同步重算 profit。
+    const liveCohortRevenue = await this.loadLiveCohortRevenue(
+      dates[0],
+      dates[dates.length - 1]
+    );
+    const points: AdminOperationsDailyPointDTO[] = [];
+
+    for (const date of dates) {
+      const point = map.get(date);
+
+      if (!point) {
+        continue;
+      }
+
+      const cohortRevenue = this.roundMoney(liveCohortRevenue.get(date) ?? 0);
+
+      points.push({
+        ...point,
+        cohortRevenue,
+        profit: this.roundMoney(cohortRevenue - point.promotionExpense),
+      });
+    }
+
+    return points;
   }
 
   async getUserValueReport(
@@ -1239,7 +1285,10 @@ export class AdminOperationsService {
     // 新增用户数从预计算汇总表按月汇总，与仪表盘共用同一份数据。
     const toDateStr = (d: Date) => {
       const bj = new Date(d.getTime() + BEIJING_OFFSET_MS);
-      return `${bj.getUTCFullYear()}-${String(bj.getUTCMonth() + 1).padStart(2, '0')}-${String(bj.getUTCDate()).padStart(2, '0')}`;
+      return `${bj.getUTCFullYear()}-${String(bj.getUTCMonth() + 1).padStart(
+        2,
+        '0'
+      )}-${String(bj.getUTCDate()).padStart(2, '0')}`;
     };
     const startDateStr = toDateStr(rangeStart);
     const endDateObj = new Date(rangeEnd.getTime() - 24 * 60 * 60 * 1000);
@@ -1378,34 +1427,42 @@ export class AdminOperationsService {
     );
     const realOrderMatch = this.buildRealOrderMatch();
     // daily 订单/收入数据优先从预计算汇总表读取，与仪表盘共用同一份数据。
-    const [dailyStats, createdOrders, paidCreatedOrders, periodOrderStats, firstTimePayingUsers, productRows, statusRows, relationshipOrders] =
-      await Promise.all([
-        this.getMonthDailyFromStats(normalizedMonth),
-        this.orderModel.count({
-          ...realOrderMatch,
-          createdAt: { $gte: monthStart, $lt: monthEnd },
-        } as never),
-        this.orderModel.count({
-          ...realOrderMatch,
-          createdAt: { $gte: monthStart, $lt: monthEnd },
-          paidAt: { $type: 'date' },
-        } as never),
-        this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
-        this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
-        this.aggregateOrderDistribution(
-          monthStart,
-          monthEnd,
-          { ...realOrderMatch, status: OrderStatus.completed },
-          '$targetCode'
-        ),
-        this.aggregateOrderDistribution(
-          monthStart,
-          monthEnd,
-          { targetCode: { $ne: 'voice_one' } },
-          '$status'
-        ),
-        this.aggregateRelationshipOrders(monthStart, monthEnd, realOrderMatch),
-      ]);
+    const [
+      dailyStats,
+      createdOrders,
+      paidCreatedOrders,
+      periodOrderStats,
+      firstTimePayingUsers,
+      productRows,
+      statusRows,
+      relationshipOrders,
+    ] = await Promise.all([
+      this.getMonthDailyFromStats(normalizedMonth),
+      this.orderModel.count({
+        ...realOrderMatch,
+        createdAt: { $gte: monthStart, $lt: monthEnd },
+      } as never),
+      this.orderModel.count({
+        ...realOrderMatch,
+        createdAt: { $gte: monthStart, $lt: monthEnd },
+        paidAt: { $type: 'date' },
+      } as never),
+      this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
+      this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
+      this.aggregateOrderDistribution(
+        monthStart,
+        monthEnd,
+        { ...realOrderMatch, status: OrderStatus.completed },
+        '$targetCode'
+      ),
+      this.aggregateOrderDistribution(
+        monthStart,
+        monthEnd,
+        { targetCode: { $ne: 'voice_one' } },
+        '$status'
+      ),
+      this.aggregateRelationshipOrders(monthStart, monthEnd, realOrderMatch),
+    ]);
     const daily = dailyStats.map(item => ({
       date: item.date,
       paidUsers: item.paidUsers,
@@ -1838,7 +1895,9 @@ export class AdminOperationsService {
     extraMatch: Record<string, unknown>
   ): Promise<PeriodOrderStatsRow> {
     // 月度去重付费口径 5 分钟缓存
-    const cacheKey = `${start.getTime()}-${end.getTime()}|${JSON.stringify(extraMatch)}`;
+    const cacheKey = `${start.getTime()}-${end.getTime()}|${JSON.stringify(
+      extraMatch
+    )}`;
     const now = Date.now();
     const cached = periodOrderStatsCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -2492,6 +2551,39 @@ export class AdminOperationsService {
     };
   }
 
+  /** 把 `YYYY-MM-DD`（北京日期）转成当天 00:00 对应的 UTC 时刻。 */
+  private beijingDateStart(date: string): Date {
+    const [year, month, day] = date.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day) - BEIJING_OFFSET_MS);
+  }
+
+  /**
+   * 实时计算「按注册日归集」的净收入（单位：元），区间含首尾日期。
+   *
+   * 每日明细的「累计收入」是注册日同期群的**终身**净收入，会随该群体后续下单
+   * 继续增长；而汇总表里的行是一次性快照（`computedAt` 之后不再重算），
+   * 直接沿用会让后来发生的订单永远进不了对应注册日那一行。
+   * 因此读取时按区间做一次实时聚合覆盖该列。
+   */
+  private async loadLiveCohortRevenue(
+    startDate: string,
+    endDate: string
+  ): Promise<Map<string, number>> {
+    const start = this.beijingDateStart(startDate);
+    const end = new Date(
+      this.beijingDateStart(endDate).getTime() + 24 * 60 * 60 * 1000
+    );
+    const rows = await this.aggregateCohortDailyRevenue(
+      start,
+      end,
+      this.buildRealOrderMatch()
+    );
+
+    return new Map(
+      rows.map(row => [row._id, this.centsToYuan(Number(row.revenue) || 0)])
+    );
+  }
+
   private buildLegacyRefundFlowMatch(
     start: Date,
     end: Date,
@@ -2646,7 +2738,9 @@ export class AdminOperationsService {
   ): Promise<HourlyCountRow[]> {
     // 今日实时分布 60 秒缓存，避免每次打开仪表盘重复聚合大表
     const tableName = (repository.metadata?.tableName ?? 'unknown') as string;
-    const cacheKey = `${tableName}|${start.getTime()}|${end.getTime()}|${JSON.stringify(extraMatch)}`;
+    const cacheKey = `${tableName}|${start.getTime()}|${end.getTime()}|${JSON.stringify(
+      extraMatch
+    )}`;
     const now = Date.now();
     const cached = hourlyCountCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -2822,12 +2916,14 @@ export class AdminOperationsService {
    * 没有用户时退回当前月，避免枚举出空区间。
    */
   private async resolveEarliestMonth(currentMonth: string): Promise<string> {
-    const rows = await this.userModel.aggregate<EarliestTimestampRow>([
-      { $match: { createdAt: { $type: 'date' } } },
-      { $sort: { createdAt: 1 } },
-      { $limit: 1 },
-      { $project: { createdAt: 1 } },
-    ]).toArray();
+    const rows = await this.userModel
+      .aggregate<EarliestTimestampRow>([
+        { $match: { createdAt: { $type: 'date' } } },
+        { $sort: { createdAt: 1 } },
+        { $limit: 1 },
+        { $project: { createdAt: 1 } },
+      ])
+      .toArray();
     const earliest = rows[0]?.createdAt;
     if (!(earliest instanceof Date) || Number.isNaN(earliest.getTime())) {
       return currentMonth;
