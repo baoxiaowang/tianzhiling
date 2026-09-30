@@ -97,6 +97,35 @@ export interface AdminOperationsDailyPointDTO {
   promotionExpenseManual?: boolean;
 }
 
+/**
+ * 「累计收入」口径下的单条明细。
+ *
+ * 累计收入按用户注册日归集、且不限支付日期，因此同一注册日的明细会包含
+ * 该注册日用户之后产生的订单与退款。
+ */
+export interface AdminDailyCohortOrderItemDTO {
+  /** 事件时间：订单取支付时间，退款取退款完成时间（ISO 字符串） */
+  occurredAt: string;
+  /** 金额（元）；退款为负数 */
+  amount: number;
+  /** order = 订单支付；refund = 退款 */
+  kind: "order" | "refund";
+  /** 订单号或退款单号，便于与订单页核对 */
+  reference: string;
+  /** 套餐 / 语音包 code */
+  targetCode: string;
+}
+
+export interface AdminDailyCohortOrdersDTO {
+  date: string;
+  /** 与每日明细「累计收入」完全一致的净额（元） */
+  total: number;
+  /** 按时间倒序的明细，最多返回 MAX 条 */
+  items: AdminDailyCohortOrderItemDTO[];
+  /** 明细超过上限被截断（total 仍为全量净额） */
+  truncated: boolean;
+}
+
 export interface UpdateAdminDailyPromotionExpenseRequestDTO {
   /** 手动推广费（元）；传 null 表示恢复为抖评记录默认值 */
   promotionExpense: number | null;

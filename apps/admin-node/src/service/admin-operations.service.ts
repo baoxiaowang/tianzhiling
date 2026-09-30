@@ -10,6 +10,7 @@ import type {
   AdminOrderAnalyticsDTO,
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
+  AdminDailyCohortOrdersDTO,
   AdminOperationsDailyPointDTO,
   AdminOperationsTaskListDTO,
   AdminSystemRuntimeDTO,
@@ -2582,6 +2583,148 @@ export class AdminOperationsService {
     return new Map(
       rows.map(row => [row._id, this.centsToYuan(Number(row.revenue) || 0)])
     );
+  }
+
+  /** 累计收入明细返回上限，避免单日同期群过大拖慢后台。 */
+  private static readonly MAX_COHORT_ORDER_ROWS = 300;
+
+  /**
+   * 「累计收入」对应的明细细表：该注册日同期群贡献的全部订单与退款。
+   *
+   * 与 `loadLiveCohortRevenue` 同口径（同 extraMatch、同按 user.createdAt 归属、
+   * 同正负号规则），所以 items 求和等于每日明细展示的累计收入；即使明细被截断，
+   * `total` 仍取全量净额，保证对得上。
+   */
+  async getDailyCohortOrders(date: string): Promise<AdminDailyCohortOrdersDTO> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new AppError('INVALID_DATE', `invalid date: ${date}`, 400);
+    }
+
+    const dayStart = this.beijingDateStart(date);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    const extraMatch = this.buildRealOrderMatch();
+    const limit = AdminOperationsService.MAX_COHORT_ORDER_ROWS;
+
+    const [rows, live] = await Promise.all([
+      this.orderModel
+        .aggregate<{
+          occurredAt?: Date;
+          amount?: number;
+          kind: 'order' | 'refund';
+          reference?: string;
+          targetCode?: string;
+        }>([
+          { $match: { ...extraMatch, paidAt: { $type: 'date' } } },
+          {
+            $project: {
+              userId: 1,
+              occurredAt: '$paidAt',
+              amount: { $ifNull: ['$paidAmount', '$payableAmount'] },
+              kind: { $literal: 'order' },
+              reference: '$orderNo',
+              targetCode: 1,
+            },
+          },
+          {
+            $unionWith: {
+              coll: TableName.order_refund,
+              pipeline: [
+                {
+                  $match: {
+                    ...extraMatch,
+                    status: OrderRefundStatus.completed,
+                  },
+                },
+                {
+                  $project: {
+                    userId: 1,
+                    occurredAt: { $ifNull: ['$completedAt', '$createdAt'] },
+                    amount: { $multiply: ['$amount', -1] },
+                    kind: { $literal: 'refund' },
+                    reference: { $ifNull: ['$refundNo', '$originalOrderNo'] },
+                    targetCode: 1,
+                  },
+                },
+              ],
+            },
+          },
+          {
+            $unionWith: {
+              coll: TableName.order,
+              pipeline: [
+                {
+                  $match: {
+                    ...extraMatch,
+                    $or: [
+                      { refundAmount: { $gt: 0 } },
+                      { status: OrderStatus.refunded },
+                    ],
+                  },
+                },
+                {
+                  $lookup: {
+                    from: TableName.order_refund,
+                    localField: '_id',
+                    foreignField: 'originalOrderId',
+                    as: 'independentRefundOrders',
+                  },
+                },
+                { $match: { 'independentRefundOrders.0': { $exists: false } } },
+                {
+                  $project: {
+                    userId: 1,
+                    occurredAt: { $ifNull: ['$refundedAt', '$updatedAt'] },
+                    amount: {
+                      $multiply: [
+                        {
+                          $cond: [
+                            { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                            '$refundAmount',
+                            { $ifNull: ['$paidAmount', '$payableAmount'] },
+                          ],
+                        },
+                        -1,
+                      ],
+                    },
+                    kind: { $literal: 'refund' },
+                    reference: '$orderNo',
+                    targetCode: 1,
+                  },
+                },
+              ],
+            },
+          },
+          {
+            $lookup: {
+              from: TableName.user,
+              localField: 'userId',
+              foreignField: '_id',
+              as: 'user',
+            },
+          },
+          { $unwind: '$user' },
+          { $match: { 'user.createdAt': { $gte: dayStart, $lt: dayEnd } } },
+          { $sort: { occurredAt: -1 } },
+          { $limit: limit + 1 },
+        ])
+        .toArray(),
+      this.loadLiveCohortRevenue(date, date),
+    ]);
+
+    const truncated = rows.length > limit;
+
+    return {
+      date,
+      total: this.roundMoney(live.get(date) ?? 0),
+      items: rows.slice(0, limit).map(row => ({
+        occurredAt: this.formatDate(row.occurredAt),
+        amount: this.centsToYuan(Number(row.amount) || 0),
+        kind: row.kind,
+        reference: row.reference ?? '-',
+        targetCode: row.targetCode ?? '-',
+      })),
+      truncated,
+    };
   }
 
   private buildLegacyRefundFlowMatch(

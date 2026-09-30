@@ -4,6 +4,7 @@ import type {
   AdminMonthlyOrderReportDTO,
   AdminMonthlySummaryDTO,
   AdminMonthlySummaryRange,
+  AdminDailyCohortOrdersDTO,
   AdminOperationsDailyPointDTO,
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
@@ -88,6 +89,16 @@ export function queryDailyDetail(
   return axios.get<DailyDetailDTO>('/admin_api/operations/daily-detail', {
     params: { month, refresh: options?.refresh ? 1 : undefined },
   });
+}
+
+/**
+ * 累计收入下钻：返回该注册日同期群贡献的订单/退款明细。
+ * 与每日明细的累计收入同一口径，明细求和 = 该行金额（截断时以 total 为准）。
+ */
+export function queryDailyCohortOrders(date: string) {
+  return axios.get<AdminDailyCohortOrdersDTO>(
+    `/admin_api/operations/daily-detail/${date}/cohort-orders`
+  );
 }
 
 export function updateDailyNote(date: string, note: string) {

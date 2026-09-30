@@ -48,7 +48,70 @@
           </a-table-column>
           <a-table-column title="累计收入">
             <template #cell="{ record }">
-              {{ formatMoney(record.cohortRevenue) }}
+              <a-popover
+                trigger="click"
+                position="right"
+                :content-style="{ padding: '10px 12px', maxWidth: '440px' }"
+                @popup-visible-change="
+                  (visible: boolean) => onCohortVisible(record, visible)
+                "
+              >
+                <span class="daily-detail-page__cohort-trigger">
+                  {{ formatMoney(record.cohortRevenue) }}
+                </span>
+                <template #content>
+                  <div class="cohort-detail">
+                    <div class="cohort-detail__title">
+                      {{ record.date }} 注册用户 · 累计收入构成
+                    </div>
+                    <a-spin :loading="cohortLoading[record.date]">
+                      <div
+                        v-if="cohortError[record.date]"
+                        class="cohort-detail__empty"
+                      >
+                        {{ cohortError[record.date] }}
+                      </div>
+                      <div
+                        v-else-if="!cohortItems(record.date).length"
+                        class="cohort-detail__empty"
+                      >
+                        暂无明细
+                      </div>
+                      <div v-else class="cohort-detail__list">
+                        <div
+                          v-for="(item, idx) in cohortItems(record.date)"
+                          :key="idx"
+                          class="cohort-detail__row"
+                        >
+                          <span class="cohort-detail__time">
+                            {{ formatTime(item.occurredAt) }}
+                          </span>
+                          <span class="cohort-detail__tag">
+                            {{
+                              item.kind === 'refund' ? '退款' : item.targetCode
+                            }}
+                          </span>
+                          <span
+                            class="cohort-detail__amount"
+                            :class="{ 'is-refund': item.amount < 0 }"
+                          >
+                            {{ formatSignedMoney(item.amount) }}
+                          </span>
+                        </div>
+                      </div>
+                    </a-spin>
+                    <div class="cohort-detail__footer">
+                      <span>
+                        合计
+                        <strong>{{ formatMoney(cohortTotal(record)) }}</strong>
+                      </span>
+                      <span v-if="cohortTruncated[record.date]">
+                        仅显示前 {{ cohortItems(record.date).length }} 条
+                      </span>
+                    </div>
+                  </div>
+                </template>
+              </a-popover>
             </template>
           </a-table-column>
           <a-table-column title="推广费" :width="170">
@@ -103,8 +166,12 @@
   import { onMounted, onUnmounted, reactive, ref } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import type { AdminOperationsDailyPointDTO } from '@tzl/shared';
+  import type {
+    AdminDailyCohortOrderItemDTO,
+    AdminOperationsDailyPointDTO,
+  } from '@tzl/shared';
   import {
+    queryDailyCohortOrders,
     queryDailyDetail,
     updateDailyNote,
     updateDailyPromotionExpense,
@@ -144,6 +211,57 @@
 
   const promotionDraft = (record: AdminOperationsDailyPointDTO) =>
     promotionDrafts[record.date] ?? promotionExpenseFor(record);
+
+  /** 累计收入下钻：按日期缓存同期群订单明细。 */
+  const cohortLoading = reactive<Record<string, boolean>>({});
+  const cohortError = reactive<Record<string, string>>({});
+  const cohortRows = reactive<Record<string, AdminDailyCohortOrderItemDTO[]>>(
+    {}
+  );
+  const cohortTotals = reactive<Record<string, number>>({});
+  const cohortTruncated = reactive<Record<string, boolean>>({});
+
+  const cohortItems = (date: string) => cohortRows[date] || [];
+
+  const cohortTotal = (record: AdminOperationsDailyPointDTO) =>
+    cohortTotals[record.date] ?? record.cohortRevenue;
+
+  const formatTime = (value?: string) =>
+    value ? dayjs(value).format('MM-DD HH:mm') : '—';
+
+  const formatSignedMoney = (value?: number) =>
+    Number(value || 0) < 0
+      ? `-${formatMoney(Math.abs(Number(value || 0)))}`
+      : formatMoney(value);
+
+  const clearCohortDetails = () => {
+    Object.keys(cohortRows).forEach((key) => delete cohortRows[key]);
+    Object.keys(cohortTotals).forEach((key) => delete cohortTotals[key]);
+    Object.keys(cohortTruncated).forEach((key) => delete cohortTruncated[key]);
+    Object.keys(cohortError).forEach((key) => delete cohortError[key]);
+  };
+
+  /** 点击累计收入时才拉取明细；同一日期只拉一次。 */
+  const onCohortVisible = async (
+    record: AdminOperationsDailyPointDTO,
+    visible: boolean
+  ) => {
+    if (!visible || cohortLoading[record.date] || cohortRows[record.date]) {
+      return;
+    }
+    cohortLoading[record.date] = true;
+    delete cohortError[record.date];
+    try {
+      const { data } = await queryDailyCohortOrders(record.date);
+      cohortRows[record.date] = data?.items || [];
+      cohortTotals[record.date] = data?.total ?? record.cohortRevenue;
+      cohortTruncated[record.date] = Boolean(data?.truncated);
+    } catch {
+      cohortError[record.date] = '明细加载失败，请重试';
+    } finally {
+      cohortLoading[record.date] = false;
+    }
+  };
 
   const clearPromotionTimer = (date: string) => {
     const timer = promotionTimers[date];
@@ -323,6 +441,7 @@
       daily.value = data?.daily || [];
       notes.value = data?.notes || {};
       lastUpdatedAt.value = dayjs().format('HH:mm:ss');
+      clearCohortDetails();
       if (!options?.silent) {
         clearPromotionDrafts();
         clearNoteDrafts();
@@ -424,6 +543,13 @@
       }
     }
 
+    &__cohort-trigger {
+      color: rgb(var(--primary-6));
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 1px dashed rgb(var(--primary-4));
+    }
+
     @media (max-width: 900px) {
       padding: 16px;
 
@@ -439,6 +565,76 @@
           min-width: 860px;
         }
       }
+    }
+  }
+</style>
+
+<style lang="less">
+  /* 累计收入下钻弹层：内容被 teleport 到 body，不能用 scoped 样式。 */
+  .cohort-detail {
+    min-width: 300px;
+
+    &__title {
+      margin-bottom: 8px;
+      color: var(--color-text-1);
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    &__list {
+      max-height: 320px;
+      overflow-y: auto;
+    }
+
+    &__row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 0;
+      border-bottom: 1px dashed var(--color-border-1);
+      font-size: 13px;
+    }
+
+    &__time {
+      flex: 0 0 92px;
+      color: var(--color-text-2);
+      font-variant-numeric: tabular-nums;
+    }
+
+    &__tag {
+      flex: 1 1 auto;
+      overflow: hidden;
+      color: var(--color-text-3);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    &__amount {
+      flex: 0 0 auto;
+      color: var(--color-text-1);
+      font-variant-numeric: tabular-nums;
+    }
+
+    &__amount.is-refund {
+      color: rgb(var(--danger-6));
+    }
+
+    &__empty {
+      padding: 12px 0;
+      color: var(--color-text-3);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    &__footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid var(--color-border-2);
+      color: var(--color-text-2);
+      font-size: 13px;
     }
   }
 </style>

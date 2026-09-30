@@ -84,6 +84,12 @@ export class AdminOperationsController {
     });
   }
 
+  /** 累计收入下钻：该注册日同期群贡献的订单/退款明细。 */
+  @Get('/daily-detail/:date/cohort-orders')
+  async dailyCohortOrders(@Param('date') date: string) {
+    return this.adminOperationsService.getDailyCohortOrders(date);
+  }
+
   @Put('/reports/daily/:date/note')
   async updateDailyNote(
     @Param('date') date: string,

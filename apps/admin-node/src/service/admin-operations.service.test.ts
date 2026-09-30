@@ -875,6 +875,93 @@ describe('AdminOperationsService', () => {
     jest.useRealTimers();
   });
 
+  it('累计收入下钻返回同期群订单与退款明细，金额与累计收入同口径', async () => {
+    const service = new AdminOperationsService();
+    service.orderModel = {
+      aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
+        const serialized = JSON.stringify(pipeline);
+        // 明细聚合（含 occurredAt）：订单 + 退款，时间倒序
+        if (serialized.includes('occurredAt')) {
+          return aggregateResult([
+            {
+              occurredAt: new Date('2026-09-30T06:36:36.000Z'),
+              amount: 9900,
+              kind: 'order',
+              reference: 'VIP179075019150772E26184',
+              targetCode: 'vip_year',
+            },
+            {
+              occurredAt: new Date('2026-09-29T02:00:00.000Z'),
+              amount: -1000,
+              kind: 'refund',
+              reference: 'RF2026092900001',
+              targetCode: 'vip_month',
+            },
+          ]);
+        }
+        // 全量净额聚合：99 - 10 = 89 元
+        return aggregateResult([{ _id: '2026-09-25', revenue: 8900 }]);
+      }),
+    } as never;
+
+    const detail = await service.getDailyCohortOrders('2026-09-25');
+
+    expect(detail.date).toBe('2026-09-25');
+    expect(detail.total).toBe(89);
+    expect(detail.truncated).toBe(false);
+    expect(detail.items).toEqual([
+      {
+        occurredAt: '2026-09-30T06:36:36.000Z',
+        amount: 99,
+        kind: 'order',
+        reference: 'VIP179075019150772E26184',
+        targetCode: 'vip_year',
+      },
+      {
+        occurredAt: '2026-09-29T02:00:00.000Z',
+        amount: -10,
+        kind: 'refund',
+        reference: 'RF2026092900001',
+        targetCode: 'vip_month',
+      },
+    ]);
+  });
+
+  it('累计收入下钻明细超过上限时截断，但合计仍为全量净额', async () => {
+    const service = new AdminOperationsService();
+    const manyRows = Array.from({ length: 301 }, (_, i) => ({
+      occurredAt: new Date('2026-09-30T00:00:00.000Z'),
+      amount: 100,
+      kind: 'order',
+      reference: `VIP${i}`,
+      targetCode: 'vip_month',
+    }));
+    service.orderModel = {
+      aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
+        const serialized = JSON.stringify(pipeline);
+        if (serialized.includes('occurredAt')) {
+          return aggregateResult(manyRows);
+        }
+        return aggregateResult([{ _id: '2026-09-25', revenue: 30100 }]);
+      }),
+    } as never;
+
+    const detail = await service.getDailyCohortOrders('2026-09-25');
+
+    expect(detail.items).toHaveLength(300);
+    expect(detail.truncated).toBe(true);
+    expect(detail.total).toBe(301);
+  });
+
+  it('累计收入下钻拒绝非法日期', async () => {
+    const service = new AdminOperationsService();
+    service.orderModel = { aggregate: jest.fn() } as never;
+
+    await expect(
+      service.getDailyCohortOrders('2026-9-5')
+    ).rejects.toMatchObject({ code: 'INVALID_DATE' });
+  });
+
   it('保存每日推广费手动覆盖并支持恢复默认', async () => {
     const service = new AdminOperationsService();
     const { stats, overrides, statsModel, queryRunner } =
