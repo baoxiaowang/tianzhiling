@@ -1,25 +1,25 @@
 export type OrderStatusDTO =
-  | 'pending'
-  | 'paid'
-  | 'granting'
-  | 'completed'
-  | 'closed'
-  | 'refund_requested'
-  | 'refunded'
-  | 'grant_failed';
+  | "pending"
+  | "paid"
+  | "granting"
+  | "completed"
+  | "closed"
+  | "refund_requested"
+  | "refunded"
+  | "grant_failed";
 
-export type OrderTypeDTO = 'vip_plan' | 'voice_package';
+export type OrderTypeDTO = "vip_plan" | "voice_package";
 
 export interface WechatPaymentParamsDTO {
   timeStamp: string;
   nonceStr: string;
   package: string;
-  signType: 'RSA';
+  signType: "RSA";
   paySign: string;
 }
 
 export interface WechatVirtualPaymentParamsDTO {
-  mode: 'short_series_goods';
+  mode: "short_series_goods";
   signData: string;
   paySig: string;
   signature: string;
@@ -48,26 +48,23 @@ export interface UserOrderListDTO {
   pageSize: number;
 }
 
-export type OrderSourceDTO = 'app' | 'weapp' | 'admin';
+export type OrderSourceDTO = "app" | "weapp" | "admin";
 
-export type AdminOrderPaymentTypeDTO = 'normal' | 'virtual';
+export type AdminOrderPaymentTypeDTO = "normal" | "virtual";
 
-export type VirtualGoodsProvideStatusDTO =
-  | 'pending'
-  | 'provided'
-  | 'failed';
+export type VirtualGoodsProvideStatusDTO = "pending" | "provided" | "failed";
 
 export type VoiceMembershipDowngradeStatusDTO =
-  | 'processing'
-  | 'benefits_failed'
-  | 'completed'
-  | 'failed';
+  | "processing"
+  | "benefits_failed"
+  | "completed"
+  | "failed";
 
 export interface VoiceMembershipDowngradePlanDTO {
   id: string;
   code: string;
   name: string;
-  planGroup: 'basic' | 'voice';
+  planGroup: "basic" | "voice";
   priceAmount: number;
   currency: string;
   durationDays?: number;
@@ -91,11 +88,11 @@ export interface AdminVoiceMembershipDowngradeRecordDTO {
 }
 
 export type VoiceMembershipFinalRefundStatusDTO =
-  | 'processing'
-  | 'benefits_processing'
-  | 'benefits_failed'
-  | 'completed'
-  | 'failed';
+  | "processing"
+  | "benefits_processing"
+  | "benefits_failed"
+  | "completed"
+  | "failed";
 
 export interface AdminVoiceMembershipFinalRefundRecordDTO {
   status: VoiceMembershipFinalRefundStatusDTO;
@@ -142,6 +139,23 @@ export interface AdminOrderUserDTO {
 }
 
 export interface AdminOrderRecordDTO extends OrderRecordDTO {
+  /**
+   * 行类型：`order` = 购买订单，`refund` = 退款。
+   * 退款行由 order_refund 生成；没有独立退款单的历史遗留退款也会生成退款行。
+   * 前端必须据此区分：退款行不得执行购买订单的退款/发货等操作。
+   */
+  kind?: "order" | "refund";
+  /** 退款单号（退款行；遗留退款用原订单号占位） */
+  refundNo?: string;
+  /** 原订单号（退款行） */
+  originalOrderNo?: string;
+  /** 原订单 id（退款行，用于跳转原订单） */
+  originalOrderId?: string;
+  /** 退款状态（退款行）：processing / completed / failed */
+  refundStatus?: string;
+  /** 退款类型（退款行） */
+  refundType?: string;
+  refundTypeLabel?: string;
   userId: string;
   user?: AdminOrderUserDTO;
   amount: number;
@@ -163,13 +177,13 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   refundRequestedAt?: string;
   refundRejectedAt?: string;
   refundRejection?: {
-    action: 'not_refund' | 'rejected';
+    action: "not_refund" | "rejected";
     operatorId?: string;
     operatorAccount?: string;
     createdAt: string;
   };
   agentUserMessageCount?: number;
-  vipPlanGroup?: 'basic' | 'voice';
+  vipPlanGroup?: "basic" | "voice";
   vipUpgrade?: boolean;
   voiceMembershipDowngrade?: AdminVoiceMembershipDowngradeRecordDTO;
   voiceMembershipFinalRefund?: AdminVoiceMembershipFinalRefundRecordDTO;
@@ -193,7 +207,12 @@ export interface AdminOrderListParamsDTO {
 
 export interface AdminOrderListDTO {
   items: AdminOrderRecordDTO[];
+  /** 购买订单 + 退款行的合计条数（保持原 `total` 语义） */
   total: number;
+  /** 其中的购买订单笔数 */
+  orderTotal?: number;
+  /** 其中的退款笔数（含遗留退款） */
+  refundTotal?: number;
   page: number;
   pageSize: number;
 }

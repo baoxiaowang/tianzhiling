@@ -2,6 +2,8 @@ import {
   AgentEntitlementStatus,
   AgentEntitlementType,
   MongoObjectId,
+  OrderRefundStatus,
+  OrderRefundType,
   OrderSource,
   OrderStatus,
   OrderType,
@@ -117,6 +119,15 @@ function matchesMongoValue(actual: any, expected: any): boolean {
         matchesMongoValue(actual, value)
       );
     }
+
+    if ('$regex' in expected) {
+      const regex = new RegExp(
+        String(expected.$regex),
+        String(expected.$options ?? '')
+      );
+
+      return typeof actual === 'string' && regex.test(actual);
+    }
   }
 
   if (actual?.toHexString || expected?.toHexString) {
@@ -126,12 +137,36 @@ function matchesMongoValue(actual: any, expected: any): boolean {
   return actual === expected;
 }
 
+function getUnifiedListMatch(service: any): any {
+  const calls = (service.orderModel.aggregate as jest.Mock).mock.calls;
+  const pipeline = calls[calls.length - 1][0] as any[];
+  const stage = pipeline.find((item: any) => item.$match);
+
+  return stage?.$match;
+}
+
 function matchesMongoFilter(record: any, filter: Record<string, any>): boolean {
   return Object.entries(filter).every(([path, expected]) => {
+    if (path === '$and') {
+      return expected.every((item: Record<string, any>) =>
+        matchesMongoFilter(record, item)
+      );
+    }
+
     if (path === '$or') {
       return expected.some((item: Record<string, any>) =>
         matchesMongoFilter(record, item)
       );
+    }
+
+    // Mongo 里 `arr.0` 的 $exists:false 表示数组为空
+    if (path.endsWith('.0') && expected && '$exists' in expected) {
+      const arrayPath = path.slice(0, -2);
+      const array = getNestedValue(record, arrayPath);
+
+      return expected.$exists
+        ? Array.isArray(array) && array.length > 0
+        : !Array.isArray(array) || array.length === 0;
     }
 
     const actual =
@@ -141,6 +176,174 @@ function matchesMongoFilter(record: any, filter: Record<string, any>): boolean {
 
     return matchesMongoValue(actual, expected);
   });
+}
+
+/** 在内存里解释服务用到的聚合阶段，用于按真实管道规则验证列表查询。 */
+function evaluateAggregateExpression(expression: any, row: any): any {
+  if (Array.isArray(expression)) {
+    return expression.map(item => evaluateAggregateExpression(item, row));
+  }
+
+  // 字段引用必须在「非对象直接返回」之前处理
+  if (typeof expression === 'string' && expression.startsWith('$')) {
+    return getNestedValue(row, expression.slice(1));
+  }
+
+  if (!expression || typeof expression !== 'object') {
+    return expression;
+  }
+
+  if ('$literal' in expression) {
+    return expression.$literal;
+  }
+
+  if ('$ifNull' in expression) {
+    const [value, fallback] = expression.$ifNull;
+    const resolved = evaluateAggregateExpression(value, row);
+
+    return resolved === undefined || resolved === null
+      ? evaluateAggregateExpression(fallback, row)
+      : resolved;
+  }
+
+  if ('$cond' in expression) {
+    const [test, whenTrue, whenFalse] = expression.$cond;
+
+    return evaluateAggregateExpression(test, row)
+      ? evaluateAggregateExpression(whenTrue, row)
+      : evaluateAggregateExpression(whenFalse, row);
+  }
+
+  if ('$gt' in expression) {
+    const [left, right] = expression.$gt;
+
+    return (
+      evaluateAggregateExpression(left, row) >
+      evaluateAggregateExpression(right, row)
+    );
+  }
+
+  if ('$ne' in expression) {
+    const [left, right] = expression.$ne;
+
+    return (
+      evaluateAggregateExpression(left, row) !==
+      evaluateAggregateExpression(right, row)
+    );
+  }
+
+  return expression;
+}
+
+function runOrderListPipeline(
+  seedRows: any[] | undefined,
+  stages: any[],
+  collections: Record<string, any[]>
+): any {
+  let rows: any[] = (seedRows ?? collections.order ?? []).map(row =>
+    cloneMongoValue(row)
+  );
+
+  for (const stage of stages) {
+    if (stage.$addFields) {
+      rows = rows.map(row => {
+        const merged = { ...row };
+
+        for (const [key, expression] of Object.entries(stage.$addFields)) {
+          merged[key] = evaluateAggregateExpression(expression, row);
+        }
+
+        return merged;
+      });
+    } else if (stage.$unionWith) {
+      // 必须从 $unionWith.coll 指定的集合取源，否则会把订单误当成退款
+      const unionRows = runOrderListPipeline(
+        collections[stage.$unionWith.coll] ?? [],
+        stage.$unionWith.pipeline,
+        collections
+      );
+
+      rows = rows.concat(unionRows);
+    } else if (stage.$match) {
+      rows = rows.filter(row => matchesMongoFilter(row, stage.$match));
+    } else if (stage.$lookup) {
+      const { from, localField, foreignField, as } = stage.$lookup;
+
+      // 测试夹具用 `id` 承载主键，等价于真实文档的 `_id`
+      const lookupValue = (source: any, field: string) =>
+        field === '_id'
+          ? source._id ?? source.id
+          : getNestedValue(source, field);
+
+      rows = rows.map(row => ({
+        ...row,
+        [as]: (collections[from] ?? []).filter(candidate =>
+          sameObjectId(
+            lookupValue(candidate, foreignField),
+            lookupValue(row, localField)
+          )
+        ),
+      }));
+    } else if (stage.$project) {
+      rows = rows.map(row => {
+        const projected: any = {};
+
+        for (const [key, value] of Object.entries(stage.$project)) {
+          if (value === 1) {
+            projected[key] = row[key];
+          } else if (value === 0) {
+            // 排除字段：本测试用不到
+          } else {
+            projected[key] = evaluateAggregateExpression(value, row);
+          }
+        }
+
+        projected._id = row._id ?? row.id;
+
+        return projected;
+      });
+    } else if (stage.$sort) {
+      const [[field, direction]] = Object.entries(stage.$sort) as [
+        string,
+        number
+      ][];
+
+      rows = [...rows].sort((left, right) => {
+        const a = getNestedValue(left, field);
+        const b = getNestedValue(right, field);
+        const at = a instanceof Date ? a.getTime() : a;
+        const bt = b instanceof Date ? b.getTime() : b;
+
+        if (at === bt) {
+          return 0;
+        }
+
+        return (at > bt ? 1 : -1) * direction;
+      });
+    } else if (stage.$skip !== undefined) {
+      rows = rows.slice(stage.$skip);
+    } else if (stage.$limit !== undefined) {
+      rows = rows.slice(0, stage.$limit);
+    } else if (stage.$count) {
+      rows = [{ [stage.$count]: rows.length }];
+    } else if (stage.$facet) {
+      const result: Record<string, any[]> = {};
+
+      for (const [key, subPipeline] of Object.entries(stage.$facet)) {
+        result[key] = runOrderListPipeline(
+          rows,
+          subPipeline as any[],
+          collections
+        );
+      }
+
+      return result;
+    } else {
+      throw new Error(`unsupported aggregate stage: ${JSON.stringify(stage)}`);
+    }
+  }
+
+  return rows;
 }
 
 function applyMongoUpdate(record: any, update: Record<string, any>): void {
@@ -362,6 +565,25 @@ function createService() {
   service.orderModel = {
     count: jest.fn(),
     find: jest.fn().mockResolvedValue([]),
+    // 订单明细列表已改为「订单 + 独立退款 + 遗留退款」合并聚合，
+    // 这里用内存聚合器按真实管道（$match/$lookup/$unionWith/$facet）求值，
+    // 而不是直接返回预设结果。
+    aggregate: jest.fn((pipeline: any[]) => {
+      const facet = (pipeline as any[]).find(
+        stage => stage.$facet && (stage.$facet as any).totalCount
+      );
+
+      if (!facet) {
+        return { toArray: async () => [] };
+      }
+
+      const result = runOrderListPipeline(undefined, pipeline, {
+        order: orders,
+        order_refund: refundOrders,
+      });
+
+      return { toArray: async () => [result] };
+    }),
     findOne: jest.fn(async ({ where }: any) => {
       const id = where?.id ?? where?._id;
       const orderNo = where?.orderNo;
@@ -723,31 +945,28 @@ describe('AdminOrderService', () => {
   });
 
   it('lists orders with user profile and account fields', async () => {
-    const { service } = createService();
+    const { service, orders } = createService();
 
-    jest.mocked(service.orderModel.count).mockResolvedValue(1 as never);
-    jest.mocked(service.orderModel.find).mockResolvedValue([
-      {
-        id: ORDER_ID,
-        orderNo: 'VIP202605020001',
-        userId: USER_ID,
-        orderType: OrderType.vipPlan,
-        targetCode: 'vip_year',
-        title: '一年会员',
-        amount: 19900,
-        discountAmount: 10000,
-        couponAmount: 0,
-        payableAmount: 9900,
-        currency: 'CNY',
-        status: OrderStatus.completed,
-        source: OrderSource.weapp,
-        paymentProvider: 'wechat_pay',
-        paymentTradeNo: '420000000020260502000001',
-        createdAt: ORDER_CREATED_AT,
-        updatedAt: ORDER_CREATED_AT,
-        paidAt: ORDER_CREATED_AT,
-      },
-    ] as never);
+    orders.push({
+      id: ORDER_ID,
+      orderNo: 'VIP202605020001',
+      userId: USER_ID,
+      orderType: OrderType.vipPlan,
+      targetCode: 'vip_year',
+      title: '一年会员',
+      amount: 19900,
+      discountAmount: 10000,
+      couponAmount: 0,
+      payableAmount: 9900,
+      currency: 'CNY',
+      status: OrderStatus.completed,
+      source: OrderSource.weapp,
+      paymentProvider: 'wechat_pay',
+      paymentTradeNo: '420000000020260502000001',
+      createdAt: ORDER_CREATED_AT,
+      updatedAt: ORDER_CREATED_AT,
+      paidAt: ORDER_CREATED_AT,
+    } as never);
     jest.mocked(service.userModel.find).mockResolvedValue([
       {
         id: USER_ID,
@@ -769,21 +988,10 @@ describe('AdminOrderService', () => {
       pageSize: '20',
     });
 
-    expect(service.orderModel.find).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {},
-        order: {
-          createdAt: 'DESC',
-        },
-        skip: 0,
-        take: 20,
-      })
-    );
-    expect(service.userModel.find).toHaveBeenCalledWith({
-      where: {
-        $or: [{ id: { $in: [USER_ID] } }, { _id: { $in: [USER_ID] } }],
-      },
-    });
+    // 合并查询走聚合管道，不再走 find/count
+    expect(service.orderModel.aggregate).toHaveBeenCalled();
+    // 用户信息合并结果由下方 result 断言精确校验
+    expect(service.userModel.find).toHaveBeenCalled();
     expect(result).toEqual({
       items: [
         expect.objectContaining({
@@ -804,33 +1012,32 @@ describe('AdminOrderService', () => {
         }),
       ],
       total: 1,
+      orderTotal: 1,
+      refundTotal: 0,
       page: 1,
       pageSize: 20,
     });
   });
 
   it('falls back to _id when joining order users', async () => {
-    const { service } = createService();
+    const { service, orders } = createService();
 
-    jest.mocked(service.orderModel.count).mockResolvedValue(1 as never);
-    jest.mocked(service.orderModel.find).mockResolvedValue([
-      {
-        id: ORDER_ID,
-        orderNo: 'VIP202605020002',
-        userId: USER_ID,
-        orderType: OrderType.vipPlan,
-        title: '一年会员',
-        amount: 100,
-        discountAmount: 0,
-        couponAmount: 0,
-        payableAmount: 100,
-        currency: 'CNY',
-        status: OrderStatus.pending,
-        source: OrderSource.weapp,
-        createdAt: ORDER_CREATED_AT,
-        updatedAt: ORDER_CREATED_AT,
-      },
-    ] as never);
+    orders.push({
+      id: ORDER_ID,
+      orderNo: 'VIP202605020002',
+      userId: USER_ID,
+      orderType: OrderType.vipPlan,
+      title: '一年会员',
+      amount: 100,
+      discountAmount: 0,
+      couponAmount: 0,
+      payableAmount: 100,
+      currency: 'CNY',
+      status: OrderStatus.pending,
+      source: OrderSource.weapp,
+      createdAt: ORDER_CREATED_AT,
+      updatedAt: ORDER_CREATED_AT,
+    } as never);
     jest.mocked(service.userModel.find).mockResolvedValue([
       {
         _id: USER_ID,
@@ -866,23 +1073,25 @@ describe('AdminOrderService', () => {
       orderType: OrderType.vipPlan,
     });
 
-    expect(service.orderModel.count).toHaveBeenCalledWith({
-      $and: [
-        {
-          status: OrderStatus.pending,
-          orderType: OrderType.vipPlan,
-          source: OrderSource.weapp,
-        },
+    const match = getUnifiedListMatch(service);
+
+    expect(match.$and).toEqual(
+      expect.arrayContaining([
+        { $or: [{ kind: 'order', status: OrderStatus.pending }] },
+        { orderType: OrderType.vipPlan },
+        { source: OrderSource.weapp },
         {
           $or: expect.arrayContaining([
             { orderNo: { $regex: 'VIP20260502', $options: 'i' } },
+            { refundNo: { $regex: 'VIP20260502', $options: 'i' } },
+            { originalOrderNo: { $regex: 'VIP20260502', $options: 'i' } },
             { title: { $regex: 'VIP20260502', $options: 'i' } },
             { targetCode: { $regex: 'VIP20260502', $options: 'i' } },
             { paymentTradeNo: { $regex: 'VIP20260502', $options: 'i' } },
           ]),
         },
-      ],
-    });
+      ])
+    );
   });
 
   it('filters orders by user id', async () => {
@@ -895,9 +1104,9 @@ describe('AdminOrderService', () => {
       userId: USER_ID.toHexString(),
     });
 
-    expect(service.orderModel.count).toHaveBeenCalledWith({
-      userId: USER_ID,
-    });
+    expect(getUnifiedListMatch(service).$and).toEqual(
+      expect.arrayContaining([{ userId: USER_ID }])
+    );
   });
 
   it('filters orders by the user registration month in Beijing time', async () => {
@@ -919,9 +1128,9 @@ describe('AdminOrderService', () => {
         },
       },
     });
-    expect(service.orderModel.count).toHaveBeenCalledWith({
-      userId: { $in: [USER_ID] },
-    });
+    expect(getUnifiedListMatch(service).$and).toEqual(
+      expect.arrayContaining([{ userId: { $in: [USER_ID] } }])
+    );
   });
 
   it('filters orders by created time range and virtual payment type', async () => {
@@ -936,13 +1145,23 @@ describe('AdminOrderService', () => {
       paymentType: 'virtual',
     });
 
-    expect(service.orderModel.count).toHaveBeenCalledWith({
-      paymentProvider: 'wechat_virtual_pay',
-      createdAt: {
-        $gte: new Date('2026-05-01T00:00:00.000Z'),
-        $lte: new Date('2026-05-02T23:59:59.999Z'),
-      },
-    });
+    const range = {
+      $gte: new Date('2026-05-01T00:00:00.000Z'),
+      $lte: new Date('2026-05-02T23:59:59.999Z'),
+    };
+
+    expect(getUnifiedListMatch(service).$and).toEqual(
+      expect.arrayContaining([
+        { paymentProvider: 'wechat_virtual_pay' },
+        // 购买按支付时间、退款按完成时间分别归入
+        {
+          $or: [
+            { kind: 'order', paidAt: range },
+            { kind: 'refund', completedAt: range },
+          ],
+        },
+      ])
+    );
   });
 
   it('filters normal payment orders as non virtual payment orders', async () => {
@@ -955,9 +1174,11 @@ describe('AdminOrderService', () => {
       paymentType: 'normal',
     });
 
-    expect(service.orderModel.count).toHaveBeenCalledWith({
-      paymentProvider: { $ne: 'wechat_virtual_pay' },
-    });
+    expect(getUnifiedListMatch(service).$and).toEqual(
+      expect.arrayContaining([
+        { paymentProvider: { $ne: 'wechat_virtual_pay' } },
+      ])
+    );
   });
 
   it('excludes admin manual orders when requested', async () => {
@@ -971,10 +1192,12 @@ describe('AdminOrderService', () => {
       excludeAdminManual: true,
     });
 
-    expect(service.orderModel.count).toHaveBeenCalledWith({
-      status: OrderStatus.refundRequested,
-      paymentProvider: { $ne: 'admin_manual' },
-    });
+    expect(getUnifiedListMatch(service).$and).toEqual(
+      expect.arrayContaining([
+        { $or: [{ kind: 'order', status: OrderStatus.refundRequested }] },
+        { paymentProvider: { $ne: 'admin_manual' } },
+      ])
+    );
   });
 
   it('excludes admin manual orders from normal payment filters when requested', async () => {
@@ -988,9 +1211,11 @@ describe('AdminOrderService', () => {
       excludeAdminManual: 'true',
     });
 
-    expect(service.orderModel.count).toHaveBeenCalledWith({
-      paymentProvider: { $nin: ['wechat_virtual_pay', 'admin_manual'] },
-    });
+    expect(getUnifiedListMatch(service).$and).toEqual(
+      expect.arrayContaining([
+        { paymentProvider: { $nin: ['wechat_virtual_pay', 'admin_manual'] } },
+      ])
+    );
   });
 
   it('creates an admin vip order and grants membership benefits', async () => {
@@ -3856,14 +4081,18 @@ describe('AdminOrderService', () => {
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
     jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
 
-    const result = await service.rejectRefundOrder(ORDER_ID.toHexString(), 'not_refund', {
-      sub: 'admin-1',
-      account: 'operator',
-      roles: ['admin'],
-      iat: 0,
-      exp: 1,
-      nonce: 'nonce',
-    });
+    const result = await service.rejectRefundOrder(
+      ORDER_ID.toHexString(),
+      'not_refund',
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
 
     expect(order.status).toBe(OrderStatus.completed);
     expect(order.refundRejectedAt).toEqual(ORDER_CREATED_AT);
@@ -3930,18 +4159,14 @@ describe('AdminOrderService', () => {
     orders.push(createCompletedVipOrder());
 
     await expect(
-      service.rejectRefundOrder(
-        ORDER_ID.toHexString(),
-        'not_refund',
-        {
-          sub: 'admin-1',
-          account: 'operator',
-          roles: ['admin'],
-          iat: 0,
-          exp: 1,
-          nonce: 'nonce',
-        }
-      )
+      service.rejectRefundOrder(ORDER_ID.toHexString(), 'not_refund', {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      })
     ).rejects.toMatchObject({
       code: 'ORDER_NOT_REFUND_REQUESTED',
       status: 400,
@@ -3961,18 +4186,14 @@ describe('AdminOrderService', () => {
     );
 
     await expect(
-      service.rejectRefundOrder(
-        ORDER_ID.toHexString(),
-        'not_refund',
-        {
-          sub: 'admin-1',
-          account: 'operator',
-          roles: ['admin'],
-          iat: 0,
-          exp: 1,
-          nonce: 'nonce',
-        }
-      )
+      service.rejectRefundOrder(ORDER_ID.toHexString(), 'not_refund', {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      })
     ).rejects.toMatchObject({
       code: 'ORDER_REFUND_REJECT_UNSUPPORTED',
       status: 400,
@@ -3994,18 +4215,14 @@ describe('AdminOrderService', () => {
     );
 
     await expect(
-      service.rejectRefundOrder(
-        ORDER_ID.toHexString(),
-        'not_refund',
-        {
-          sub: 'admin-1',
-          account: 'operator',
-          roles: ['admin'],
-          iat: 0,
-          exp: 1,
-          nonce: 'nonce',
-        }
-      )
+      service.rejectRefundOrder(ORDER_ID.toHexString(), 'not_refund', {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      })
     ).rejects.toMatchObject({
       code: 'ORDER_REFUND_IN_PROGRESS',
       status: 409,
@@ -4028,31 +4245,238 @@ describe('AdminOrderService', () => {
     );
 
     await expect(
-      service.rejectRefundOrder(
-        ORDER_ID.toHexString(),
-        'not_refund',
-        {
-          sub: 'admin-1',
-          account: 'operator',
-          roles: ['admin'],
-          iat: 0,
-          exp: 1,
-          nonce: 'nonce',
-        }
-      )
+      service.rejectRefundOrder(ORDER_ID.toHexString(), 'not_refund', {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      })
     ).rejects.toMatchObject({
       code: 'ORDER_REFUND_ALREADY_SUCCESS',
       status: 409,
     });
   });
 
-  it('lists orders with the account to agent message count', async () => {
-    const { service, messages } = createService();
+  it('独立退款作为单独一行返回，并与购买订单一起计数', async () => {
+    const { service, orders, refundOrders } = createService();
 
-    jest.mocked(service.orderModel.count).mockResolvedValue(1 as never);
-    jest.mocked(service.orderModel.find).mockResolvedValue([
-      createCompletedVipOrder(),
-    ] as never);
+    orders.push(createCompletedVipOrder({ orderNo: 'VIP-A' }));
+    refundOrders.push({
+      id: new MongoObjectId('665000000000000000000901'),
+      refundNo: 'RF-1',
+      originalOrderId: ORDER_ID,
+      originalOrderNo: 'VIP-A',
+      userId: USER_ID,
+      orderType: OrderType.vipPlan,
+      targetCode: 'vip_year',
+      refundType: OrderRefundType.orderRefund,
+      amount: 2000,
+      currency: 'CNY',
+      status: OrderRefundStatus.completed,
+      source: OrderSource.weapp,
+      paymentProvider: 'wechat_pay',
+      requestedAt: ORDER_CREATED_AT,
+      completedAt: ORDER_CREATED_AT,
+      createdAt: ORDER_CREATED_AT,
+      updatedAt: ORDER_CREATED_AT,
+    } as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listOrders({});
+
+    expect(result.total).toBe(2);
+    expect(result.orderTotal).toBe(1);
+    expect(result.refundTotal).toBe(1);
+    const refundRow = result.items.find(item => item.kind === 'refund');
+    expect(refundRow).toMatchObject({
+      kind: 'refund',
+      orderNo: 'RF-1',
+      refundNo: 'RF-1',
+      originalOrderNo: 'VIP-A',
+      originalOrderId: ORDER_ID.toHexString(),
+      refundType: OrderRefundType.orderRefund,
+      refundTypeLabel: '普通退订退款',
+      refundStatus: OrderRefundStatus.completed,
+      payableAmount: 2000,
+    });
+  });
+
+  it('处理中/失败的退款也独立成行并带状态', async () => {
+    const { service, orders, refundOrders } = createService();
+
+    orders.push(createCompletedVipOrder({ orderNo: 'VIP-B' }));
+    const statuses = [OrderRefundStatus.processing, OrderRefundStatus.failed];
+    statuses.forEach((status, index) => {
+      refundOrders.push({
+        id: new MongoObjectId(`66500000000000000000091${index}`),
+        refundNo: `RF-${status}`,
+        originalOrderId: ORDER_ID,
+        originalOrderNo: 'VIP-B',
+        userId: USER_ID,
+        orderType: OrderType.vipPlan,
+        targetCode: 'vip_year',
+        refundType: OrderRefundType.orderRefund,
+        amount: 1000,
+        status,
+        source: OrderSource.weapp,
+        paymentProvider: 'wechat_pay',
+        requestedAt: ORDER_CREATED_AT,
+        createdAt: ORDER_CREATED_AT,
+        updatedAt: ORDER_CREATED_AT,
+      } as never);
+    });
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listOrders({});
+
+    expect(result.refundTotal).toBe(2);
+    expect(
+      result.items
+        .filter(item => item.kind === 'refund')
+        .map(item => item.refundStatus)
+        .sort()
+    ).toEqual([...statuses].sort());
+  });
+
+  it('遗留退款生成可追溯行；已有独立退款单时不重复出现', async () => {
+    const legacy = createService();
+    legacy.orders.push(
+      createCompletedVipOrder({
+        orderNo: 'VIP-LEGACY',
+        refundAmount: 3000,
+        status: OrderStatus.refunded,
+        refundedAt: ORDER_CREATED_AT,
+      })
+    );
+    jest.mocked(legacy.service.userModel.find).mockResolvedValue([] as never);
+    jest
+      .mocked(legacy.service.userAccountModel.find)
+      .mockResolvedValue([] as never);
+
+    const legacyResult = await legacy.service.listOrders({});
+    const legacyRow = legacyResult.items.find(item => item.kind === 'refund');
+
+    // 已退款订单本身仍作为购买行出现，退款另占一行
+    expect(legacyResult.refundTotal).toBe(1);
+    expect(legacyResult.orderTotal).toBe(1);
+    expect(legacyRow).toMatchObject({
+      kind: 'refund',
+      refundType: 'legacy_refund',
+      refundTypeLabel: '遗留退款（订单内扣减）',
+      originalOrderNo: 'VIP-LEGACY',
+      payableAmount: 3000,
+    });
+
+    const withIndependent = createService();
+    withIndependent.orders.push(
+      createCompletedVipOrder({
+        orderNo: 'VIP-DEDUP',
+        refundAmount: 3000,
+        status: OrderStatus.refunded,
+        refundedAt: ORDER_CREATED_AT,
+      })
+    );
+    withIndependent.refundOrders.push({
+      id: new MongoObjectId('665000000000000000000920'),
+      refundNo: 'RF-DEDUP',
+      originalOrderId: ORDER_ID,
+      originalOrderNo: 'VIP-DEDUP',
+      userId: USER_ID,
+      orderType: OrderType.vipPlan,
+      targetCode: 'vip_year',
+      refundType: OrderRefundType.orderRefund,
+      amount: 3000,
+      status: OrderRefundStatus.completed,
+      source: OrderSource.weapp,
+      paymentProvider: 'wechat_pay',
+      requestedAt: ORDER_CREATED_AT,
+      completedAt: ORDER_CREATED_AT,
+      createdAt: ORDER_CREATED_AT,
+      updatedAt: ORDER_CREATED_AT,
+    } as never);
+    jest
+      .mocked(withIndependent.service.userModel.find)
+      .mockResolvedValue([] as never);
+    jest
+      .mocked(withIndependent.service.userAccountModel.find)
+      .mockResolvedValue([] as never);
+
+    const dedupResult = await withIndependent.service.listOrders({});
+
+    expect(dedupResult.refundTotal).toBe(1);
+    expect(
+      dedupResult.items.filter(item => item.kind === 'refund')
+    ).toHaveLength(1);
+    expect(
+      dedupResult.items.find(item => item.kind === 'refund')?.refundNo
+    ).toBe('RF-DEDUP');
+  });
+
+  it('退款行参与筛选、排序与分页', async () => {
+    const { service, orders, refundOrders } = createService();
+
+    orders.push(
+      createCompletedVipOrder({
+        orderNo: 'VIP-P1',
+        paymentProvider: 'wechat_pay',
+      })
+    );
+    orders.push(
+      createCompletedVipOrder({
+        orderNo: 'VIP-P2',
+        paymentProvider: 'wechat_virtual_pay',
+      })
+    );
+    refundOrders.push({
+      id: new MongoObjectId('665000000000000000000930'),
+      refundNo: 'RF-VIRTUAL',
+      originalOrderId: ORDER_ID,
+      originalOrderNo: 'VIP-P2',
+      userId: USER_ID,
+      orderType: OrderType.vipPlan,
+      targetCode: 'vip_year',
+      refundType: OrderRefundType.orderRefund,
+      amount: 1000,
+      status: OrderRefundStatus.completed,
+      source: OrderSource.weapp,
+      paymentProvider: 'wechat_virtual_pay',
+      requestedAt: ORDER_CREATED_AT,
+      completedAt: ORDER_CREATED_AT,
+      createdAt: ORDER_CREATED_AT,
+      updatedAt: ORDER_CREATED_AT,
+    } as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const virtualOnly = await service.listOrders({ paymentType: 'virtual' });
+
+    expect(virtualOnly.refundTotal).toBe(1);
+    expect(virtualOnly.orderTotal).toBe(1);
+
+    const refundOnly = await service.listOrders({ kind: 'refund' });
+
+    expect(refundOnly.total).toBe(1);
+    expect(refundOnly.items[0].refundNo).toBe('RF-VIRTUAL');
+
+    const firstPage = await service.listOrders({ page: '1', pageSize: '1' });
+    const secondPage = await service.listOrders({ page: '2', pageSize: '1' });
+
+    // 2 笔购买 + 1 笔退款 = 3 行，分页覆盖退款行
+    expect(firstPage.items).toHaveLength(1);
+    expect(secondPage.items).toHaveLength(1);
+    expect(firstPage.total).toBe(3);
+    expect(firstPage.orderTotal).toBe(2);
+    expect(firstPage.refundTotal).toBe(1);
+  });
+
+  it('lists orders with the account to agent message count', async () => {
+    const { service, orders, messages } = createService();
+
+    orders.push(createCompletedVipOrder());
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
     jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
     messages.push(

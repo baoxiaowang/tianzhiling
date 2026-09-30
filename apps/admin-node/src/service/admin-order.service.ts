@@ -30,6 +30,7 @@ import {
   OrderSource,
   OrderStatus,
   OrderType,
+  TableName,
   UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
@@ -60,6 +61,30 @@ import {
 } from './admin-wechat-pay.service';
 
 type MongoWhere = Record<string, unknown>;
+
+/** 订单明细合并查询的原始行：购买订单 / 独立退款 / 遗留退款 共用。 */
+interface RawUnifiedOrderRow {
+  _id: MongoObjectId;
+  kind: 'order' | 'refund';
+  orderId?: MongoObjectId;
+  orderNo?: string;
+  refundNo?: string;
+  originalOrderNo?: string;
+  originalOrderId?: MongoObjectId;
+  userId?: MongoObjectId;
+  orderType?: string;
+  targetCode?: string;
+  source?: string;
+  paymentProvider?: string;
+  status?: string;
+  refundType?: string;
+  amount?: number;
+  requestedAt?: Date;
+  completedAt?: Date;
+  createdAt?: Date;
+  updatedAt?: Date;
+  sortAt?: Date;
+}
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
@@ -163,39 +188,389 @@ export class AdminOrderService {
   @InjectEntityModel(VoiceServiceSessionEntity)
   voiceServiceSessionModel: MongoRepository<VoiceServiceSessionEntity>;
 
+  /**
+   * 订单明细列表：购买订单与退款**合并成同一份分页结果**。
+   *
+   * 退款以 order_refund 为准独立成行；没有独立退款单的历史遗留退款
+   * （订单自身 refundAmount/status=refunded）也会生成一条可追溯的退款行，
+   * 并排除已存在独立退款单的订单，保证同一笔退款只出现一次。
+   * 筛选、排序、分页与总数都覆盖退款行；购买与退款笔数分别返回。
+   */
   async listOrders(query: ListAdminOrdersQueryDTO): Promise<AdminOrderListDTO> {
     const page = this.normalizePositiveInteger(query?.page, 1);
     const pageSize = Math.min(
       this.normalizePositiveInteger(query?.pageSize, 20),
       100
     );
-    const where = await this.buildSearchWhere(query);
-    const [total, orders] = await Promise.all([
-      this.orderModel.count(where),
-      this.orderModel.find({
-        where: where as never,
-        order: {
-          createdAt: 'DESC',
+    const filter = await this.buildUnifiedOrderFilter(query);
+    const skip = (page - 1) * pageSize;
+    const [facet] = await this.orderModel
+      .aggregate<{
+        items: RawUnifiedOrderRow[];
+        totalCount: Array<{ count: number }>;
+        orderCount: Array<{ count: number }>;
+        refundCount: Array<{ count: number }>;
+      }>([
+        ...this.buildUnifiedOrderSourcePipeline(),
+        { $match: filter as never },
+        {
+          $facet: {
+            items: [
+              { $sort: { sortAt: -1, _id: -1 } },
+              { $skip: skip },
+              { $limit: pageSize },
+            ],
+            totalCount: [{ $count: 'count' }],
+            orderCount: [{ $match: { kind: 'order' } }, { $count: 'count' }],
+            refundCount: [{ $match: { kind: 'refund' } }, { $count: 'count' }],
+          },
         },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-    ]);
-    const userMap = await this.getOrderUserMap(orders);
-    const messageCountMap = await this.resolveAgentUserMessageCounts(orders);
+      ])
+      .toArray();
+
+    const rows = facet?.items ?? [];
+    const userMap = await this.getOrderUserMap(
+      rows.map(row => Object.assign(new OrderEntity(), { userId: row.userId }))
+    );
+    const orderRows = rows.filter(row => row.kind !== 'refund');
+    const messageCountMap = await this.resolveAgentUserMessageCounts(
+      orderRows.map(row => Object.assign(new OrderEntity(), row))
+    );
+
+    const items = rows.map(row => {
+      if (row.kind === 'refund') {
+        return this.buildRefundRecord(row, userMap);
+      }
+
+      const order = Object.assign(new OrderEntity(), row);
+
+      return this.buildOrderRecord(
+        order,
+        userMap,
+        this.getAgentUserMessageCount(messageCountMap, order)
+      );
+    });
 
     return {
-      items: orders.map(order =>
-        this.buildOrderRecord(
-          order,
-          userMap,
-          this.getAgentUserMessageCount(messageCountMap, order)
-        )
-      ),
-      total,
+      items,
+      total: this.firstCount(facet?.totalCount),
+      orderTotal: this.firstCount(facet?.orderCount),
+      refundTotal: this.firstCount(facet?.refundCount),
       page,
       pageSize,
     };
+  }
+
+  private firstCount(rows?: Array<{ count?: number }>): number {
+    return Number(rows?.[0]?.count) || 0;
+  }
+
+  /**
+   * 三源合并：购买订单 + 独立退款（order_refund）+ 历史遗留退款。
+   *
+   * 每行都带 `kind` 与 `sortAt`，后续筛选/排序/分页在同一份流上完成。
+   */
+  private buildUnifiedOrderSourcePipeline(): Record<string, unknown>[] {
+    return [
+      {
+        $addFields: {
+          kind: 'order',
+          orderId: '$_id',
+          sortAt: { $ifNull: ['$createdAt', '$updatedAt'] },
+        },
+      },
+      {
+        $unionWith: {
+          coll: TableName.order_refund,
+          pipeline: [
+            {
+              $project: {
+                kind: { $literal: 'refund' },
+                orderId: '$originalOrderId',
+                orderNo: '$originalOrderNo',
+                refundNo: 1,
+                originalOrderNo: 1,
+                originalOrderId: 1,
+                userId: 1,
+                orderType: 1,
+                targetCode: 1,
+                source: 1,
+                paymentProvider: 1,
+                status: 1,
+                refundType: 1,
+                amount: 1,
+                requestedAt: 1,
+                completedAt: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                sortAt: { $ifNull: ['$completedAt', '$requestedAt'] },
+              },
+            },
+          ],
+        },
+      },
+      {
+        $unionWith: {
+          coll: TableName.order,
+          pipeline: [
+            {
+              $match: {
+                $or: [{ refundAmount: { $gt: 0 } }, { status: 'refunded' }],
+              },
+            },
+            {
+              $lookup: {
+                from: TableName.order_refund,
+                localField: '_id',
+                foreignField: 'originalOrderId',
+                as: 'independentRefundOrders',
+              },
+            },
+            { $match: { 'independentRefundOrders.0': { $exists: false } } },
+            {
+              $project: {
+                kind: { $literal: 'refund' },
+                orderId: '$_id',
+                orderNo: '$orderNo',
+                // 遗留退款没有独立退款单号：用原订单号占位，行仍可追溯
+                refundNo: '$orderNo',
+                originalOrderNo: '$orderNo',
+                originalOrderId: '$_id',
+                userId: 1,
+                orderType: 1,
+                targetCode: 1,
+                source: 1,
+                paymentProvider: 1,
+                status: { $literal: 'completed' },
+                refundType: { $literal: 'legacy_refund' },
+                amount: {
+                  $cond: [
+                    { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                    '$refundAmount',
+                    '$payableAmount',
+                  ],
+                },
+                requestedAt: { $ifNull: ['$refundRequestedAt', '$refundedAt'] },
+                completedAt: {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$refundedAt', null] }, null] },
+                    '$refundedAt',
+                    '$updatedAt',
+                  ],
+                },
+                createdAt: 1,
+                updatedAt: 1,
+                sortAt: {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$refundedAt', null] }, null] },
+                    '$refundedAt',
+                    '$updatedAt',
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    ];
+  }
+
+  /**
+   * 合并行的筛选条件。
+   *
+   * 日期区间按类型区分：**购买按支付时间 `paidAt`，退款按完成时间 `completedAt`**，
+   * 因此不会把「本月支付、下月退款」的订单错算进任一侧。
+   */
+  private async buildUnifiedOrderFilter(
+    query: ListAdminOrdersQueryDTO
+  ): Promise<Record<string, unknown>> {
+    const and: Record<string, unknown>[] = [];
+    const kind = query?.kind?.trim();
+    if (kind === 'order' || kind === 'refund') {
+      and.push({ kind });
+    }
+
+    const status = this.normalizeOptionalStatus(query?.status);
+    const refundStatus = this.normalizeOptionalRefundStatus(query?.status);
+    if (status || refundStatus) {
+      // 订单状态与退款状态取值不重叠，同一入参各自匹配对应的行类型
+      and.push({
+        $or: [
+          ...(status ? [{ kind: 'order', status }] : []),
+          ...(refundStatus ? [{ kind: 'refund', status: refundStatus }] : []),
+        ],
+      });
+    }
+
+    const orderType = this.normalizeOptionalOrderType(query?.orderType);
+    if (orderType) {
+      and.push({ orderType });
+    }
+
+    const source = this.normalizeOptionalSource(query?.source);
+    if (source) {
+      and.push({ source });
+    }
+
+    const paymentType = this.normalizeOptionalPaymentType(query?.paymentType);
+    const excludeAdminManual = this.normalizeBoolean(query?.excludeAdminManual);
+
+    if (paymentType === 'virtual') {
+      and.push({ paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER });
+    } else if (paymentType === 'normal') {
+      and.push({
+        paymentProvider: excludeAdminManual
+          ? {
+              $nin: [
+                WECHAT_VIRTUAL_PAY_PROVIDER,
+                ADMIN_MANUAL_PAYMENT_PROVIDER,
+              ],
+            }
+          : { $ne: WECHAT_VIRTUAL_PAY_PROVIDER },
+      });
+    } else if (excludeAdminManual) {
+      and.push({ paymentProvider: { $ne: ADMIN_MANUAL_PAYMENT_PROVIDER } });
+    }
+
+    const userId = this.normalizeOptionalObjectId(query?.userId);
+    const registeredMonth = query?.registeredMonth?.trim();
+
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(registeredMonth ?? '')) {
+      const registeredUserIds = await this.findUserIdsByRegisteredMonth(
+        registeredMonth as string
+      );
+      and.push({
+        userId: userId
+          ? {
+              $in: registeredUserIds.filter(
+                item =>
+                  this.stringifyObjectId(item) ===
+                  this.stringifyObjectId(userId)
+              ),
+            }
+          : { $in: registeredUserIds },
+      });
+    } else if (userId) {
+      and.push({ userId });
+    }
+
+    const createdAtStart = this.normalizeOptionalDate(query?.createdAtStart);
+    const createdAtEnd = this.normalizeOptionalDate(query?.createdAtEnd);
+
+    if (createdAtStart || createdAtEnd) {
+      const range: Record<string, Date> = {};
+
+      if (createdAtStart) {
+        range.$gte = createdAtStart;
+      }
+
+      if (createdAtEnd) {
+        range.$lte = createdAtEnd;
+      }
+
+      and.push({
+        $or: [
+          { kind: 'order', paidAt: range },
+          { kind: 'refund', completedAt: range },
+        ],
+      });
+    }
+
+    const keyword = query?.keyword?.trim() ?? '';
+    if (!keyword) {
+      return and.length ? { $and: and } : {};
+    }
+
+    const escapedKeyword = this.escapeRegExp(keyword);
+    const keywordFilters: Record<string, unknown>[] = [
+      { orderNo: { $regex: escapedKeyword, $options: 'i' } },
+      { refundNo: { $regex: escapedKeyword, $options: 'i' } },
+      { originalOrderNo: { $regex: escapedKeyword, $options: 'i' } },
+      { title: { $regex: escapedKeyword, $options: 'i' } },
+      { targetCode: { $regex: escapedKeyword, $options: 'i' } },
+      { paymentTradeNo: { $regex: escapedKeyword, $options: 'i' } },
+    ];
+    const matchedUserIds = await this.findUserIdsByKeyword(escapedKeyword);
+
+    if (matchedUserIds.length > 0) {
+      keywordFilters.push({ userId: { $in: matchedUserIds } });
+    }
+
+    if (MongoObjectId.isValid(keyword)) {
+      const objectId = new MongoObjectId(keyword);
+      keywordFilters.push({ _id: objectId });
+      keywordFilters.push({ userId: objectId });
+      keywordFilters.push({ originalOrderId: objectId });
+    }
+
+    and.push({ $or: keywordFilters });
+
+    return { $and: and };
+  }
+
+  /**
+   * 退款行的列表记录。
+   *
+   * `kind='refund'` 让前端能明确区分并禁止对退款行执行购买订单的退款/发货等操作；
+   * 金额按退款金额展示（列表以正数展示，收入侧才取负）。
+   */
+  private buildRefundRecord(
+    row: RawUnifiedOrderRow,
+    userMap: Map<string, AdminOrderUserDTO>
+  ): AdminOrderRecordDTO {
+    const userId = this.stringifyObjectId(row.userId);
+    const refundType = row.refundType || 'order_refund';
+    // 列表金额与订单行一致，统一用「分」
+    const amount = Number(row.amount) || 0;
+
+    return {
+      id: `refund:${this.stringifyObjectId(row._id)}`,
+      kind: 'refund',
+      orderNo: row.refundNo || row.orderNo || '-',
+      refundNo: row.refundNo || row.orderNo || '',
+      originalOrderNo: row.originalOrderNo || row.orderNo || '',
+      originalOrderId: this.stringifyObjectId(row.originalOrderId),
+      userId,
+      user: userMap.get(userId),
+      orderType: row.orderType || OrderType.vipPlan,
+      targetCode: row.targetCode || '',
+      title: `退款 · ${row.targetCode || ''}`.trim(),
+      amount,
+      discountAmount: 0,
+      couponAmount: 0,
+      payableAmount: amount,
+      paidAmount: undefined,
+      refundAmount: amount,
+      currency: 'CNY',
+      status: (row.status || OrderRefundStatus.completed) as OrderStatus,
+      refundStatus: row.status || OrderRefundStatus.completed,
+      refundType,
+      refundTypeLabel: this.refundTypeLabel(refundType),
+      source: (row.source || OrderSource.weapp) as OrderSource,
+      paymentProvider: row.paymentProvider || '',
+      refundRequestedAt: this.formatOptionalDate(row.requestedAt),
+      refundedAt: this.formatOptionalDate(row.completedAt),
+      createdAt: this.formatOptionalDate(row.requestedAt || row.createdAt),
+      updatedAt: this.formatOptionalDate(row.completedAt || row.updatedAt),
+    } as unknown as AdminOrderRecordDTO;
+  }
+
+  /** 退款行可能缺申请/完成时间（如处理中的退款、无 refundedAt 的遗留退款）。 */
+  private formatOptionalDate(value?: Date): string {
+    return value instanceof Date && !Number.isNaN(value.getTime())
+      ? value.toISOString()
+      : '';
+  }
+
+  private refundTypeLabel(refundType: string): string {
+    const labels: Record<string, string> = {
+      order_refund: '普通退订退款',
+      voice_membership_downgrade: '会员降级退款',
+      voice_membership_final_refund: '最终退订退款',
+      legacy_refund: '遗留退款（订单内扣减）',
+    };
+
+    return labels[refundType] ?? refundType;
   }
 
   async createOrder(
@@ -891,9 +1266,7 @@ export class AdminOrderService {
       await this.refreshOrderEntity(order);
 
       // 通知主服务触发小使者降级提示（异步，失败不影响降级主流程）
-      this.notifyMessengerEvent(order, claimedDowngrade).catch(
-        () => undefined
-      );
+      this.notifyMessengerEvent(order, claimedDowngrade).catch(() => undefined);
       return;
     } catch (error) {
       const failedAt = new Date();
@@ -3231,115 +3604,6 @@ export class AdminOrderService {
     return current ? `${current}\n${nextRemark}` : nextRemark;
   }
 
-  private async buildSearchWhere(
-    query: ListAdminOrdersQueryDTO
-  ): Promise<MongoWhere> {
-    const where: MongoWhere = {};
-    const status = this.normalizeOptionalStatus(query?.status);
-    const orderType = this.normalizeOptionalOrderType(query?.orderType);
-    const source = this.normalizeOptionalSource(query?.source);
-    const paymentType = this.normalizeOptionalPaymentType(query?.paymentType);
-    const excludeAdminManual = this.normalizeBoolean(query?.excludeAdminManual);
-    const createdAtStart = this.normalizeOptionalDate(query?.createdAtStart);
-    const createdAtEnd = this.normalizeOptionalDate(query?.createdAtEnd);
-    const registeredMonth = query?.registeredMonth?.trim();
-    const userId = this.normalizeOptionalObjectId(query?.userId);
-    const keyword = query?.keyword?.trim() ?? '';
-
-    if (status) {
-      where.status = status;
-    }
-
-    if (orderType) {
-      where.orderType = orderType;
-    }
-
-    if (source) {
-      where.source = source;
-    }
-
-    if (paymentType === 'virtual') {
-      where.paymentProvider = WECHAT_VIRTUAL_PAY_PROVIDER;
-    } else if (paymentType === 'normal') {
-      where.paymentProvider = excludeAdminManual
-        ? {
-            $nin: [WECHAT_VIRTUAL_PAY_PROVIDER, ADMIN_MANUAL_PAYMENT_PROVIDER],
-          }
-        : { $ne: WECHAT_VIRTUAL_PAY_PROVIDER };
-    } else if (excludeAdminManual) {
-      where.paymentProvider = { $ne: ADMIN_MANUAL_PAYMENT_PROVIDER };
-    }
-
-    if (createdAtStart || createdAtEnd) {
-      const createdAtQuery: Record<string, Date> = {};
-
-      if (createdAtStart) {
-        createdAtQuery.$gte = createdAtStart;
-      }
-
-      if (createdAtEnd) {
-        createdAtQuery.$lte = createdAtEnd;
-      }
-
-      where.createdAt = createdAtQuery;
-    }
-
-    if (userId) {
-      where.userId = userId;
-    }
-
-    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(registeredMonth ?? '')) {
-      const registeredUserIds = await this.findUserIdsByRegisteredMonth(
-        registeredMonth as string
-      );
-
-      where.userId = userId
-        ? {
-            $in: registeredUserIds.filter(
-              item =>
-                this.stringifyObjectId(item) === this.stringifyObjectId(userId)
-            ),
-          }
-        : { $in: registeredUserIds };
-    }
-
-    if (!keyword) {
-      return where;
-    }
-
-    const escapedKeyword = this.escapeRegExp(keyword);
-    const keywordFilters: MongoWhere[] = [
-      { orderNo: { $regex: escapedKeyword, $options: 'i' } },
-      { title: { $regex: escapedKeyword, $options: 'i' } },
-      { targetCode: { $regex: escapedKeyword, $options: 'i' } },
-      { paymentTradeNo: { $regex: escapedKeyword, $options: 'i' } },
-    ];
-    const matchedUserIds = await this.findUserIdsByKeyword(escapedKeyword);
-
-    if (matchedUserIds.length > 0) {
-      keywordFilters.push({ userId: { $in: matchedUserIds } });
-    }
-
-    if (MongoObjectId.isValid(keyword)) {
-      const objectId = new MongoObjectId(keyword);
-
-      keywordFilters.push({ id: objectId });
-      keywordFilters.push({ _id: objectId });
-      keywordFilters.push({ userId: objectId });
-      keywordFilters.push({ targetId: objectId });
-    }
-
-    if (Object.keys(where).length === 0) {
-      return {
-        $or: keywordFilters,
-      };
-    }
-
-    return {
-      $and: [where, { $or: keywordFilters }],
-    };
-  }
-
   private async findUserIdsByKeyword(
     escapedKeyword: string
   ): Promise<MongoObjectId[]> {
@@ -3948,9 +4212,7 @@ export class AdminOrderService {
     order: OrderEntity
   ): number {
     const userId = this.stringifyObjectId(order.userId);
-    const agentId = order.agentId
-      ? this.stringifyObjectId(order.agentId)
-      : '';
+    const agentId = order.agentId ? this.stringifyObjectId(order.agentId) : '';
 
     if (order.agentId) {
       return messageCountMap.get(`${userId}:${agentId}`) ?? 0;
@@ -4443,6 +4705,14 @@ export class AdminOrderService {
   private normalizeOptionalStatus(value?: string): OrderStatus | undefined {
     return Object.values(OrderStatus).includes(value as OrderStatus)
       ? (value as OrderStatus)
+      : undefined;
+  }
+
+  private normalizeOptionalRefundStatus(
+    value?: string
+  ): OrderRefundStatus | undefined {
+    return Object.values(OrderRefundStatus).includes(value as OrderRefundStatus)
+      ? (value as OrderRefundStatus)
       : undefined;
   }
 

@@ -140,13 +140,34 @@
           <a-table-column title="订单信息" data-index="orderNo" :width="260">
             <template #cell="{ record }">
               <div class="order-page__main">
-                <a-typography-text
-                  class="order-page__mono order-page__order-no"
-                  copyable
-                >
-                  {{ record.orderNo }}
-                </a-typography-text>
-                <div class="order-page__title">{{ record.title || '-' }}</div>
+                <template v-if="record.kind === 'refund'">
+                  <div class="order-page__title">
+                    <a-tag color="red" size="small">退款</a-tag>
+                    <a-typography-text class="order-page__mono" copyable>
+                      {{ record.refundNo }}
+                    </a-typography-text>
+                  </div>
+                  <div class="order-page__muted">
+                    类型：{{
+                      record.refundTypeLabel || record.refundType || '-'
+                    }}
+                  </div>
+                  <div class="order-page__muted">
+                    原订单：
+                    <a-typography-text class="order-page__mono" copyable>
+                      {{ record.originalOrderNo || '-' }}
+                    </a-typography-text>
+                  </div>
+                </template>
+                <template v-else>
+                  <a-typography-text
+                    class="order-page__mono order-page__order-no"
+                    copyable
+                  >
+                    {{ record.orderNo }}
+                  </a-typography-text>
+                  <div class="order-page__title">{{ record.title || '-' }}</div>
+                </template>
               </div>
             </template>
           </a-table-column>
@@ -175,20 +196,29 @@
           </a-table-column>
           <a-table-column title="金额" data-index="payableAmount" :width="150">
             <template #cell="{ record }">
-              <div>{{ formatAmount(record.payableAmount) }}</div>
-              <div
-                v-if="record.refundAmount && !isAdminManualOrder(record)"
-                class="order-page__refund-amount"
-              >
-                退 {{ formatAmount(record.refundAmount) }}
-              </div>
-              <div
-                v-else-if="record.voiceMembershipDowngrade"
-                class="order-page__refund-amount"
-              >
-                拟退
-                {{ formatAmount(record.voiceMembershipDowngrade.refundAmount) }}
-              </div>
+              <template v-if="record.kind === 'refund'">
+                <div class="order-page__refund-negative">
+                  -{{ formatAmount(record.payableAmount) }}
+                </div>
+              </template>
+              <template v-else>
+                <div>{{ formatAmount(record.payableAmount) }}</div>
+                <div
+                  v-if="record.refundAmount && !isAdminManualOrder(record)"
+                  class="order-page__refund-amount"
+                >
+                  退 {{ formatAmount(record.refundAmount) }}
+                </div>
+                <div
+                  v-else-if="record.voiceMembershipDowngrade"
+                  class="order-page__refund-amount"
+                >
+                  拟退
+                  {{
+                    formatAmount(record.voiceMembershipDowngrade.refundAmount)
+                  }}
+                </div>
+              </template>
             </template>
           </a-table-column>
           <a-table-column title="状态" data-index="status" :width="120">
@@ -297,140 +327,142 @@
             fixed="right"
           >
             <template #cell="{ record }">
-              <a-space>
-                <a-button
-                  v-if="!refundMode"
-                  type="text"
-                  size="small"
-                  @click="openDetail(record)"
-                >
-                  详情
-                </a-button>
-                <template v-if="refundMode && canRejectRefund(record)">
-                  <a-popconfirm
-                    content="确认不退这笔退款？订单将恢复为已完成，不发起退款。"
-                    ok-text="不退"
-                    cancel-text="取消"
-                    position="left"
-                    @ok="handleRejectRefund(record, 'not_refund')"
+              <template v-if="record.kind !== 'refund'">
+                <a-space>
+                  <a-button
+                    v-if="!refundMode"
+                    type="text"
+                    size="small"
+                    @click="openDetail(record)"
                   >
-                    <a-button
-                      type="text"
-                      size="small"
-                      :loading="rejectLoadingId === record.id"
+                    详情
+                  </a-button>
+                  <template v-if="refundMode && canRejectRefund(record)">
+                    <a-popconfirm
+                      content="确认不退这笔退款？订单将恢复为已完成，不发起退款。"
+                      ok-text="不退"
+                      cancel-text="取消"
+                      position="left"
+                      @ok="handleRejectRefund(record, 'not_refund')"
                     >
-                      不退
-                    </a-button>
-                  </a-popconfirm>
+                      <a-button
+                        type="text"
+                        size="small"
+                        :loading="rejectLoadingId === record.id"
+                      >
+                        不退
+                      </a-button>
+                    </a-popconfirm>
+                    <a-popconfirm
+                      content="确认驳回这笔退款申请？订单将恢复为已完成，并记录驳回。"
+                      ok-text="退款驳回"
+                      cancel-text="取消"
+                      position="left"
+                      @ok="handleRejectRefund(record, 'rejected')"
+                    >
+                      <a-button
+                        type="text"
+                        status="danger"
+                        size="small"
+                        :loading="rejectLoadingId === record.id"
+                      >
+                        退款驳回
+                      </a-button>
+                    </a-popconfirm>
+                  </template>
+                  <a-button
+                    v-if="canSyncPaymentStatus(record)"
+                    type="text"
+                    size="small"
+                    :loading="syncLoadingId === record.id"
+                    @click="handleSyncPaymentStatus(record)"
+                  >
+                    <template #icon>
+                      <icon-refresh />
+                    </template>
+                    刷新状态
+                  </a-button>
+                  <a-button
+                    v-if="canStartVoiceMembershipDowngrade(record)"
+                    type="text"
+                    size="small"
+                    @click="openVoiceMembershipDowngrade(record)"
+                  >
+                    声音降级
+                  </a-button>
+                  <a-button
+                    v-else-if="canSyncVoiceMembershipDowngrade(record)"
+                    type="text"
+                    size="small"
+                    :loading="downgradeSyncLoadingId === record.id"
+                    @click="handleSyncVoiceMembershipDowngrade(record)"
+                  >
+                    <template #icon>
+                      <icon-refresh />
+                    </template>
+                    刷新降级
+                  </a-button>
                   <a-popconfirm
-                    content="确认驳回这笔退款申请？订单将恢复为已完成，并记录驳回。"
-                    ok-text="退款驳回"
+                    v-if="canWithdrawVoiceMembershipDowngrade(record)"
+                    content="确认撤回这次失败的降级任务？撤回后可重新发起退款或降级。"
+                    ok-text="撤回"
                     cancel-text="取消"
                     position="left"
-                    @ok="handleRejectRefund(record, 'rejected')"
+                    @ok="handleWithdrawVoiceMembershipDowngrade(record)"
                   >
                     <a-button
                       type="text"
                       status="danger"
                       size="small"
-                      :loading="rejectLoadingId === record.id"
+                      :loading="downgradeWithdrawLoadingId === record.id"
                     >
-                      退款驳回
+                      撤回降级
                     </a-button>
                   </a-popconfirm>
-                </template>
-                <a-button
-                  v-if="canSyncPaymentStatus(record)"
-                  type="text"
-                  size="small"
-                  :loading="syncLoadingId === record.id"
-                  @click="handleSyncPaymentStatus(record)"
-                >
-                  <template #icon>
-                    <icon-refresh />
-                  </template>
-                  刷新状态
-                </a-button>
-                <a-button
-                  v-if="canStartVoiceMembershipDowngrade(record)"
-                  type="text"
-                  size="small"
-                  @click="openVoiceMembershipDowngrade(record)"
-                >
-                  声音降级
-                </a-button>
-                <a-button
-                  v-else-if="canSyncVoiceMembershipDowngrade(record)"
-                  type="text"
-                  size="small"
-                  :loading="downgradeSyncLoadingId === record.id"
-                  @click="handleSyncVoiceMembershipDowngrade(record)"
-                >
-                  <template #icon>
-                    <icon-refresh />
-                  </template>
-                  刷新降级
-                </a-button>
-                <a-popconfirm
-                  v-if="canWithdrawVoiceMembershipDowngrade(record)"
-                  content="确认撤回这次失败的降级任务？撤回后可重新发起退款或降级。"
-                  ok-text="撤回"
-                  cancel-text="取消"
-                  position="left"
-                  @ok="handleWithdrawVoiceMembershipDowngrade(record)"
-                >
-                  <a-button
-                    type="text"
-                    status="danger"
-                    size="small"
-                    :loading="downgradeWithdrawLoadingId === record.id"
+                  <a-popconfirm
+                    v-if="canRefundOrder(record)"
+                    :content="getRefundConfirmContent(record)"
+                    :ok-text="getRefundActionText(record)"
+                    cancel-text="取消"
+                    position="left"
+                    @ok="handleRefund(record)"
                   >
-                    撤回降级
-                  </a-button>
-                </a-popconfirm>
-                <a-popconfirm
-                  v-if="canRefundOrder(record)"
-                  :content="getRefundConfirmContent(record)"
-                  :ok-text="getRefundActionText(record)"
-                  cancel-text="取消"
-                  position="left"
-                  @ok="handleRefund(record)"
-                >
-                  <a-button
-                    type="text"
-                    status="danger"
-                    size="small"
-                    :loading="refundLoadingId === record.id"
+                    <a-button
+                      type="text"
+                      status="danger"
+                      size="small"
+                      :loading="refundLoadingId === record.id"
+                    >
+                      {{ getRefundActionText(record) }}
+                    </a-button>
+                  </a-popconfirm>
+                  <a-tooltip
+                    v-else-if="isUnsupportedDowngradedUpgrade(record)"
+                    content="升级会员涉及历史基础会员订单，需核对原订单后处理，暂不支持自动退订"
                   >
-                    {{ getRefundActionText(record) }}
-                  </a-button>
-                </a-popconfirm>
-                <a-tooltip
-                  v-else-if="isUnsupportedDowngradedUpgrade(record)"
-                  content="升级会员涉及历史基础会员订单，需核对原订单后处理，暂不支持自动退订"
-                >
-                  <a-button type="text" size="small" disabled>
-                    核对历史退款
-                  </a-button>
-                </a-tooltip>
-                <a-popconfirm
-                  v-if="canRevokeAdminManualOrder(record)"
-                  :content="getRevokeConfirmContent(record)"
-                  ok-text="回收"
-                  cancel-text="取消"
-                  position="left"
-                  @ok="handleRevokeAdminManualOrder(record)"
-                >
-                  <a-button
-                    type="text"
-                    status="danger"
-                    size="small"
-                    :loading="revokeLoadingId === record.id"
+                    <a-button type="text" size="small" disabled>
+                      核对历史退款
+                    </a-button>
+                  </a-tooltip>
+                  <a-popconfirm
+                    v-if="canRevokeAdminManualOrder(record)"
+                    :content="getRevokeConfirmContent(record)"
+                    ok-text="回收"
+                    cancel-text="取消"
+                    position="left"
+                    @ok="handleRevokeAdminManualOrder(record)"
                   >
-                    回收
-                  </a-button>
-                </a-popconfirm>
-              </a-space>
+                    <a-button
+                      type="text"
+                      status="danger"
+                      size="small"
+                      :loading="revokeLoadingId === record.id"
+                    >
+                      回收
+                    </a-button>
+                  </a-popconfirm>
+                </a-space>
+              </template>
             </template>
           </a-table-column>
         </template>
@@ -438,7 +470,8 @@
 
       <div class="order-page__pagination">
         <span class="order-page__total">
-          共 {{ pagination.total }} 笔订单
+          共 {{ pagination.total }} 条（购买 {{ pagination.orderTotal }} 笔 ·
+          退款 {{ pagination.refundTotal }} 笔）
         </span>
         <a-pagination
           :current="pagination.current"
@@ -999,6 +1032,9 @@
     current: 1,
     pageSize: 20,
     total: 0,
+    /** 合计中购买订单与退款各自的笔数，避免「全部订单」含义变化而不告知 */
+    orderTotal: 0,
+    refundTotal: 0,
   });
   const statusMap: Record<OrderStatusDTO, { text: string; color: string }> = {
     pending: { text: '待支付', color: 'orange' },
@@ -1174,6 +1210,8 @@
       const { data } = await queryOrderList(requestParams.value);
       renderList.value = data.items;
       pagination.total = data.total;
+      pagination.orderTotal = data.orderTotal ?? 0;
+      pagination.refundTotal = data.refundTotal ?? 0;
       pagination.current = data.page;
       pagination.pageSize = data.pageSize;
     } catch (error) {
@@ -1951,6 +1989,16 @@
   };
 
   const getRecordStatusText = (record: OrderRecord) => {
+    if (record.kind === 'refund') {
+      const refundStatusLabels: Record<string, string> = {
+        processing: '退款处理中',
+        completed: '退款已完成',
+        failed: '退款失败',
+      };
+
+      return refundStatusLabels[record.refundStatus || 'completed'] || '退款';
+    }
+
     const finalRefund = record.voiceMembershipFinalRefund;
 
     if (finalRefund?.status === 'benefits_failed') {
@@ -1990,6 +2038,16 @@
   };
 
   const getRecordStatusColor = (record: OrderRecord) => {
+    if (record.kind === 'refund') {
+      const refundStatusColors: Record<string, string> = {
+        processing: 'orange',
+        completed: 'green',
+        failed: 'red',
+      };
+
+      return refundStatusColors[record.refundStatus || 'completed'] || 'gray';
+    }
+
     const finalRefund = record.voiceMembershipFinalRefund;
 
     if (
@@ -2495,6 +2553,11 @@
 
     &__ellipsis {
       max-width: 180px;
+    }
+
+    &__refund-negative {
+      color: rgb(var(--danger-6));
+      font-variant-numeric: tabular-nums;
     }
 
     &__refund-amount {

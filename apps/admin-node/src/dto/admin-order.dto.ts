@@ -8,7 +8,10 @@ const orderStatusRule = RuleType.string().valid(
   'closed',
   'refund_requested',
   'refunded',
-  'grant_failed'
+  'grant_failed',
+  // 合并列表的 status 同时作用于退款行，故加入退款状态取值
+  'processing',
+  'failed'
 );
 
 const orderTypeRule = RuleType.string().valid('vip_plan', 'voice_package');
@@ -56,6 +59,15 @@ export class ListAdminOrdersQueryDTO {
   @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
   excludeAdminManual?: boolean | string;
 
+  /** 行类型筛选：order=只看购买订单，refund=只看退款，缺省=两者都看 */
+  @Rule(RuleType.string().valid('order', 'refund').allow('').optional())
+  kind?: string;
+
+  /**
+   * 日期区间（含首尾）。
+   * **购买订单按支付时间 paidAt，退款按完成时间 completedAt**，两者分别归入，
+   * 避免「本月支付、下月退款」的订单被错算到任一侧。
+   */
   @Rule(RuleType.string().allow('').optional())
   createdAtStart?: string;
 
