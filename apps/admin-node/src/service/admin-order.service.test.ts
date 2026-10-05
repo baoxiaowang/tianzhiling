@@ -656,6 +656,20 @@ function createService() {
     }),
   } as any;
   service.orderRefundModel = {
+    findOne: jest.fn(async (options: any) => {
+      const found = refundOrders.find(item =>
+        matchesMongoFilter(item, options?.where ?? options ?? {})
+      );
+
+      return found ? cloneMongoValue(found) : null;
+    }),
+    find: jest.fn(async (options: any) => {
+      const filter = options?.where ?? options ?? {};
+
+      return cloneMongoValue(
+        refundOrders.filter(item => matchesMongoFilter(item, filter))
+      );
+    }),
     updateOne: jest.fn(async (filter: any, update: any, options: any) => {
       let refundOrder = refundOrders.find(item =>
         matchesMongoFilter(item, filter)
@@ -1949,7 +1963,8 @@ describe('AdminOrderService', () => {
 
   it('refunds a virtual payment vip order through xpay', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
-    const { service, orders, memberships, entitlements } = createService();
+    const { service, orders, memberships, entitlements, refundOrders } =
+      createService();
     const order = createCompletedVipOrder({
       paymentProvider: 'wechat_virtual_pay',
       payerOpenid: 'openid-1',
@@ -1961,6 +1976,17 @@ describe('AdminOrderService', () => {
     entitlements.push(createEntitlement());
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
     jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+    // 虚拟支付退款必须回查确认：接口返回 OK 只代表受理。
+    jest
+      .mocked(service.adminWechatPayService.refundVirtualOrder)
+      .mockResolvedValue({ refund_wx_order_id: 'VPR-XPAY-1' } as never);
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValue({
+        paid_fee: 9900,
+        left_fee: 0,
+        refund_info: { refund_order: [{ refund_wx_order_id: 'VPR-XPAY-1' }] },
+      } as never);
 
     const result = await service.refundOrder(ORDER_ID.toHexString());
 
@@ -1978,6 +2004,77 @@ describe('AdminOrderService', () => {
     });
     expect(result.status).toBe(OrderStatus.refunded);
     expect(result.refundAmount).toBe(9900);
+    // 观察期内先记处理中，等定时对账在微信侧连续确认满 2 小时才转 completed。
+    expect(refundOrders).toEqual([
+      expect.objectContaining({
+        refundNo: 'RVIP202605020001',
+        paymentRefundId: 'VPR-XPAY-1',
+        status: 'processing',
+      }),
+    ]);
+  });
+
+  it('虚拟支付退款未满 2 小时观察期不下成功结论，满期后才收敛为已退款', async () => {
+    const { service, orders, refundOrders, memberships, entitlements } =
+      createService();
+    const order = createCompletedVipOrder({
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-observation',
+      virtualPaymentEnv: 0,
+    });
+
+    orders.push(order);
+    memberships.push(createMembership());
+    entitlements.push(createEntitlement());
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValue({
+        paid_fee: 9900,
+        left_fee: 0,
+        refund_info: { refund_order: [{ refund_wx_order_id: 'VPR-OBS-1' }] },
+      } as never);
+
+    const submittedAt = new Date('2026-05-02T08:00:00.000Z');
+    refundOrders.push({
+      id: 'refund-observation',
+      refundNo: 'RVIP202605020001',
+      originalOrderId: ORDER_ID,
+      originalOrderNo: order.orderNo,
+      userId: USER_ID,
+      refundType: 'order_refund',
+      amount: 9900,
+      paymentProvider: 'wechat_virtual_pay',
+      paymentRefundId: 'VPR-OBS-1',
+      status: 'processing',
+      requestedAt: submittedAt,
+      createdAt: submittedAt,
+      updatedAt: submittedAt,
+    });
+
+    // 提交后 30 分钟：微信侧退款单还在，但观察期未满 → 只记 pending，不下成功结论
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-02T08:30:00.000Z'));
+    const withinWindow = await service.reconcileVirtualRefunds();
+    expect(withinWindow).toMatchObject({
+      scanned: 1,
+      confirmed: 0,
+      pending: 1,
+      failed: 0,
+    });
+    expect(refundOrders[0].status).toBe('processing');
+
+    // 满 2 小时后对账：微信侧退款单仍在 → completed，且按提交时间归集
+    jest.setSystemTime(new Date('2026-05-02T10:00:01.000Z'));
+    const afterWindow = await service.reconcileVirtualRefunds();
+    expect(afterWindow).toMatchObject({
+      scanned: 1,
+      confirmed: 1,
+      pending: 0,
+      failed: 0,
+    });
+    expect(refundOrders[0].status).toBe('completed');
+    expect(refundOrders[0].completedAt).toEqual(submittedAt);
   });
 
   it('refunds a voice package order and marks the training task refunded', async () => {
@@ -2384,17 +2481,18 @@ describe('AdminOrderService', () => {
     expect(membership.status).toBe(UserMembershipStatus.refunded);
     expect(refundOrders).toEqual(
       expect.arrayContaining([
+        // 虚拟支付退款记录先记处理中，等 2 小时观察期满、对账确认后才转 completed
         expect.objectContaining({
           refundNo: `VD${order.orderNo}`,
           refundType: 'voice_membership_downgrade',
           amount: 7000,
-          status: 'completed',
+          status: 'processing',
         }),
         expect.objectContaining({
           refundNo: `R${order.orderNo}`,
           refundType: 'voice_membership_final_refund',
           amount: 12900,
-          status: 'completed',
+          status: 'processing',
         }),
       ])
     );
@@ -2491,7 +2589,8 @@ describe('AdminOrderService', () => {
           refundNo: `R${order.orderNo}`,
           refundType: 'voice_membership_final_refund',
           amount: 12900,
-          status: 'completed',
+          // 观察期内先记处理中（虚拟支付退款必须熬过 2 小时才算成功）
+          status: 'processing',
           paymentRefundId: 'VPR-REGRESSION-1',
         }),
       ])
@@ -2630,7 +2729,8 @@ describe('AdminOrderService', () => {
           refundNo: `R${order.orderNo}`,
           refundType: 'voice_membership_final_refund',
           amount: 12900,
-          status: 'completed',
+          // 观察期内先记处理中（虚拟支付退款必须熬过 2 小时才算成功）
+          status: 'processing',
         }),
       ])
     );

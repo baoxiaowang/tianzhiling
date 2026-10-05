@@ -91,6 +91,21 @@ interface RawUnifiedOrderRow {
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
 const ADMIN_MANUAL_PAYMENT_PROVIDER = 'admin_manual';
+/**
+ * 虚拟支付退款的观察期：退款提交后，本地退款记录先记 `processing`，
+ * 必须连续在微信侧「存活」满这个时长，才由定时对账收敛为 `completed`（并计入净收入）。
+ *
+ * 为什么需要：虚拟支付退款是异步的，接口返回 OK、退款单也确实出现在
+ * `refund_info.refund_order` 里，仍可能在约 1 小时后被微信异步撤销
+ * （2026-10-05 实测：退款单出现 → 约 1 小时后消失、`left_fee` 退回、用户没收到钱）。
+ * 提交时就记为「已退款」会让净收入先加后减，运营看到的成功也是假的。
+ */
+const VIRTUAL_REFUND_OBSERVATION_MS = 2 * 60 * 60 * 1000;
+/**
+ * 缺失判定的最小等待：刚提交的退款单可能还没出现在微信侧退款单列表里，
+ * 未满这个时长只保持 `processing`，不做「退款失败」判定。
+ */
+const VIRTUAL_REFUND_MISSING_GRACE_MS = 10 * 60 * 1000;
 const ACTIVE_VOICE_TRAINING_TASK_STATUSES = [
   VoiceTrainingTaskStatus.paid,
   VoiceTrainingTaskStatus.awaitingMaterial,
@@ -1182,15 +1197,22 @@ export class AdminOrderService {
         } as never
       );
 
-      // 本地退款记录转为成功，清掉失败痕迹
+      // 本地退款记录转为成功，清掉失败痕迹（虚拟支付仍受观察期约束，先记处理中）
+      const retryStatus = this.resolveRefundRecordStatus(
+        order,
+        now,
+        OrderRefundStatus.completed
+      );
       await this.orderRefundModel.updateOne(
         { _id: record.id } as never,
         {
           $set: {
             refundNo: newRefundNo,
-            status: OrderRefundStatus.completed,
+            status: retryStatus,
             paymentRefundId,
-            completedAt,
+            ...(retryStatus === OrderRefundStatus.completed
+              ? { completedAt }
+              : {}),
             updatedAt: now,
           },
           $unset: { failureReason: '', failedAt: '' },
@@ -3429,14 +3451,19 @@ export class AdminOrderService {
   /**
    * 虚拟支付退款对账（定时任务）：把本地记为已退款/处理中的虚拟支付退款逐笔拿去微信核对。
    *
-   * - 微信侧确认有退款单 → 保持/补记为 completed；
-   * - 微信侧无退款单且 left_fee 未扣减 → 标为 failed 并打 `[refund-alert]` 错误日志，
-   *   避免「系统显示已退款、用户没收到钱」长期无人发现；
+   * - 微信侧确认有退款单，且距提交已满 `VIRTUAL_REFUND_OBSERVATION_MS` → 收敛为 completed；
+   * - 观察期内微信侧仍有退款单 → 保持 processing，计入 pending，不下成功结论；
+   * - 微信侧无退款单且距提交已满 `VIRTUAL_REFUND_MISSING_GRACE_MS` → 标为 failed 并打
+   *   `[refund-alert]` 错误日志，避免「系统显示已退款、用户没收到钱」长期无人发现；
    * - 其余保持处理中，等下一轮。
    */
-  async reconcileVirtualRefunds(
-    limit = 100
-  ): Promise<{ scanned: number; confirmed: number; failed: number; errors: string[] }> {
+  async reconcileVirtualRefunds(limit = 100): Promise<{
+    scanned: number;
+    confirmed: number;
+    pending: number;
+    failed: number;
+    errors: string[];
+  }> {
     const records = await this.orderRefundModel.find({
       where: {
         paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
@@ -3450,6 +3477,7 @@ export class AdminOrderService {
     const summary = {
       scanned: records.length,
       confirmed: 0,
+      pending: 0,
       failed: 0,
       errors: [] as string[],
     };
@@ -3461,6 +3489,15 @@ export class AdminOrderService {
         const env =
           order.virtualPaymentEnv ??
           this.adminWechatPayService.getVirtualPayEnv();
+        // 提交时点：观察期与缺失判定都从它起算。老记录可能没有 requestedAt，
+        // 这种情况视为「早已过观察期」，避免历史遗留记录永远无法收敛。
+        const submittedAt = record.requestedAt ?? record.createdAt;
+        const submittedMs = submittedAt
+          ? new Date(submittedAt).getTime()
+          : Number.NaN;
+        const elapsedMs = Number.isNaN(submittedMs)
+          ? Number.POSITIVE_INFINITY
+          : Date.now() - submittedMs;
         const snapshot = await this.adminWechatPayService.queryVirtualOrder({
           openid: order.payerOpenid,
           orderNo: order.orderNo,
@@ -3477,25 +3514,39 @@ export class AdminOrderService {
             ));
 
         if (refundIdMatched) {
-          summary.confirmed += 1;
-          if (record.status !== OrderRefundStatus.completed) {
-            await this.orderRefundModel.updateOne(
-              { _id: record.id } as never,
-              {
-                $set: {
-                  status: OrderRefundStatus.completed,
-                  completedAt: record.completedAt ?? new Date(),
-                  updatedAt: new Date(),
-                },
-              } as never
-            );
+          if (record.status === OrderRefundStatus.completed) {
+            summary.confirmed += 1;
+            continue;
           }
+          if (elapsedMs < VIRTUAL_REFUND_OBSERVATION_MS) {
+            // 观察期未满：微信侧暂时还在，但还不能下「退款成功」的结论。
+            summary.pending += 1;
+            continue;
+          }
+          summary.confirmed += 1;
+          await this.orderRefundModel.updateOne(
+            { _id: record.id } as never,
+            {
+              $set: {
+                status: OrderRefundStatus.completed,
+                // 归集口径不变：用提交/首次确认时间，避免观察期把退款算到下一天。
+                completedAt:
+                  record.completedAt ?? record.requestedAt ?? new Date(),
+                updatedAt: new Date(),
+              },
+            } as never
+          );
           continue;
         }
 
         const paidFee = Number(snapshot.paid_fee ?? 0);
         const leftFee = Number(snapshot.left_fee ?? 0);
         if (!hasRefund) {
+          if (elapsedMs < VIRTUAL_REFUND_MISSING_GRACE_MS) {
+            // 刚提交的退款单可能还没落到 refund_info 里，先不下失败结论。
+            summary.pending += 1;
+            continue;
+          }
           summary.failed += 1;
           const failedAt = new Date();
           await this.orderRefundModel.updateOne(
@@ -3524,7 +3575,11 @@ export class AdminOrderService {
             leftFee,
             paidFee
           );
+          continue;
         }
+
+        // 微信侧有退款单，但不是这一笔（单号对不上）：留给下一轮继续核对。
+        summary.pending += 1;
       } catch (err) {
         summary.errors.push(
           `${record.refundNo}: ${(err as Error).message}`
@@ -3587,6 +3642,27 @@ export class AdminOrderService {
     });
   }
 
+  /**
+   * 退款记录写入时的状态收敛：虚拟支付退款在观察期（`VIRTUAL_REFUND_OBSERVATION_MS`）内
+   * 一律先记 `processing`，由定时对账在微信侧持续确认后再转 `completed`。
+   * 普通微信支付（v3 同步返回退款状态）保持原语义，立即记成功。
+   */
+  private resolveRefundRecordStatus(
+    order: OrderEntity,
+    requestedAt: Date,
+    desired: OrderRefundStatus
+  ): OrderRefundStatus {
+    if (desired !== OrderRefundStatus.completed) return desired;
+    if (order.paymentProvider !== WECHAT_VIRTUAL_PAY_PROVIDER) return desired;
+
+    const requestedMs = requestedAt.getTime();
+    if (Number.isNaN(requestedMs)) return desired;
+
+    return Date.now() - requestedMs < VIRTUAL_REFUND_OBSERVATION_MS
+      ? OrderRefundStatus.processing
+      : desired;
+  }
+
   private async recordCompletedRefundOrder(
     order: OrderEntity,
     refundNo: string,
@@ -3600,6 +3676,12 @@ export class AdminOrderService {
     const normalizedRequestedAt = Number.isNaN(requestedAt.getTime())
       ? completedAt
       : requestedAt;
+    // 只有熬过观察期的虚拟支付退款才算「已退款」，否则先记处理中。
+    const effectiveStatus = this.resolveRefundRecordStatus(
+      order,
+      normalizedRequestedAt,
+      status
+    );
 
     await this.orderRefundModel.updateOne(
       { _id: this.buildRefundOrderId(refundNo), refundNo } as never,
@@ -3620,9 +3702,11 @@ export class AdminOrderService {
           createdAt: normalizedRequestedAt,
         },
         $set: {
-          status,
+          status: effectiveStatus,
           paymentRefundId,
-          ...(status === OrderRefundStatus.completed ? { completedAt } : {}),
+          ...(effectiveStatus === OrderRefundStatus.completed
+            ? { completedAt }
+            : {}),
           updatedAt: completedAt,
         },
       } as never,

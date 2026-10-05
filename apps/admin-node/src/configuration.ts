@@ -229,9 +229,10 @@ export class MainConfiguration {
         if (refundSummary.scanned > 0) {
           // eslint-disable-next-line no-console
           console.log(
-            '[refund-reconcile] scanned=%d confirmed=%d failed=%d%s',
+            '[refund-reconcile] scanned=%d confirmed=%d pending=%d failed=%d%s',
             refundSummary.scanned,
             refundSummary.confirmed,
+            refundSummary.pending,
             refundSummary.failed,
             refundSummary.errors.length
               ? ' errors=' + refundSummary.errors.join(' | ')
@@ -240,9 +241,10 @@ export class MainConfiguration {
           this.app
             .getLogger()
             .info(
-              '[refund-reconcile] scanned=%d confirmed=%d failed=%d%s',
+              '[refund-reconcile] scanned=%d confirmed=%d pending=%d failed=%d%s',
               refundSummary.scanned,
               refundSummary.confirmed,
+              refundSummary.pending,
               refundSummary.failed,
               refundSummary.errors.length
                 ? ' errors=' + refundSummary.errors.join(' | ')
