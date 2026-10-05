@@ -2422,6 +2422,8 @@ export class AdminOrderService {
     }
 
     let virtualRefundId: string | undefined;
+    /** 本次退款使用的单号：此前失败过则换新号，避免被微信幂等吞掉。 */
+    const refundNo = await this.buildRetryAwareRefundNo(order);
 
     if (order.paymentProvider === ADMIN_MANUAL_PAYMENT_PROVIDER) {
       throw new AppError(
@@ -2442,7 +2444,8 @@ export class AdminOrderService {
       virtualRefundId = await this.refundVirtualPaymentOrder(
         order,
         refundAmount,
-        reason
+        reason,
+        refundNo
       );
       // 虚拟支付退款是异步的：接口返回 OK 只代表「受理」，必须回查确认微信真的创建了退款单。
       // 真实事故：4 笔共 338 元本地记为已退款，但微信侧 left_fee 未变、退款单列表为空。
@@ -2454,7 +2457,7 @@ export class AdminOrderService {
         const unconfirmedAt = new Date();
         await this.recordCompletedRefundOrder(
           order,
-          this.generateRefundNo(order),
+          refundNo,
           OrderRefundType.orderRefund,
           refundAmount,
           virtualRefundId,
@@ -2478,7 +2481,7 @@ export class AdminOrderService {
     } else {
       await this.adminWechatPayService.refundOrder({
         orderNo: order.orderNo,
-        refundNo: this.generateRefundNo(order),
+        refundNo,
         reason,
         amount: refundAmount,
         totalAmount: paidAmount,
@@ -2488,7 +2491,7 @@ export class AdminOrderService {
     const now = new Date();
     await this.recordCompletedRefundOrder(
       order,
-      this.generateRefundNo(order),
+      refundNo,
       OrderRefundType.orderRefund,
       refundAmount,
       virtualRefundId,
@@ -3535,7 +3538,8 @@ export class AdminOrderService {
   private async refundVirtualPaymentOrder(
     order: OrderEntity,
     refundAmount: number,
-    reason: string
+    reason: string,
+    refundNo?: string
   ): Promise<string | undefined> {
     if (!order.payerOpenid) {
       throw new AppError(
@@ -3548,7 +3552,7 @@ export class AdminOrderService {
     const response = await this.adminWechatPayService.refundVirtualOrder({
       openid: order.payerOpenid,
       orderNo: order.orderNo,
-      refundNo: this.generateRefundNo(order),
+      refundNo: refundNo ?? this.generateRefundNo(order),
       leftFee: order.paidAmount ?? refundAmount,
       refundFee: refundAmount,
       reason,
@@ -5002,6 +5006,28 @@ export class AdminOrderService {
 
   private generateRefundNo(order: OrderEntity): string {
     return `R${order.orderNo}`;
+  }
+
+  /**
+   * 普通退款单号：默认 `R<orderNo>`；**若该订单此前的退款已被判定失败，必须换新号**。
+   *
+   * 微信对同一个 refund_order_id 会幂等返回上次那个「受理了却没真正创建」的退款，
+   * 沿用旧号会让重试永远无效（2026-10-05 实测：换号后立刻退成功，用旧号纹丝不动）。
+   */
+  private async buildRetryAwareRefundNo(order: OrderEntity): Promise<string> {
+    const base = this.generateRefundNo(order);
+    const previous = await this.orderRefundModel.findOne({
+      where: {
+        originalOrderId: order.id,
+        refundType: OrderRefundType.orderRefund,
+      } as never,
+    } as never);
+
+    if (!previous || previous.status !== OrderRefundStatus.failed) {
+      return base;
+    }
+
+    return `${base}R${Date.now().toString(36)}`.slice(0, 64);
   }
 
   private buildRefundOrderId(refundNo: string): MongoObjectId {
