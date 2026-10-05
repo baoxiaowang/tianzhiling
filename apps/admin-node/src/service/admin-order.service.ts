@@ -84,6 +84,8 @@ interface RawUnifiedOrderRow {
   createdAt?: Date;
   updatedAt?: Date;
   sortAt?: Date;
+  failureReason?: string;
+  failedAt?: Date;
 }
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
@@ -318,6 +320,8 @@ export class AdminOrderService {
                 completedAt: 1,
                 createdAt: 1,
                 updatedAt: 1,
+                failureReason: 1,
+                failedAt: 1,
                 sortAt: { $ifNull: ['$completedAt', '$requestedAt'] },
               },
             },
@@ -578,6 +582,8 @@ export class AdminOrderService {
       paymentProvider: row.paymentProvider || '',
       refundRequestedAt: this.formatOptionalDate(row.requestedAt),
       refundedAt: this.formatOptionalDate(row.completedAt),
+      refundFailureReason: row.failureReason || '',
+      refundFailedAt: this.formatOptionalDate(row.failedAt),
       createdAt: this.formatOptionalDate(row.requestedAt || row.createdAt),
       updatedAt: this.formatOptionalDate(row.completedAt || row.updatedAt),
     } as unknown as AdminOrderRecordDTO;
@@ -3243,12 +3249,16 @@ export class AdminOrderService {
         const leftFee = Number(snapshot.left_fee ?? 0);
         if (!hasRefund) {
           summary.failed += 1;
+          const failedAt = new Date();
           await this.orderRefundModel.updateOne(
             { _id: record.id } as never,
             {
               $set: {
                 status: OrderRefundStatus.failed,
-                updatedAt: new Date(),
+                failureReason:
+                  '自动对账：微信侧不存在该退款单（left_fee 未扣减、退款单列表为空），退款未成功，用户未收到款项',
+                failedAt,
+                updatedAt: failedAt,
               },
             } as never
           );

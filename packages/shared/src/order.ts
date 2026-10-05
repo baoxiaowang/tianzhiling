@@ -156,6 +156,10 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   /** 退款类型（退款行） */
   refundType?: string;
   refundTypeLabel?: string;
+  /** 退款失败原因（仅退款失败时有值） */
+  refundFailureReason?: string;
+  /** 判定退款失败的时间（ISO） */
+  refundFailedAt?: string;
   userId: string;
   user?: AdminOrderUserDTO;
   amount: number;
