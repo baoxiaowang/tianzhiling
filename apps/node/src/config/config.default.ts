@@ -175,6 +175,123 @@ function readBooleanFrom(names: string[], fallback: boolean): boolean {
   return fallback;
 }
 
+function readStringListFrom(names: string[], fallback: string[]): string[] {
+  for (const name of names) {
+    const raw = process.env[name];
+
+    if (raw == null) {
+      continue;
+    }
+
+    const items = raw
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  return [...fallback];
+}
+
+function readNumberRecordFrom(
+  names: string[],
+  fallback: Record<string, number>
+): Record<string, number> {
+  for (const name of names) {
+    const raw = process.env[name];
+
+    if (raw == null || !raw.trim()) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        continue;
+      }
+
+      const result: Record<string, number> = {};
+
+      for (const [key, value] of Object.entries(parsed)) {
+        const numeric =
+          typeof value === 'number' ? value : Number(value as string);
+        const normalizedKey = key.trim();
+
+        if (normalizedKey && Number.isFinite(numeric) && numeric > 0) {
+          result[normalizedKey] = Math.floor(numeric);
+        }
+      }
+
+      // 有配置项但全部非法：按配置错误处理，整体回退默认值，
+      // 避免一个笔误静默丢掉默认的目录上限。显式 {} 表示清空。
+      if (Object.keys(parsed).length > 0 && Object.keys(result).length === 0) {
+        continue;
+      }
+
+      return result;
+    } catch {
+      // 配置为非法 JSON 时回退默认值，避免启动失败。
+    }
+  }
+
+  return { ...fallback };
+}
+
+function readRatioRecordFrom(
+  names: string[],
+  fallback: Record<string, number>
+): Record<string, number> {
+  for (const name of names) {
+    const raw = process.env[name];
+
+    if (raw == null || !raw.trim()) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        continue;
+      }
+
+      const result: Record<string, number> = {};
+
+      for (const [key, value] of Object.entries(parsed)) {
+        const numeric =
+          typeof value === 'number' ? value : Number(value as string);
+        const normalizedKey = key.trim();
+
+        // 抽样比例保留小数，取值范围 (0, 1]。
+        if (
+          normalizedKey &&
+          Number.isFinite(numeric) &&
+          numeric > 0 &&
+          numeric <= 1
+        ) {
+          result[normalizedKey] = numeric;
+        }
+      }
+
+      // 有配置项但全部非法：按配置错误处理，整体回退默认值，
+      // 避免一个笔误静默丢掉默认的保护性抽样比例。显式 {} 表示清空。
+      if (Object.keys(parsed).length > 0 && Object.keys(result).length === 0) {
+        continue;
+      }
+
+      return result;
+    } catch {
+      // 配置为非法 JSON 时回退默认值，避免启动失败。
+    }
+  }
+
+  return { ...fallback };
+}
+
 function readPemFrom(
   names: string[],
   fallback = '',
@@ -822,6 +939,95 @@ export default {
     engineModelType: readStringFrom(
       ['NODE_TENCENT_ASR_ENGINE_MODEL_TYPE'],
       '16k_zh'
+    ),
+  },
+  // 内容审核（图片）与上传配额：与品牌、支付、域名配置分离，便于单独核验与回滚。
+  imageModeration: {
+    // 关闭时完全保持历史行为：上传成功即返回，不做任何审核调用。
+    enabled: readBooleanFrom(['NODE_IMAGE_MODERATION_ENABLED'], false),
+    // 审核策略唯一标识；留空使用控制台默认策略（场景即计费倍数，必须显式确认）。
+    bizType: readStringFrom(['NODE_IMAGE_MODERATION_BIZ_TYPE'], ''),
+    // 只审核用户产生内容的目录；服务端生成与运营资产不审，避免无效审核费用。
+    folders: readStringListFrom(
+      ['NODE_IMAGE_MODERATION_FOLDERS'],
+      [
+        'moments',
+        'avatars',
+        'contact-covers',
+        'conversation-images',
+        'chat-imports',
+        'memorial-source-photos',
+      ]
+    ),
+    // 疑似违规（Result=2）：block 拦截，其他值放行并记日志等待人工复核。
+    reviewAction: readStringFrom(
+      ['NODE_IMAGE_MODERATION_REVIEW_ACTION'],
+      'allow'
+    ),
+    // 分层审核：公开目录（可传播内容）用上面的策略全量审；
+    // 私密目录（仅本人可见、但会进模型）改用红线策略 + 抽样，用来压缩成本。
+    restrictedFolders: readStringListFrom(
+      ['NODE_IMAGE_MODERATION_RESTRICTED_FOLDERS'],
+      ['conversation-images', 'chat-imports', 'memorial-source-photos']
+    ),
+    // 私密目录的红线策略（只勾色情等内容）；留空退回上面的 bizType。
+    restrictedBizType: readStringFrom(
+      ['NODE_IMAGE_MODERATION_RESTRICTED_BIZ_TYPE'],
+      ''
+    ),
+    restrictedSampleRate: readNumberFrom(
+      ['NODE_IMAGE_MODERATION_RESTRICTED_SAMPLE_RATE'],
+      0.05
+    ),
+    folderSampleRates: readRatioRecordFrom(
+      ['NODE_IMAGE_MODERATION_FOLDER_SAMPLE_RATES'],
+      // 亲人素材会进入 AI 合成链路（深度合成合规重点），保持全量。
+      { 'memorial-source-photos': 1 }
+    ),
+    // 审核服务不可用（超时/报错/结构无法识别）：block 拦截，其他值放行并告警。
+    failureAction: readStringFrom(
+      ['NODE_IMAGE_MODERATION_FAILURE_ACTION'],
+      'allow'
+    ),
+    // 超过 5MB 的图片需要压缩后审核，会产生基础图片处理费用，默认关闭。
+    largeImageDetect: readBooleanFrom(
+      ['NODE_IMAGE_MODERATION_LARGE_IMAGE_DETECT'],
+      false
+    ),
+    timeoutMs: readNumberFrom(['NODE_IMAGE_MODERATION_TIMEOUT_MS'], 8000),
+    // 首次上线需要靠原始响应核对返回结构，确认后可关闭。
+    logRawResponse: readBooleanFrom(['NODE_IMAGE_MODERATION_LOG_RAW'], true),
+  },
+  uploadQuota: {
+    enabled: readBooleanFrom(['NODE_UPLOAD_QUOTA_ENABLED'], true),
+    dailyFilesPerUser: readNumberFrom(['NODE_UPLOAD_QUOTA_DAILY_FILES'], 50),
+    dailyImageFilesPerUser: readNumberFrom(
+      ['NODE_UPLOAD_QUOTA_DAILY_IMAGE_FILES'],
+      30
+    ),
+    // 256MB：客户端上传前不压图，一次聊天导入（30 张截图）最坏约 150MB，
+    // 留出余量避免导入中途被字节上限打断。
+    dailyBytesPerUser: readNumberFrom(
+      ['NODE_UPLOAD_QUOTA_DAILY_BYTES'],
+      256 * 1024 * 1024
+    ),
+    folderDailyFiles: readNumberRecordFrom(
+      ['NODE_UPLOAD_QUOTA_FOLDER_LIMITS'],
+      {
+        // 聊天导入：一天一批，且豁免全局文件数/图片数计数。
+        'chat-imports': 30,
+        // 3 帖 × 9 图上限。
+        moments: 27,
+        'conversation-images': 15,
+        avatars: 5,
+        'contact-covers': 5,
+        // 与纪念馆照片非会员 3 次、会员 10 次的每日生成配额对齐。
+        'memorial-source-photos': 10,
+      }
+    ),
+    exemptFolders: readStringListFrom(
+      ['NODE_UPLOAD_QUOTA_EXEMPT_FOLDERS'],
+      ['chat-imports']
     ),
   },
   voiceClipping: {

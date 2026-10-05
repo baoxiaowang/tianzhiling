@@ -274,6 +274,106 @@ export class TencentCosService {
     );
   }
 
+  /**
+   * 数据万象图片单次审核（同步，按对象键）。
+   * 这里只负责传输与 JSON 解析，是否拦截由 ImageModerationService 决定。
+   * 计费口径：每个审核场景单独计费，场景由审核策略（bizType）决定。
+   */
+  async auditImageByObjectKey(request: {
+    objectKey: string;
+    bizType?: string;
+    largeImageDetect?: boolean;
+  }): Promise<Record<string, unknown>> {
+    const normalizedObjectKey = this.normalizeObjectKey(request.objectKey);
+    const client = this.getClient();
+    const bucket = this.getRequiredConfig('bucket', 'NODE_TENCENT_COS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_TENCENT_COS_REGION');
+    const query: Record<string, string> = {
+      'ci-process': 'sensitive-content-recognition',
+    };
+    const bizType = request.bizType?.trim();
+
+    if (bizType) {
+      query['biz-type'] = bizType;
+    }
+
+    if (request.largeImageDetect) {
+      query['large-image-detect'] = '1';
+    }
+
+    let result: Record<string, unknown>;
+
+    try {
+      result = (await client.request({
+        Method: 'GET',
+        Bucket: bucket,
+        Region: region,
+        Key: normalizedObjectKey,
+        Query: query,
+      })) as unknown as Record<string, unknown>;
+    } catch (error) {
+      this.logger?.error?.(
+        '[tencent-cos] image audit request failed, objectKey=%s, error=%j',
+        normalizedObjectKey,
+        this.describeProviderError(error)
+      );
+      throw error;
+    }
+
+    const parsed = this.extractResponseBody(result);
+
+    if (!parsed) {
+      this.logger?.error?.(
+        '[tencent-cos] image audit response is not JSON, objectKey=%s',
+        normalizedObjectKey
+      );
+      throw new AppError(
+        'TENCENT_COS_AUDIT_INVALID_RESPONSE',
+        '图片审核返回内容无法解析',
+        502
+      );
+    }
+
+    return parsed;
+  }
+
+  private extractResponseBody(
+    result: Record<string, unknown>
+  ): Record<string, unknown> | null {
+    const body = result?.Body;
+
+    if (Buffer.isBuffer(body)) {
+      return this.parseJsonText(body.toString('utf8'));
+    }
+
+    if (typeof body === 'string') {
+      return this.parseJsonText(body);
+    }
+
+    if (body && typeof body === 'object') {
+      return body as Record<string, unknown>;
+    }
+
+    // 部分 SDK 版本会直接把 JSON 解析结果铺在返回值上。
+    if (result?.Status || result?.RecognitionResult) {
+      return result;
+    }
+
+    return null;
+  }
+
+  private parseJsonText(value: string): Record<string, unknown> | null {
+    try {
+      const parsed = JSON.parse(value);
+
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
   resolveObjectKeyFromPublicUrl(
     value: string | undefined,
     allowedPrefixes: string[] = []
