@@ -999,6 +999,82 @@ export class AdminOrderService {
   }
 
   /**
+   * 自动收敛卡在 processing 的会员降级退款（供定时任务调用）。
+   *
+   * 只做「向微信查询退款状态并回写」，**绝不发起或重试退款**：
+   * - 仅非虚拟支付通道：虚拟支付的同步路径会重新发起退款，不能自动执行；
+   * - 仅 status=processing 且已有 wechatRefundId（确认退款已提交过）；
+   * - 仅 requestedAt 早于 graceMinutes 的记录，避免与刚提交的退款抢跑；
+   * - 微信查询无结果时保持原状留待下一轮，不做任何兜底动作。
+   *
+   * 背景：降级退款只在同步成功后才会写入 `order_refund`；长期停在 processing
+   * 会让这笔退款在所有收入统计（净收入、净收入下钻、月度报表）里消失。
+   */
+  async reconcilePendingVoiceMembershipDowngrades(
+    graceMinutes = 30,
+    limit = 50
+  ): Promise<{
+    scanned: number;
+    completed: number;
+    pending: number;
+    failed: number;
+    errors: string[];
+  }> {
+    const cutoff = new Date(Date.now() - graceMinutes * 60 * 1000);
+    const field = (key: string) =>
+      `snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.${key}`;
+
+    const orders = await this.orderModel.find({
+      where: {
+        paymentProvider: { $ne: WECHAT_VIRTUAL_PAY_PROVIDER },
+        [field('status')]: 'processing',
+        [field('wechatRefundId')]: { $exists: true, $nin: [null, ''] },
+        $or: [
+          { [field('requestedAt')]: { $lte: cutoff.toISOString() } },
+          { [field('requestedAt')]: { $lte: cutoff } },
+        ],
+      } as never,
+      order: { createdAt: 'ASC' } as never,
+    });
+
+    const summary = {
+      scanned: orders.length,
+      completed: 0,
+      pending: 0,
+      failed: 0,
+      errors: [] as string[],
+    };
+
+    for (const order of orders.slice(0, limit)) {
+      const downgrade = this.getVoiceMembershipDowngrade(order);
+      if (!downgrade) continue;
+      try {
+        const refund = await this.adminWechatPayService.queryRefundByRefundNo(
+          downgrade.refundNo
+        );
+        if (!refund) {
+          summary.pending += 1;
+          continue;
+        }
+        await this.applyVoiceMembershipDowngradeRefundStatus(
+          order,
+          downgrade,
+          refund
+        );
+        const status = refund.status?.trim().toUpperCase() || 'PROCESSING';
+        if (status === 'SUCCESS') summary.completed += 1;
+        else if (status === 'CLOSED' || status === 'ABNORMAL') summary.failed += 1;
+        else summary.pending += 1;
+      } catch (err) {
+        summary.failed += 1;
+        summary.errors.push(`${order.orderNo}: ${(err as Error).message}`);
+      }
+    }
+
+    return summary;
+  }
+
+  /**
    * 撤回失败的会员降级任务：清空降级记录，使订单恢复可退款/可重新降级。
    * 仅允许撤回 status=failed 的降级（退款已成功的 benefits_failed 不允许），
    * 原记录转入 snapshot.voiceMembershipDowngradeWithdrawn 保留审计。

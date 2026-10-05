@@ -14,11 +14,14 @@ import { AgentVtAuthMiddleware } from './middleware/agent-vt-auth.middleware';
 import { FormatMiddleware } from './middleware/format.middleware';
 import { AdminPerformanceMiddleware } from './middleware/admin-performance.middleware';
 import { AdminDailyStatsService } from './service/admin-daily-stats.service';
+import { AdminOrderService } from './service/admin-order.service';
 import { AdminOperationsService } from './service/admin-operations.service';
 import { AdminRelationshipLlmBackfillService } from './service/admin-relationship-llm-backfill.service';
 
 const DAILY_STATS_INTERVAL_MS = 30 * 60 * 1000; // 30 分钟
 const RELATIONSHIP_BACKFILL_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 每小时检查一次
+/** 会员降级退款自动收敛：每 30 分钟查一次微信退款状态。 */
+const DOWNGRADE_RECONCILE_INTERVAL_MS = 30 * 60 * 1000;
 
 @Configuration({
   imports: [
@@ -41,6 +44,7 @@ export class MainConfiguration {
 
   private dailyStatsTimer?: NodeJS.Timeout;
   private relationshipBackfillTimer?: NodeJS.Timeout;
+  private downgradeReconcileTimer?: NodeJS.Timeout;
   private relationshipBackfillLastRunDate = '';
 
   async onReady() {
@@ -53,6 +57,7 @@ export class MainConfiguration {
     this.startDailyStatsPrecompute();
     this.backfillHistoricalDailyStats();
     this.startRelationshipLlmBackfillScheduler();
+    this.startVoiceMembershipDowngradeReconcileScheduler();
   }
 
   /**
@@ -89,6 +94,8 @@ export class MainConfiguration {
     }
     if (this.relationshipBackfillTimer) {
       clearInterval(this.relationshipBackfillTimer);
+    if (this.downgradeReconcileTimer)
+      clearInterval(this.downgradeReconcileTimer);
       this.relationshipBackfillTimer = undefined;
     }
   }
@@ -203,5 +210,50 @@ export class MainConfiguration {
     this.relationshipBackfillTimer = setInterval(() => {
       checkAndRun().catch(() => {});
     }, RELATIONSHIP_BACKFILL_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * 会员降级退款自动收敛：每 30 分钟把仍卡在 processing 的降级退款向微信查询真实状态并回写。
+   *
+   * 为什么需要：降级退款只有同步成功后才会写入 `order_refund`；长期停在 processing
+   * 会让这笔退款在所有收入统计（净收入、净收入下钻、月度报表）里凭空消失。
+   * 任务只查询不发起退款，虚拟支付通道与 failed 记录都不在自动范围内。
+   */
+  private startVoiceMembershipDowngradeReconcileScheduler() {
+    const run = async () => {
+      try {
+        const service = await this.app
+          .getApplicationContext()
+          .getAsync(AdminOrderService);
+        const summary = await service.reconcilePendingVoiceMembershipDowngrades();
+        if (summary.scanned > 0) {
+          this.app
+            .getLogger()
+            .info(
+              '[downgrade-reconcile] scanned=%d completed=%d pending=%d failed=%d%s',
+              summary.scanned,
+              summary.completed,
+              summary.pending,
+              summary.failed,
+              summary.errors.length ? ' errors=' + summary.errors.join(' | ') : ''
+            );
+        }
+      } catch (err) {
+        this.app
+          .getLogger()
+          .error(
+            '[downgrade-reconcile] scheduler failed: %s',
+            (err as Error).message
+          );
+      }
+    };
+
+    // 启动 2 分钟后跑一次，之后每 30 分钟
+    setTimeout(() => {
+      run().catch(() => {});
+    }, 2 * 60 * 1000);
+    this.downgradeReconcileTimer = setInterval(() => {
+      run().catch(() => {});
+    }, DOWNGRADE_RECONCILE_INTERVAL_MS);
   }
 }
