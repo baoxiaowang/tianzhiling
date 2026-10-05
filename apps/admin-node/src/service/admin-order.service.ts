@@ -2264,6 +2264,37 @@ export class AdminOrderService {
         refundAmount,
         reason
       );
+      // 虚拟支付退款是异步的：接口返回 OK 只代表「受理」，必须回查确认微信真的创建了退款单。
+      // 真实事故：4 笔共 338 元本地记为已退款，但微信侧 left_fee 未变、退款单列表为空。
+      const confirmed = await this.confirmVirtualRefund(
+        order,
+        virtualRefundId
+      );
+      if (!confirmed) {
+        const unconfirmedAt = new Date();
+        await this.recordCompletedRefundOrder(
+          order,
+          this.generateRefundNo(order),
+          OrderRefundType.orderRefund,
+          refundAmount,
+          virtualRefundId,
+          unconfirmedAt,
+          unconfirmedAt,
+          OrderRefundStatus.processing
+        );
+        this.logger?.error?.(
+          '[refund-alert] virtual refund NOT confirmed by wechat: orderNo=%s refundNo=%s refundWxOrderId=%s amount=%s',
+          order.orderNo,
+          this.generateRefundNo(order),
+          virtualRefundId || '-',
+          refundAmount
+        );
+        throw new AppError(
+          'WECHAT_VIRTUAL_REFUND_NOT_CONFIRMED',
+          '微信未确认该笔退款已创建，订单未标记为已退款（已记为处理中并告警）。请稍后重试，或先在微信商户平台核对退款状态。',
+          502
+        );
+      }
     } else {
       await this.adminWechatPayService.refundOrder({
         orderNo: order.orderNo,
@@ -3083,6 +3114,152 @@ export class AdminOrderService {
     }
   }
 
+  /**
+   * 回查确认微信是否真的创建了这笔虚拟支付退款。
+   *
+   * 接口返回 OK 只代表受理成功——实测存在「返回 OK + 退款单号，但微信侧从未创建退款单」的情况
+   * （left_fee 不变、refund_info.refund_order 为空），因此必须查询订单的退款单列表确认。
+   */
+  private async confirmVirtualRefund(
+    order: OrderEntity,
+    refundWxOrderId: string | undefined,
+    attempts = 5,
+    intervalMs = 3000
+  ): Promise<boolean> {
+    if (!order.payerOpenid) return false;
+    const env =
+      order.virtualPaymentEnv ??
+      this.adminWechatPayService.getVirtualPayEnv();
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+      }
+      try {
+        const snapshot = await this.adminWechatPayService.queryVirtualOrder({
+          openid: order.payerOpenid,
+          orderNo: order.orderNo,
+          env,
+        });
+        const refunds = snapshot?.refund_info?.refund_order;
+        if (Array.isArray(refunds) && refunds.length > 0) {
+          if (!refundWxOrderId) return true;
+          return refunds.some(item =>
+            JSON.stringify(item).includes(refundWxOrderId)
+          );
+        }
+      } catch (err) {
+        this.logger?.warn?.(
+          '[refund] virtual refund confirm failed: orderNo=%s err=%s',
+          order.orderNo,
+          (err as Error).message
+        );
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * 虚拟支付退款对账（定时任务）：把本地记为已退款/处理中的虚拟支付退款逐笔拿去微信核对。
+   *
+   * - 微信侧确认有退款单 → 保持/补记为 completed；
+   * - 微信侧无退款单且 left_fee 未扣减 → 标为 failed 并打 `[refund-alert]` 错误日志，
+   *   避免「系统显示已退款、用户没收到钱」长期无人发现；
+   * - 其余保持处理中，等下一轮。
+   */
+  async reconcileVirtualRefunds(
+    limit = 100
+  ): Promise<{ scanned: number; confirmed: number; failed: number; errors: string[] }> {
+    const records = await this.orderRefundModel.find({
+      where: {
+        paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+        status: {
+          $in: [OrderRefundStatus.completed, OrderRefundStatus.processing],
+        },
+      } as never,
+      take: limit,
+    } as never);
+
+    const summary = {
+      scanned: records.length,
+      confirmed: 0,
+      failed: 0,
+      errors: [] as string[],
+    };
+
+    for (const record of records) {
+      try {
+        const order = await this.getOrderById(String(record.originalOrderId));
+        if (!order?.payerOpenid) continue;
+        const env =
+          order.virtualPaymentEnv ??
+          this.adminWechatPayService.getVirtualPayEnv();
+        const snapshot = await this.adminWechatPayService.queryVirtualOrder({
+          openid: order.payerOpenid,
+          orderNo: order.orderNo,
+          env,
+        });
+        if (!snapshot) continue;
+        const refunds = snapshot.refund_info?.refund_order;
+        const hasRefund = Array.isArray(refunds) && refunds.length > 0;
+        const refundIdMatched =
+          hasRefund &&
+          (!record.paymentRefundId ||
+            refunds.some(item =>
+              JSON.stringify(item).includes(String(record.paymentRefundId))
+            ));
+
+        if (refundIdMatched) {
+          summary.confirmed += 1;
+          if (record.status !== OrderRefundStatus.completed) {
+            await this.orderRefundModel.updateOne(
+              { _id: record.id } as never,
+              {
+                $set: {
+                  status: OrderRefundStatus.completed,
+                  completedAt: record.completedAt ?? new Date(),
+                  updatedAt: new Date(),
+                },
+              } as never
+            );
+          }
+          continue;
+        }
+
+        const paidFee = Number(snapshot.paid_fee ?? 0);
+        const leftFee = Number(snapshot.left_fee ?? 0);
+        if (!hasRefund) {
+          summary.failed += 1;
+          await this.orderRefundModel.updateOne(
+            { _id: record.id } as never,
+            {
+              $set: {
+                status: OrderRefundStatus.failed,
+                updatedAt: new Date(),
+              },
+            } as never
+          );
+          this.logger?.error?.(
+            '[refund-alert] wechat has NO refund for a locally-recorded virtual refund: orderNo=%s refundNo=%s refundWxOrderId=%s amount=%s leftFee=%s paidFee=%s',
+            order.orderNo,
+            record.refundNo,
+            record.paymentRefundId || '-',
+            record.amount,
+            leftFee,
+            paidFee
+          );
+        }
+      } catch (err) {
+        summary.errors.push(
+          `${record.refundNo}: ${(err as Error).message}`
+        );
+      }
+    }
+
+    return summary;
+  }
+
   private async refundVirtualPaymentOrder(
     order: OrderEntity,
     refundAmount: number,
@@ -3141,7 +3318,8 @@ export class AdminOrderService {
     amount: number,
     paymentRefundId: string | undefined,
     requestedAt: Date,
-    completedAt: Date
+    completedAt: Date,
+    status: OrderRefundStatus = OrderRefundStatus.completed
   ): Promise<void> {
     const normalizedRequestedAt = Number.isNaN(requestedAt.getTime())
       ? completedAt
@@ -3166,9 +3344,9 @@ export class AdminOrderService {
           createdAt: normalizedRequestedAt,
         },
         $set: {
-          status: OrderRefundStatus.completed,
+          status,
           paymentRefundId,
-          completedAt,
+          ...(status === OrderRefundStatus.completed ? { completedAt } : {}),
           updatedAt: completedAt,
         },
       } as never,

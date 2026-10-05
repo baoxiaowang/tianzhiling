@@ -225,6 +225,20 @@ export class MainConfiguration {
         const service = await this.app
           .getApplicationContext()
           .getAsync(AdminOrderService);
+        const refundSummary = await service.reconcileVirtualRefunds();
+        if (refundSummary.scanned > 0) {
+          this.app
+            .getLogger()
+            .info(
+              '[refund-reconcile] scanned=%d confirmed=%d failed=%d%s',
+              refundSummary.scanned,
+              refundSummary.confirmed,
+              refundSummary.failed,
+              refundSummary.errors.length
+                ? ' errors=' + refundSummary.errors.join(' | ')
+                : ''
+            );
+        }
         const summary = await service.reconcilePendingVoiceMembershipDowngrades();
         if (summary.scanned > 0) {
           this.app

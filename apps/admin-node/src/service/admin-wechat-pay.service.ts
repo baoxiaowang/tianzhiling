@@ -70,6 +70,8 @@ export interface AdminWechatVirtualOrderPayload {
   biz_meta?: string;
   env_type?: number;
   left_fee?: number;
+  /** 该订单在微信侧已创建的退款单列表；为空即表示微信从未创建退款 */
+  refund_info?: { refund_order?: unknown[] };
   wx_order_id?: string;
   channel_order_id?: string;
   wxpay_order_id?: string;
