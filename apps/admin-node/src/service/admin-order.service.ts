@@ -3307,6 +3307,77 @@ export class AdminOrderService {
   }
 
   /**
+   * 退款被判定失败后，把提交退款时"乐观"写入的结果整体还原，使订单重新可退款。
+   *
+   * 提交退款时订单会被立即置为 refunded、累加 refundAmount 并撤销会员权益；
+   * 既然这笔退款最终没成功，这些副作用都必须撤回——否则用户"没收到钱、还丢了会员"，
+   * 运营在订单页也看不到退款按钮（refunded 不在可退状态里），根本没法补救。
+   *
+   * @returns 是否发生了完整还原（订单从 refunded 回到 completed）
+   */
+  private async restoreOrderRefundState(
+    order: OrderEntity,
+    refundAmount: number,
+    reason: string
+  ): Promise<boolean> {
+    const now = new Date();
+    const currentRefunded = Number(order.refundAmount ?? 0);
+    const nextRefunded = Math.max(0, currentRefunded - refundAmount);
+    const set: Record<string, unknown> = {
+      refundAmount: nextRefunded,
+      updatedAt: now,
+    };
+    const unset: Record<string, unknown> = {};
+    let fullyRestored = false;
+
+    if (nextRefunded === 0) {
+      unset.refundedAt = '';
+      if (order.status === OrderStatus.refunded) {
+        set.status = OrderStatus.completed;
+        fullyRestored = true;
+      }
+    }
+
+    await this.orderModel.updateOne(
+      { _id: order.id } as never,
+      {
+        $set: set,
+        ...(Object.keys(unset).length ? { $unset: unset } : {}),
+      } as never
+    );
+
+    if (fullyRestored) {
+      // 权益是在这次（失败的）退款里被撤销的，一并恢复
+      await this.userMembershipModel.updateOne(
+        {
+          sourceOrderId: order.id,
+          status: UserMembershipStatus.refunded,
+        } as never,
+        {
+          $set: { status: UserMembershipStatus.active, updatedAt: now },
+        } as never
+      );
+      await this.agentEntitlementModel.updateMany(
+        {
+          sourceOrderId: order.id,
+          status: AgentEntitlementStatus.refunded,
+        } as never,
+        {
+          $set: { status: AgentEntitlementStatus.available, updatedAt: now },
+        } as never
+      );
+      this.alertRefundFailure(
+        '[refund-alert] order restored to refundable after refund failure: orderNo=%s refundAmount=%s reason=%s',
+        order.orderNo,
+        refundAmount,
+        reason
+      );
+    }
+
+    return fullyRestored;
+  }
+
+  /**
    * 回查确认微信是否真的创建了这笔虚拟支付退款。
    *
    * 接口返回 OK 只代表受理成功——实测存在「返回 OK + 退款单号，但微信侧从未创建退款单」的情况
@@ -3435,6 +3506,11 @@ export class AdminOrderService {
                 updatedAt: failedAt,
               },
             } as never
+          );
+          await this.restoreOrderRefundState(
+            order,
+            Number(record.amount) || 0,
+            'wechat has no refund order and left_fee unchanged'
           );
           this.alertRefundFailure(
             '[refund-alert] wechat has NO refund for a locally-recorded virtual refund: orderNo=%s refundNo=%s refundWxOrderId=%s amount=%s leftFee=%s paidFee=%s',
