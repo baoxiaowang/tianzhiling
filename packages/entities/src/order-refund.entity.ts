@@ -65,14 +65,6 @@ export class OrderRefundEntity extends BaseEntity {
   @Column()
   completedAt?: Date;
 
-  /** 退款失败原因（仅 status=failed 时有值），便于后台定位与对账 */
-  @Column()
-  failureReason?: string;
-
-  /** 判定退款失败的时间 */
-  @Column()
-  failedAt?: Date;
-
   @Column()
   createdAt: Date;
 
