@@ -43,7 +43,81 @@
           <a-table-column title="用户消息" data-index="userMessages" />
           <a-table-column title="净收入">
             <template #cell="{ record }">
-              <strong>{{ formatMoney(record.netRevenue) }}</strong>
+              <a-popover
+                trigger="click"
+                position="right"
+                :content-style="{ padding: '10px 12px', maxWidth: '440px' }"
+                @popup-visible-change="
+                  (visible: boolean) => onNetVisible(record, visible)
+                "
+              >
+                <span class="daily-detail-page__cohort-trigger">
+                  <strong>{{ formatMoney(record.netRevenue) }}</strong>
+                </span>
+                <template #content>
+                  <div class="cohort-detail">
+                    <div class="cohort-detail__title">
+                      {{ record.date }} · 当日支付与退款流水
+                    </div>
+                    <a-spin :loading="netLoading[record.date]">
+                      <div
+                        v-if="netError[record.date]"
+                        class="cohort-detail__empty"
+                      >
+                        {{ netError[record.date] }}
+                        <a-link
+                          @click="loadNetOrders(record.date, record.netRevenue)"
+                        >
+                          重试
+                        </a-link>
+                      </div>
+                      <div
+                        v-else-if="!netItems(record.date).length"
+                        class="cohort-detail__empty"
+                      >
+                        暂无明细
+                      </div>
+                      <div v-else class="cohort-detail__list">
+                        <div
+                          v-for="(item, idx) in netItems(record.date)"
+                          :key="`${record.date}-net-${idx}`"
+                          class="cohort-detail__row"
+                        >
+                          <span class="cohort-detail__time">
+                            {{ formatTime(item.occurredAt) }}
+                          </span>
+                          <span class="cohort-detail__tag">
+                            <span class="cohort-detail__code">
+                              {{ item.reference }}
+                            </span>
+                            <span
+                              v-if="item.kind === 'refund'"
+                              class="cohort-detail__badge"
+                            >
+                              退款
+                            </span>
+                          </span>
+                          <span
+                            class="cohort-detail__amount"
+                            :class="{ 'is-refund': item.amount < 0 }"
+                          >
+                            {{ formatSignedMoney(item.amount) }}
+                          </span>
+                        </div>
+                      </div>
+                    </a-spin>
+                    <div class="cohort-detail__footer">
+                      <span>
+                        合计
+                        <strong>{{ formatMoney(netTotal(record)) }}</strong>
+                      </span>
+                      <span v-if="netTruncated[record.date]">
+                        仅显示前 {{ netItems(record.date).length }} 条
+                      </span>
+                    </div>
+                  </div>
+                </template>
+              </a-popover>
             </template>
           </a-table-column>
           <a-table-column title="累计收入">
@@ -185,6 +259,7 @@
   } from '@tzl/shared';
   import {
     queryDailyCohortOrders,
+    queryDailyNetOrders,
     queryDailyDetail,
     updateDailyNote,
     updateDailyPromotionExpense,
@@ -295,6 +370,71 @@
     Object.keys(cohortOpenDates).forEach((date) => {
       if (cohortOpenDates[date]) {
         loadCohortOrders(date);
+      }
+    });
+  };
+
+  /** 净收入下钻：按日期缓存当日支付/退款流水。 */
+  const netLoading = reactive<Record<string, boolean>>({});
+  const netError = reactive<Record<string, string>>({});
+  const netRows = reactive<Record<string, AdminDailyCohortOrderItemDTO[]>>({});
+  const netTotals = reactive<Record<string, number>>({});
+  const netTruncated = reactive<Record<string, boolean>>({});
+  const netOpenDates = reactive<Record<string, boolean>>({});
+  /** 与 cohort 同款世代号：过期响应必须丢弃，避免刷新后弹层被旧数据覆盖。 */
+  let netGeneration = 0;
+
+  const netItems = (date: string) => netRows[date] || [];
+
+  const netTotal = (record: AdminOperationsDailyPointDTO) =>
+    netTotals[record.date] ?? record.netRevenue;
+
+  const loadNetOrders = async (date: string, fallbackTotal = 0) => {
+    const generation = netGeneration;
+    netLoading[date] = true;
+    delete netError[date];
+    try {
+      const { data } = await queryDailyNetOrders(date);
+      if (generation !== netGeneration) {
+        return;
+      }
+      netRows[date] = data?.items || [];
+      netTotals[date] = data?.total ?? fallbackTotal;
+      netTruncated[date] = Boolean(data?.truncated);
+    } catch {
+      if (generation !== netGeneration) {
+        return;
+      }
+      netError[date] = '明细加载失败';
+    } finally {
+      if (generation === netGeneration) {
+        netLoading[date] = false;
+      }
+    }
+  };
+
+  /** 点击净收入时才拉取当日流水；同一日期只拉一次。 */
+  const onNetVisible = (
+    record: AdminOperationsDailyPointDTO,
+    visible: boolean
+  ) => {
+    netOpenDates[record.date] = visible;
+    if (!visible || netLoading[record.date] || netRows[record.date]) {
+      return;
+    }
+    loadNetOrders(record.date, record.netRevenue);
+  };
+
+  const clearNetDetails = () => {
+    netGeneration += 1;
+    Object.keys(netRows).forEach((key) => delete netRows[key]);
+    Object.keys(netTotals).forEach((key) => delete netTotals[key]);
+    Object.keys(netTruncated).forEach((key) => delete netTruncated[key]);
+    Object.keys(netError).forEach((key) => delete netError[key]);
+    Object.keys(netLoading).forEach((key) => delete netLoading[key]);
+    Object.keys(netOpenDates).forEach((date) => {
+      if (netOpenDates[date]) {
+        loadNetOrders(date);
       }
     });
   };
@@ -490,6 +630,7 @@
       notes.value = data?.notes || {};
       lastUpdatedAt.value = dayjs().format('HH:mm:ss');
       clearCohortDetails();
+      clearNetDetails();
       if (!options?.silent) {
         clearPromotionDrafts();
         clearNoteDrafts();

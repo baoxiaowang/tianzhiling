@@ -90,6 +90,12 @@ export class AdminOperationsController {
     return this.adminOperationsService.getDailyCohortOrders(date);
   }
 
+  /** 净收入下钻：该自然日发生的支付/退款流水（合计 = 当日净收入）。 */
+  @Get('/daily-detail/:date/net-orders')
+  async dailyNetOrders(@Param('date') date: string) {
+    return this.adminOperationsService.getDailyNetOrders(date);
+  }
+
   @Put('/reports/daily/:date/note')
   async updateDailyNote(
     @Param('date') date: string,

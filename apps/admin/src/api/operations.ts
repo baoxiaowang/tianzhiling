@@ -101,6 +101,16 @@ export function queryDailyCohortOrders(date: string) {
   );
 }
 
+/**
+ * 净收入下钻：返回该自然日发生的支付/退款流水。
+ * 与每日明细的净收入同一口径，明细求和 = 该行净收入（截断时以 total 为准）。
+ */
+export function queryDailyNetOrders(date: string) {
+  return axios.get<AdminDailyCohortOrdersDTO>(
+    `/admin_api/operations/daily-detail/${date}/net-orders`
+  );
+}
+
 export function updateDailyNote(date: string, note: string) {
   return axios.put<{ date: string; note: string }>(
     `/admin_api/operations/reports/daily/${date}/note`,

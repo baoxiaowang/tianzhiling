@@ -2727,6 +2727,148 @@ export class AdminOperationsService {
     };
   }
 
+  /**
+   * 净收入下钻：该自然日发生的支付与退款流水（净收入 = 当日支付 − 当日退款）。
+   * 与每日明细的 paidRevenue/refundedRevenue 完全同源，合计 = 该行净收入。
+   */
+  async getDailyNetOrders(date: string): Promise<AdminDailyCohortOrdersDTO> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new AppError('INVALID_DATE', `invalid date: ${date}`, 400);
+    }
+
+    const dayStart = this.beijingDateStart(date);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    const extraMatch = this.buildRealOrderMatch();
+    const limit = AdminOperationsService.MAX_COHORT_ORDER_ROWS;
+
+    const [rows, orderStats, refunded, legacyRefunded] = await Promise.all([
+      this.orderModel
+        .aggregate<{
+          occurredAt?: Date;
+          amount?: number;
+          kind: 'order' | 'refund';
+          reference?: string;
+          targetCode?: string;
+        }>([
+          {
+            $match: {
+              ...extraMatch,
+              paidAt: { $type: 'date', $gte: dayStart, $lt: dayEnd },
+            },
+          },
+          {
+            $project: {
+              occurredAt: '$paidAt',
+              amount: { $ifNull: ['$paidAmount', '$payableAmount'] },
+              kind: { $literal: 'order' },
+              reference: '$orderNo',
+              targetCode: 1,
+            },
+          },
+          {
+            $unionWith: {
+              coll: TableName.order_refund,
+              pipeline: [
+                {
+                  $match: {
+                    ...extraMatch,
+                    status: OrderRefundStatus.completed,
+                    completedAt: { $gte: dayStart, $lt: dayEnd },
+                  },
+                },
+                {
+                  $project: {
+                    occurredAt: { $ifNull: ['$completedAt', '$createdAt'] },
+                    amount: { $multiply: ['$amount', -1] },
+                    kind: { $literal: 'refund' },
+                    reference: { $ifNull: ['$refundNo', '$originalOrderNo'] },
+                    targetCode: 1,
+                  },
+                },
+              ],
+            },
+          },
+          {
+            $unionWith: {
+              coll: TableName.order,
+              pipeline: [
+                {
+                  $match: this.buildLegacyRefundFlowMatch(
+                    dayStart,
+                    dayEnd,
+                    extraMatch
+                  ),
+                },
+                {
+                  $lookup: {
+                    from: TableName.order_refund,
+                    localField: '_id',
+                    foreignField: 'originalOrderId',
+                    as: 'independentRefundOrders',
+                  },
+                },
+                { $match: { 'independentRefundOrders.0': { $exists: false } } },
+                {
+                  $project: {
+                    occurredAt: { $ifNull: ['$refundedAt', '$updatedAt'] },
+                    amount: {
+                      $multiply: [
+                        {
+                          $cond: [
+                            { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                            '$refundAmount',
+                            { $ifNull: ['$paidAmount', '$payableAmount'] },
+                          ],
+                        },
+                        -1,
+                      ],
+                    },
+                    kind: { $literal: 'refund' },
+                    reference: '$orderNo',
+                    targetCode: 1,
+                  },
+                },
+              ],
+            },
+          },
+          { $sort: { occurredAt: -1 } },
+          { $limit: limit + 1 },
+        ])
+        .toArray(),
+      this.aggregateDailyOrderStats(dayStart, dayEnd, extraMatch),
+      this.aggregateDailyAmount(
+        this.orderRefundModel,
+        {
+          ...extraMatch,
+          status: OrderRefundStatus.completed,
+          completedAt: { $gte: dayStart, $lt: dayEnd },
+        },
+        '$completedAt',
+        '$amount'
+      ),
+      this.aggregateLegacyDailyRefundAmounts(dayStart, dayEnd, extraMatch),
+    ]);
+
+    const orderMap = new Map(orderStats.map(row => [row._id, row]));
+    const refundMap = this.mergeAmountMaps(refunded, legacyRefunded);
+    const paidRevenue = this.centsToYuan(orderMap.get(date)?.paidAmount ?? 0);
+    const refundedRevenue = this.centsToYuan(refundMap.get(date) ?? 0);
+    const truncated = rows.length > limit;
+
+    return {
+      date,
+      total: this.roundMoney(paidRevenue - refundedRevenue),
+      items: rows.slice(0, limit).map(row => ({
+        occurredAt: this.formatDate(row.occurredAt),
+        amount: this.centsToYuan(Number(row.amount) || 0),
+        kind: row.kind,
+        reference: row.reference ?? '-',
+        targetCode: row.targetCode ?? '-',
+      })),
+      truncated,
+    };
+  }
+
   private buildLegacyRefundFlowMatch(
     start: Date,
     end: Date,
