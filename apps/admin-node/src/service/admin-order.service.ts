@@ -2282,7 +2282,7 @@ export class AdminOrderService {
           unconfirmedAt,
           OrderRefundStatus.processing
         );
-        this.logger?.error?.(
+        this.alertRefundFailure(
           '[refund-alert] virtual refund NOT confirmed by wechat: orderNo=%s refundNo=%s refundWxOrderId=%s amount=%s',
           order.orderNo,
           this.generateRefundNo(order),
@@ -3115,6 +3115,18 @@ export class AdminOrderService {
   }
 
   /**
+   * 退款失败告警。
+   *
+   * 同时走 logger 和 console：本项目的运维可见通道是容器 stdout（`docker logs`，
+   * 现有巡检也扫它），Midway logger 在本部署里不落 stdout，只写 logger 等于没人看得到。
+   */
+  private alertRefundFailure(message: string, ...args: unknown[]): void {
+    this.logger?.error?.(message, ...args);
+    // eslint-disable-next-line no-console
+    console.error(message, ...args);
+  }
+
+  /**
    * 回查确认微信是否真的创建了这笔虚拟支付退款。
    *
    * 接口返回 OK 只代表受理成功——实测存在「返回 OK + 退款单号，但微信侧从未创建退款单」的情况
@@ -3240,7 +3252,7 @@ export class AdminOrderService {
               },
             } as never
           );
-          this.logger?.error?.(
+          this.alertRefundFailure(
             '[refund-alert] wechat has NO refund for a locally-recorded virtual refund: orderNo=%s refundNo=%s refundWxOrderId=%s amount=%s leftFee=%s paidFee=%s',
             order.orderNo,
             record.refundNo,

@@ -227,6 +227,16 @@ export class MainConfiguration {
           .getAsync(AdminOrderService);
         const refundSummary = await service.reconcileVirtualRefunds();
         if (refundSummary.scanned > 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            '[refund-reconcile] scanned=%d confirmed=%d failed=%d%s',
+            refundSummary.scanned,
+            refundSummary.confirmed,
+            refundSummary.failed,
+            refundSummary.errors.length
+              ? ' errors=' + refundSummary.errors.join(' | ')
+              : ''
+          );
           this.app
             .getLogger()
             .info(
