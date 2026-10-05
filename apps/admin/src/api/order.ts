@@ -87,6 +87,20 @@ export function downgradeVoiceMembership(
   );
 }
 
+/**
+ * 在原订单上重新发起「失败的降级退款」。
+ * 后端会换用新的微信退款单号并回查确认；当前不是失败状态时返回 409。
+ */
+export function retryVoiceMembershipDowngradeRefund(id: string) {
+  return axios.post<OrderRecord>(
+    `/admin_api/orders/${id}/voice-membership-downgrade/retry-refund`,
+    undefined,
+    {
+      timeout: 60000,
+    }
+  );
+}
+
 export function syncVoiceMembershipDowngrade(id: string) {
   return axios.post<OrderRecord>(
     `/admin_api/orders/${id}/voice-membership-downgrade/sync`,

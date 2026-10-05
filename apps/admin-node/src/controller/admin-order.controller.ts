@@ -67,6 +67,13 @@ export class AdminOrderController {
     return this.adminOrderService.downgradeVoiceMembership(id, body, auth);
   }
 
+  @Post('/:id/voice-membership-downgrade/retry-refund')
+  async retryVoiceMembershipDowngradeRefund(@Param('id') id: string) {
+    const auth = this.ctx.state.adminAuth as AdminAuthenticatedPayload;
+
+    return this.adminOrderService.retryVoiceMembershipDowngradeRefund(id, auth);
+  }
+
   @Post('/:id/voice-membership-downgrade/sync')
   async syncVoiceMembershipDowngrade(@Param('id') id: string) {
     const auth = this.ctx.state.adminAuth as AdminAuthenticatedPayload;

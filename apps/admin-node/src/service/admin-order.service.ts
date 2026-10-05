@@ -957,7 +957,11 @@ export class AdminOrderService {
       );
     }
 
-    if (downgrade.status !== 'completed') {
+    if (downgrade.status === 'completed') {
+      // 降级已完成，但退款未必真的成功（虚拟支付存在"返回 OK 却没创建退款单"）。
+      // 只要本地退款记录是 failed，就允许在原订单上重新发起这笔降级退款。
+      await this.retryFailedDowngradeRefund(order, downgrade, operator);
+    } else {
       const refund =
         order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER
           ? await this.refundVirtualMembershipPayment(
@@ -1078,6 +1082,176 @@ export class AdminOrderService {
     }
 
     return summary;
+  }
+
+  /**
+   * 降级已完成、但退款被判定失败时，在原订单上重新发起这笔降级退款。
+   *
+   * 关键点：
+   * - **必须换新的退款单号**：微信对同一 refund_order_id 会幂等返回上次那个
+   *   「返回 OK 但从未真正创建」的幽灵退款（2026-10-05 实测）。
+   * - 提交后一律回查确认，未确认不记为成功。
+   * - 只有本地退款记录为 failed 时才重试；已成功则不动作（由调用方给出提示）。
+   */
+  private async retryFailedDowngradeRefund(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot,
+    operator: AdminAuthenticatedPayload
+  ): Promise<boolean> {
+    const record = await this.orderRefundModel.findOne({
+      where: {
+        originalOrderId: order.id,
+        refundType: OrderRefundType.voiceMembershipDowngrade,
+      } as never,
+    } as never);
+
+    if (!record) return false;
+    if (record.status !== OrderRefundStatus.failed) return false;
+
+    const oldRefundNo = downgrade.refundNo;
+    const newRefundNo = `${oldRefundNo}R${Date.now().toString(36)}`;
+    const reason = VOICE_MEMBERSHIP_DOWNGRADE_REASON;
+    const now = new Date();
+
+    try {
+      let paymentRefundId: string | undefined;
+      let completedAt = now;
+
+      if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+        const refund = await this.refundVirtualMembershipPayment(
+          order,
+          newRefundNo,
+          downgrade.refundAmount,
+          downgrade.refundAmount,
+          reason
+        );
+        paymentRefundId = refund.refund_id;
+        const confirmed = await this.confirmVirtualRefund(
+          order,
+          paymentRefundId
+        );
+        if (!confirmed) {
+          throw new AppError(
+            'WECHAT_VIRTUAL_REFUND_NOT_CONFIRMED',
+            '微信未确认重新发起的降级退款，请稍后重试或到微信商户平台核对。',
+            502
+          );
+        }
+        completedAt = this.parseWechatDate(refund.success_time) ?? now;
+      } else {
+        const refund = await this.adminWechatPayService.refundOrder({
+          orderNo: order.orderNo,
+          refundNo: newRefundNo,
+          reason,
+          amount: downgrade.refundAmount,
+          totalAmount: order.paidAmount ?? order.payableAmount,
+        });
+        paymentRefundId = refund?.refund_id;
+        const status = refund?.status?.trim().toUpperCase();
+        if (status && status !== 'SUCCESS') {
+          throw new AppError(
+            'WECHAT_REFUND_NOT_COMPLETED',
+            `微信退款状态为 ${status}，尚未成功，请稍后重试。`,
+            502
+          );
+        }
+        completedAt = this.parseWechatDate(refund?.success_time) ?? now;
+      }
+
+      // 快照换用新退款单号：后续对账/同步以它为准
+      downgrade.refundNo = newRefundNo;
+      downgrade.status = 'completed';
+      downgrade.wechatRefundId = paymentRefundId ?? downgrade.wechatRefundId;
+      downgrade.wechatRefundStatus = 'SUCCESS';
+      downgrade.failureReason = undefined;
+      downgrade.operatorId = operator?.sub || downgrade.operatorId;
+      downgrade.operatorAccount =
+        operator?.account || downgrade.operatorAccount;
+      downgrade.updatedAt = now.toISOString();
+      await this.orderModel.updateOne(
+        {
+          _id: order.id,
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundNo`]:
+            oldRefundNo,
+        } as never,
+        {
+          $set: {
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}`]: downgrade,
+            updatedAt: now,
+          },
+        } as never
+      );
+
+      // 本地退款记录转为成功，清掉失败痕迹
+      await this.orderRefundModel.updateOne(
+        { _id: record.id } as never,
+        {
+          $set: {
+            refundNo: newRefundNo,
+            status: OrderRefundStatus.completed,
+            paymentRefundId,
+            completedAt,
+            updatedAt: now,
+          },
+          $unset: { failureReason: '', failedAt: '' },
+        } as never
+      );
+
+      this.logger?.warn?.(
+        '[order] downgrade refund retried and confirmed: orderNo=%s oldRefundNo=%s newRefundNo=%s',
+        order.orderNo,
+        oldRefundNo,
+        newRefundNo
+      );
+      return true;
+    } catch (err) {
+      this.alertRefundFailure(
+        '[refund-alert] downgrade refund retry FAILED: orderNo=%s oldRefundNo=%s newRefundNo=%s err=%s',
+        order.orderNo,
+        oldRefundNo,
+        newRefundNo,
+        (err as Error).message
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * 在原订单上重新发起「失败的降级退款」（后台按钮入口）。
+   *
+   * 只有本地退款记录为 failed 时才真正重发；否则明确拒绝，避免误操作导致重复退款。
+   */
+  async retryVoiceMembershipDowngradeRefund(
+    orderId: string,
+    operator: AdminAuthenticatedPayload
+  ): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+    const downgrade = this.getVoiceMembershipDowngrade(order);
+
+    if (!downgrade) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_NOT_FOUND',
+        '该订单没有声音版降级记录',
+        404
+      );
+    }
+
+    const retried = await this.retryFailedDowngradeRefund(
+      order,
+      downgrade,
+      operator
+    );
+    if (!retried) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_REFUND_NOT_RETRYABLE',
+        '该订单的降级退款当前不是失败状态（可能已成功或在处理中），无需重试。',
+        409
+      );
+    }
+
+    const refreshedOrder = await this.refreshOrderEntity(order);
+    const userMap = await this.getOrderUserMap([refreshedOrder]);
+    return this.buildOrderRecordWithUsage(refreshedOrder, userMap);
   }
 
   /**

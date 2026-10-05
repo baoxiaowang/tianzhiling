@@ -439,6 +439,23 @@
                     刷新降级
                   </a-button>
                   <a-popconfirm
+                    v-if="canRetryVoiceMembershipDowngradeRefund(record)"
+                    content="该降级的退款此前可能未成功。确认在原订单上重新发起这笔退款？（会换用新的退款单号并回查确认，已成功则不会重复退款）"
+                    ok-text="重试退款"
+                    cancel-text="取消"
+                    position="left"
+                    @ok="handleRetryVoiceMembershipDowngradeRefund(record)"
+                  >
+                    <a-button
+                      type="text"
+                      status="warning"
+                      size="small"
+                      :loading="downgradeRetryLoadingId === record.id"
+                    >
+                      重试降级退款
+                    </a-button>
+                  </a-popconfirm>
+                  <a-popconfirm
                     v-if="canWithdrawVoiceMembershipDowngrade(record)"
                     content="确认撤回这次失败的降级任务？撤回后可重新发起退款或降级。"
                     ok-text="撤回"
@@ -970,6 +987,7 @@
     rejectRefundOrder as rejectRefundOrderApi,
     revokeAdminManualOrder as revokeAdminManualOrderApi,
     syncOrderPaymentStatus as syncOrderPaymentStatusApi,
+    retryVoiceMembershipDowngradeRefund as retryVoiceMembershipDowngradeRefundApi,
     syncVoiceMembershipDowngrade as syncVoiceMembershipDowngradeApi,
     withdrawVoiceMembershipDowngrade as withdrawVoiceMembershipDowngradeApi,
     type VoiceMembershipDowngradePreview,
@@ -1013,6 +1031,7 @@
   const syncLoadingId = ref('');
   const downgradeSyncLoadingId = ref('');
   const downgradeWithdrawLoadingId = ref('');
+  const downgradeRetryLoadingId = ref('');
   const downgradeVisible = ref(false);
   const downgradePreviewLoading = ref(false);
   const downgradeSubmitting = ref(false);
@@ -1384,6 +1403,12 @@
     return record.voiceMembershipDowngrade?.status === 'failed';
   };
 
+  // 降级已完成、但退款可能并未真的成功（虚拟支付存在"返回 OK 却没创建退款单"）。
+  // 后端会再判定一次：退款确实失败才重发，已成功则返回 409 提示，不会重复退款。
+  const canRetryVoiceMembershipDowngradeRefund = (record: OrderRecord) => {
+    return record.voiceMembershipDowngrade?.status === 'completed';
+  };
+
   const canRevokeAdminManualOrder = (record: OrderRecord) => {
     return (
       (record.orderType === 'vip_plan' ||
@@ -1577,6 +1602,31 @@
       );
     } finally {
       downgradeSyncLoadingId.value = '';
+    }
+  };
+
+  // 在原订单上重新发起此前失败的降级退款
+  const handleRetryVoiceMembershipDowngradeRefund = async (
+    record: OrderRecord
+  ) => {
+    if (downgradeRetryLoadingId.value) {
+      return;
+    }
+
+    try {
+      downgradeRetryLoadingId.value = record.id;
+      const { data } = await retryVoiceMembershipDowngradeRefundApi(record.id);
+
+      replaceOrderRecord(data);
+      Message.success('降级退款已重新发起，微信已确认');
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '降级退款重试失败，请稍后重试'
+      );
+    } finally {
+      downgradeRetryLoadingId.value = '';
     }
   };
 
