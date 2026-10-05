@@ -116,6 +116,37 @@ export interface AdminDailyCohortOrderItemDTO {
   targetCode: string;
 }
 
+/**
+ * 「净收入」口径下的单条明细（按事件发生日归集）。
+ *
+ * 与累计收入明细不同：这里每一条是**当天实际发生**的支付/退款，
+ * 因此同时给出下单用户的注册日期，便于区分当天收入里新客与老用户的贡献。
+ */
+export interface AdminDailyNetOrderItemDTO {
+  /** 事件时间：订单取支付时间，退款取退款完成时间（ISO 字符串） */
+  occurredAt: string;
+  /** 下单用户的注册日期（北京时区 `YYYY-MM-DD`）；用户缺失时为空串 */
+  registeredAt: string;
+  /** 金额（元）；退款为负数 */
+  amount: number;
+  /** order = 订单支付；refund = 退款 */
+  kind: "order" | "refund";
+  /** 订单号或退款单号 */
+  reference: string;
+  /** 套餐 / 语音包 code */
+  targetCode: string;
+}
+
+export interface AdminDailyNetOrdersDTO {
+  date: string;
+  /** 与每日明细「净收入」完全一致的净额（元） */
+  total: number;
+  /** 按用户注册日期倒序、同日再按事件时间倒序，最多返回 MAX 条 */
+  items: AdminDailyNetOrderItemDTO[];
+  /** 明细超过上限被截断（total 仍为全量净额） */
+  truncated: boolean;
+}
+
 export interface AdminDailyCohortOrdersDTO {
   date: string;
   /** 与每日明细「累计收入」完全一致的净额（元） */

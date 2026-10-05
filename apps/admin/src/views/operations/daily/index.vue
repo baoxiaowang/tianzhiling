@@ -57,7 +57,7 @@
                 <template #content>
                   <div class="cohort-detail">
                     <div class="cohort-detail__title">
-                      {{ record.date }} · 当日支付与退款流水
+                      {{ record.date }} · 当日支付与退款流水（按用户注册日期）
                     </div>
                     <a-spin :loading="netLoading[record.date]">
                       <div
@@ -84,11 +84,11 @@
                           class="cohort-detail__row"
                         >
                           <span class="cohort-detail__time">
-                            {{ formatTime(item.occurredAt) }}
+                            {{ formatDay(item.registeredAt) }}
                           </span>
                           <span class="cohort-detail__tag">
                             <span class="cohort-detail__code">
-                              {{ item.reference }}
+                              {{ item.targetCode }}
                             </span>
                             <span
                               v-if="item.kind === 'refund'"
@@ -255,6 +255,7 @@
   import { Message } from '@arco-design/web-vue';
   import type {
     AdminDailyCohortOrderItemDTO,
+    AdminDailyNetOrderItemDTO,
     AdminOperationsDailyPointDTO,
   } from '@tzl/shared';
   import {
@@ -317,6 +318,9 @@
   const formatTime = (value?: string) =>
     value ? dayjs(value).format('MM-DD HH:mm') : '—';
 
+  /** 注册日期直接用后端已按北京时区格式化好的 YYYY-MM-DD。 */
+  const formatDay = (value?: string) => value || '—';
+
   const formatSignedMoney = (value?: number) =>
     Number(value || 0) < 0
       ? `-${formatMoney(Math.abs(Number(value || 0)))}`
@@ -377,7 +381,7 @@
   /** 净收入下钻：按日期缓存当日支付/退款流水。 */
   const netLoading = reactive<Record<string, boolean>>({});
   const netError = reactive<Record<string, string>>({});
-  const netRows = reactive<Record<string, AdminDailyCohortOrderItemDTO[]>>({});
+  const netRows = reactive<Record<string, AdminDailyNetOrderItemDTO[]>>({});
   const netTotals = reactive<Record<string, number>>({});
   const netTruncated = reactive<Record<string, boolean>>({});
   const netOpenDates = reactive<Record<string, boolean>>({});

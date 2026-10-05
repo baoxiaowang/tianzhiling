@@ -11,6 +11,7 @@ import type {
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
   AdminDailyCohortOrdersDTO,
+  AdminDailyNetOrdersDTO,
   AdminOperationsDailyPointDTO,
   AdminOperationsTaskListDTO,
   AdminSystemRuntimeDTO,
@@ -2730,8 +2731,9 @@ export class AdminOperationsService {
   /**
    * 净收入下钻：该自然日发生的支付与退款流水（净收入 = 当日支付 − 当日退款）。
    * 与每日明细的 paidRevenue/refundedRevenue 完全同源，合计 = 该行净收入。
+   * 每条明细附带下单用户的注册日期，按注册日期倒序、同日再按事件时间倒序。
    */
-  async getDailyNetOrders(date: string): Promise<AdminDailyCohortOrdersDTO> {
+  async getDailyNetOrders(date: string): Promise<AdminDailyNetOrdersDTO> {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       throw new AppError('INVALID_DATE', `invalid date: ${date}`, 400);
     }
@@ -2745,6 +2747,7 @@ export class AdminOperationsService {
       this.orderModel
         .aggregate<{
           occurredAt?: Date;
+          registeredAt?: string;
           amount?: number;
           kind: 'order' | 'refund';
           reference?: string;
@@ -2758,6 +2761,7 @@ export class AdminOperationsService {
           },
           {
             $project: {
+              userId: 1,
               occurredAt: '$paidAt',
               amount: { $ifNull: ['$paidAmount', '$payableAmount'] },
               kind: { $literal: 'order' },
@@ -2778,6 +2782,7 @@ export class AdminOperationsService {
                 },
                 {
                   $project: {
+                    userId: 1,
                     occurredAt: { $ifNull: ['$completedAt', '$createdAt'] },
                     amount: { $multiply: ['$amount', -1] },
                     kind: { $literal: 'refund' },
@@ -2810,6 +2815,7 @@ export class AdminOperationsService {
                 { $match: { 'independentRefundOrders.0': { $exists: false } } },
                 {
                   $project: {
+                    userId: 1,
                     occurredAt: { $ifNull: ['$refundedAt', '$updatedAt'] },
                     amount: {
                       $multiply: [
@@ -2831,7 +2837,27 @@ export class AdminOperationsService {
               ],
             },
           },
-          { $sort: { occurredAt: -1 } },
+          {
+            $lookup: {
+              from: TableName.user,
+              localField: 'userId',
+              foreignField: '_id',
+              as: 'user',
+            },
+          },
+          { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              registeredAt: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$user.createdAt',
+                  timezone: BEIJING_TIMEZONE,
+                },
+              },
+            },
+          },
+          { $sort: { registeredAt: -1, occurredAt: -1 } },
           { $limit: limit + 1 },
         ])
         .toArray(),
@@ -2860,6 +2886,7 @@ export class AdminOperationsService {
       total: this.roundMoney(paidRevenue - refundedRevenue),
       items: rows.slice(0, limit).map(row => ({
         occurredAt: this.formatDate(row.occurredAt),
+        registeredAt: row.registeredAt ?? '',
         amount: this.centsToYuan(Number(row.amount) || 0),
         kind: row.kind,
         reference: row.reference ?? '-',
