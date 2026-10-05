@@ -90,6 +90,8 @@ interface WechatVirtualProvideGoodsResponse extends WechatXPayResponse {}
 
 export interface WechatRefundPayload {
   refund_id?: string;
+  /** 微信退款成功时间（RFC3339）；SUCCESS 时返回，用于按实际退款日归集 */
+  success_time?: string;
   out_refund_no?: string;
   transaction_id?: string;
   out_trade_no?: string;

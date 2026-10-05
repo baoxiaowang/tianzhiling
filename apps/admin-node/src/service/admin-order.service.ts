@@ -1158,7 +1158,13 @@ export class AdminOrderService {
     downgrade.updatedAt = now.toISOString();
 
     if (status === 'SUCCESS') {
-      await this.completeVoiceMembershipDowngrade(order, downgrade);
+      // 按微信返回的实际退款成功时间归集，避免补记时把退款记到同步当天，
+      // 导致该笔退款在月度/每日净收入里跨期错位。
+      await this.completeVoiceMembershipDowngrade(
+        order,
+        downgrade,
+        this.parseWechatDate(refund.success_time)
+      );
       return;
     }
 
@@ -1213,11 +1219,21 @@ export class AdminOrderService {
     return this.didMongoUpdate(result);
   }
 
+  /** 解析微信 RFC3339 时间；非法或缺失时返回 undefined。 */
+  private parseWechatDate(value?: string): Date | undefined {
+    if (!value) return undefined;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+
   private async completeVoiceMembershipDowngrade(
     order: OrderEntity,
-    downgrade: VoiceMembershipDowngradeSnapshot
+    downgrade: VoiceMembershipDowngradeSnapshot,
+    completedAt?: Date
   ): Promise<void> {
     const now = new Date();
+    /** 退款在收入统计里的归属时间：优先用微信实际成功时间。 */
+    const recordedAt = completedAt ?? now;
     const benefitsApplyToken = randomBytes(16).toString('hex');
     const claimResult = await this.orderModel.updateOne(
       {
@@ -1273,7 +1289,7 @@ export class AdminOrderService {
         claimedDowngrade.refundAmount,
         claimedDowngrade.wechatRefundId,
         new Date(claimedDowngrade.requestedAt),
-        now
+        recordedAt
       );
 
       if (!claimedDowngrade.refundRecordedAt) {
@@ -1298,9 +1314,9 @@ export class AdminOrderService {
               refundAmount: claimedDowngrade.refundAmount,
             },
             $set: {
-              refundedAt: claimedOrder.refundedAt ?? now,
+              refundedAt: claimedOrder.refundedAt ?? recordedAt,
               [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundRecordedAt`]:
-                now.toISOString(),
+                recordedAt.toISOString(),
               [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.updatedAt`]:
                 now.toISOString(),
               updatedAt: now,
