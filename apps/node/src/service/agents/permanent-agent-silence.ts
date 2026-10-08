@@ -28,7 +28,16 @@ const DIRECT_TARGET_PATTERN = /你|给我|滚|爸|妈|爸爸|妈妈|老公|老�
 const STANDALONE_SEVERE_ABUSE_PATTERN =
   /^(?:去死|不得好死|下地狱|贱人|婊子|畜生|杂种|狗东西|狗杂种|臭婊子|老不死|死废物|废物东西|人渣|败类|cnm|nmsl)[了吧啊呀嘛]*$/u;
 const REPORTED_SPEECH_PATTERN =
-  /(?:他|她|他们|她们|爸爸|妈妈|父亲|母亲|别人|有人|同事|朋友|家里人).{0,8}(?:说|骂|叫|讲)|(?:转述|原话|引用|骂了我|这样骂我)/u;
+  /(?:他|她|他们|她们|爸爸|妈妈|父亲|母亲|父母|爸妈|爹|娘|奶奶|爷爷|姥姥|姥爷|外公|外婆|伯|叔|姑|舅|姨|兄|弟|姐|妹|家人|家里人|亲戚|别人|有人|同事|朋友).{0,8}(?:说|骂|叫|讲)|(?:转述|原话|引用|骂了我|这样骂我)/u;
+// 追述/自责：用户在懊悔自己过去对逝者的责骂，不是宣告要继续骂当前 AI。
+const RETROSPECTIVE_ABUSE_PATTERN =
+  /(?:后悔|对不起|不该|以前|从前|曾经|那时候|当时|从小|小时候|生的时候|走之前|临走|最后悔|骂过你|打过你).{0,14}(?:骂|辱骂|羞辱|侮辱|诅咒|折磨|打)(?:你|过你)/u;
+// 思念式“想骂你”：哀伤语境下想责备逝者，不是对 AI 的持续恶意。
+const GRIEF_LONGING_ABUSE_PATTERN =
+  /(?:想你|思念|舍不得|心疼|好想|想你想).{0,12}(?:骂你|打你|说你|折磨你)/u;
+// 病痛折磨：描述疾病折磨逝者，不是用户要折磨 AI。
+const ILLNESS_TORMENT_PATTERN =
+  /(?:病痛|病|癌|疾病|受苦|遭罪|受罪|痛苦).{0,8}折磨(?:你|他)|折磨(?:你|他).{0,8}(?:病|痛)/u;
 const RELATIONAL_GRIEVANCE_PATTERN =
   /(?:为什么|为何|怎么能|怎么可以|凭什么|丢下我|离开我|不要我|不管我|伤我的心|让我难过|对不起我|我恨你|我怨你|混蛋|坏蛋)/u;
 const FIRST_PERSON_SELF_HARM_PATTERN =
@@ -71,7 +80,10 @@ function hasExplicitAbusePurpose(value: string): boolean {
     !normalized ||
     NEGATED_ABUSE_PURPOSE_PATTERN.test(normalized) ||
     HYPOTHETICAL_ABUSE_PURPOSE_PATTERN.test(normalized) ||
-    REPORTED_SPEECH_PATTERN.test(normalized)
+    REPORTED_SPEECH_PATTERN.test(normalized) ||
+    RETROSPECTIVE_ABUSE_PATTERN.test(normalized) ||
+    GRIEF_LONGING_ABUSE_PATTERN.test(normalized) ||
+    ILLNESS_TORMENT_PATTERN.test(normalized)
   ) {
     return false;
   }
