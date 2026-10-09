@@ -1,5 +1,6 @@
 import {
   Body,
+  Config,
   Controller,
   Fields,
   Files,
@@ -13,16 +14,31 @@ import { ILogger } from '@midwayjs/logger';
 import { promises as fs } from 'fs';
 import { CreateOssSignedUploadDTO } from '../dto/storage.dto';
 import { AppError } from '../common/errors';
+import {
+  isAllowedUploadContentType,
+  normalizeUploadContentType,
+  resolveUploadMediaType,
+} from '../common/upload-media-types';
+import { isFolderWithin } from '../common/upload-policy';
 import { AuthenticatedUserPayload } from '../interface';
 import { ImageModerationService } from '../service/image-moderation.service';
 import { OssService } from '../service/oss.service';
 import { TencentCosService } from '../service/tencent-cos.service';
 import { UploadQuotaService } from '../service/upload-quota.service';
 
+export interface StorageUploadConfig {
+  signedUploadEnabled?: boolean;
+  signedUploadFolders?: string[];
+  enforceContentTypeFromExtension?: boolean;
+}
+
 @Controller('/storage')
 export class StorageController {
   @Logger()
   logger: ILogger;
+
+  @Config('storageUpload')
+  storageUploadConfig: StorageUploadConfig;
 
   @Inject()
   ossService: OssService;
@@ -41,11 +57,15 @@ export class StorageController {
 
   @Post('/oss/sign-upload')
   async createOssSignedUpload(@Body() body: CreateOssSignedUploadDTO) {
+    this.assertSignedUploadAllowed(body);
+
     return this.ossService.createSignedUpload(body);
   }
 
   @Post('/cos/sign-upload')
   async createTencentCosSignedUpload(@Body() body: CreateOssSignedUploadDTO) {
+    this.assertSignedUploadAllowed(body);
+
     // 直传由客户端直接写入存储桶，服务端拿不到对象内容，无法在返回地址前完成审核。
     // 开启图片审核后，图片必须走 /storage/upload 的服务端中转通道。
     if (this.shouldModerateUpload(body)) {
@@ -57,6 +77,52 @@ export class StorageController {
     }
 
     return this.tencentCosService.createSignedUpload(body);
+  }
+
+  /**
+   * 客户端直传签名通道的准入校验。
+   * 该通道不经过服务端，一旦放开就等于允许把任意路径、任意类型的文件托管在
+   * 平台域名下，因此默认关闭；开启时必须限定目录，并只接受媒体类型。
+   */
+  private assertSignedUploadAllowed(body: CreateOssSignedUploadDTO): void {
+    const config = this.storageUploadConfig;
+
+    if (config?.signedUploadEnabled !== true) {
+      throw new AppError(
+        'STORAGE_SIGNED_UPLOAD_DISABLED',
+        '该上传通道已停用，请更新客户端后重试',
+        403
+      );
+    }
+
+    const target = body?.objectKey?.trim() || body?.folder?.trim() || '';
+
+    if (!isFolderWithin(target, config.signedUploadFolders || [])) {
+      throw new AppError(
+        'STORAGE_SIGNED_UPLOAD_FOLDER_DENIED',
+        '该上传目录未开放',
+        403
+      );
+    }
+
+    const fileName = body?.fileName?.trim() || target;
+    const declaredType = normalizeUploadContentType(body?.contentType);
+
+    if (!resolveUploadMediaType(fileName)) {
+      throw new AppError(
+        'STORAGE_SIGNED_UPLOAD_TYPE_DENIED',
+        '该文件类型未开放',
+        403
+      );
+    }
+
+    if (declaredType && !isAllowedUploadContentType(declaredType)) {
+      throw new AppError(
+        'STORAGE_SIGNED_UPLOAD_TYPE_DENIED',
+        '该文件类型未开放',
+        403
+      );
+    }
   }
 
   @Post('/upload', {
@@ -74,7 +140,12 @@ export class StorageController {
 
     const folder = fields?.folder;
     const fileName = fields?.fileName || file.filename;
-    const contentType = fields?.contentType || file.mimeType;
+    // 类型以扩展名为准：客户端声明的 Content-Type 可被伪造（例如把 HTML 声明成
+    // 图片类型后由对象存储按 text/html 返回），不能作为存储依据。
+    const contentType = this.resolveRelayContentType(
+      fileName,
+      fields?.contentType || file.mimeType
+    );
     const userId = this.resolveUserId();
 
     // 先占配额：超限直接拒绝，不产生上传与审核费用。
@@ -129,6 +200,32 @@ export class StorageController {
     fileName?: string;
   }): boolean {
     return Boolean(this.imageModerationService?.shouldModerate?.(input));
+  }
+
+  /**
+   * 服务端中转上传的存储类型：默认按扩展名推导，扩展名不在媒体白名单内直接拒绝。
+   * 关闭 enforcement（NODE_STORAGE_ENFORCE_CONTENT_TYPE=false）时回退到客户端声明，
+   * 仅用于兼容排查，不建议在生产使用。
+   */
+  private resolveRelayContentType(
+    fileName: string | undefined,
+    declared?: string
+  ): string {
+    if (this.storageUploadConfig?.enforceContentTypeFromExtension === false) {
+      return declared || '';
+    }
+
+    const resolved = resolveUploadMediaType(fileName);
+
+    if (!resolved) {
+      throw new AppError(
+        'UPLOAD_FILE_TYPE_NOT_ALLOWED',
+        '不支持的文件类型',
+        400
+      );
+    }
+
+    return resolved;
   }
 
   /**

@@ -8,6 +8,7 @@ function createController(options: {
   reserve?: jest.Mock;
   release?: jest.Mock;
   createSignedUpload?: jest.Mock;
+  storageUpload?: Record<string, unknown>;
 } = {}) {
   const controller = new StorageController();
   const putFile = options.putFile || jest.fn();
@@ -31,6 +32,12 @@ function createController(options: {
     moderate,
   } as never;
   controller.uploadQuotaService = { reserve, release } as never;
+  controller.storageUploadConfig = {
+    signedUploadEnabled: false,
+    signedUploadFolders: [],
+    enforceContentTypeFromExtension: true,
+    ...options.storageUpload,
+  } as never;
   controller.logger = {
     info: jest.fn(),
     warn: jest.fn(),
@@ -48,6 +55,12 @@ function createController(options: {
     createSignedUpload,
   };
 }
+
+/** 直传通道显式开启时的配置（默认是关闭的）。 */
+const SIGNED_UPLOAD_ENABLED = {
+  signedUploadEnabled: true,
+  signedUploadFolders: ['moments', 'conversation-images'],
+};
 
 const VOICE_UPLOAD = [
   {
@@ -233,8 +246,102 @@ describe('StorageController 上传链路', () => {
     expect(putFile).not.toHaveBeenCalled();
   });
 
-  it('需要审核的图片拒绝客户端直传签名', async () => {
+  it('默认关闭直传签名通道', async () => {
     const { controller, createSignedUpload } = createController();
+
+    await expect(
+      controller.createTencentCosSignedUpload({
+        folder: 'moments',
+        fileName: '照片.jpg',
+        contentType: 'image/jpeg',
+      } as never)
+    ).rejects.toMatchObject({
+      code: 'STORAGE_SIGNED_UPLOAD_DISABLED',
+      status: 403,
+    });
+    await expect(
+      controller.createOssSignedUpload({
+        folder: 'moments',
+        fileName: '照片.jpg',
+        contentType: 'image/jpeg',
+      } as never)
+    ).rejects.toMatchObject({
+      code: 'STORAGE_SIGNED_UPLOAD_DISABLED',
+      status: 403,
+    });
+    expect(createSignedUpload).not.toHaveBeenCalled();
+  });
+
+  it('开启直传后仍拒绝目录外的对象键', async () => {
+    const { controller, createSignedUpload } = createController({
+      storageUpload: SIGNED_UPLOAD_ENABLED,
+    });
+
+    await expect(
+      controller.createTencentCosSignedUpload({
+        objectKey: 'AbUJtS/yDLOKW/DHCJzU',
+        contentType: 'text/html',
+      } as never)
+    ).rejects.toMatchObject({
+      code: 'STORAGE_SIGNED_UPLOAD_FOLDER_DENIED',
+      status: 403,
+    });
+    expect(createSignedUpload).not.toHaveBeenCalled();
+  });
+
+  it('开启直传后拒绝非媒体类型与伪造类型', async () => {
+    const { controller, createSignedUpload } = createController({
+      storageUpload: SIGNED_UPLOAD_ENABLED,
+    });
+
+    await expect(
+      controller.createTencentCosSignedUpload({
+        folder: 'moments',
+        fileName: 'index.html',
+        contentType: 'text/html',
+      } as never)
+    ).rejects.toMatchObject({
+      code: 'STORAGE_SIGNED_UPLOAD_TYPE_DENIED',
+      status: 403,
+    });
+
+    // 扩展名是图片，但声明类型是 HTML：同样拒绝，避免对象存储按 text/html 返回。
+    await expect(
+      controller.createTencentCosSignedUpload({
+        folder: 'moments',
+        fileName: '照片.jpg',
+        contentType: 'text/html',
+      } as never)
+    ).rejects.toMatchObject({
+      code: 'STORAGE_SIGNED_UPLOAD_TYPE_DENIED',
+      status: 403,
+    });
+    expect(createSignedUpload).not.toHaveBeenCalled();
+  });
+
+  it('开启直传后媒体类型与目录都合法时放行', async () => {
+    const { controller, createSignedUpload } = createController({
+      storageUpload: SIGNED_UPLOAD_ENABLED,
+      shouldModerate: jest.fn().mockReturnValue(false),
+      createSignedUpload: jest.fn().mockResolvedValue({
+        objectKey: 'moments/2026/10/09/a.jpg',
+      }),
+    });
+
+    await expect(
+      controller.createTencentCosSignedUpload({
+        folder: 'moments',
+        fileName: '照片.jpg',
+        contentType: 'image/jpeg',
+      } as never)
+    ).resolves.toMatchObject({ objectKey: 'moments/2026/10/09/a.jpg' });
+    expect(createSignedUpload).toHaveBeenCalled();
+  });
+
+  it('需要审核的图片拒绝客户端直传签名', async () => {
+    const { controller, createSignedUpload } = createController({
+      storageUpload: SIGNED_UPLOAD_ENABLED,
+    });
 
     await expect(
       controller.createTencentCosSignedUpload({
@@ -251,6 +358,10 @@ describe('StorageController 上传链路', () => {
 
   it('不在审核范围的直传继续放行', async () => {
     const { controller, createSignedUpload } = createController({
+      storageUpload: {
+        signedUploadEnabled: true,
+        signedUploadFolders: ['voice-training-materials'],
+      },
       shouldModerate: jest.fn().mockReturnValue(false),
       createSignedUpload: jest.fn().mockResolvedValue({
         objectKey: 'voice-training-materials/2026/09/30/a.mp3',
@@ -267,5 +378,58 @@ describe('StorageController 上传链路', () => {
       objectKey: 'voice-training-materials/2026/09/30/a.mp3',
     });
     expect(createSignedUpload).toHaveBeenCalled();
+  });
+
+  it('中转上传按扩展名推导存储类型，忽略客户端伪造', async () => {
+    const { controller, putFile } = createController({
+      putFile: jest.fn().mockResolvedValue({
+        objectKey: 'moments/2026/10/09/a.jpg',
+        url: 'https://oss.example.com/moments/2026/10/09/a.jpg',
+      }),
+      shouldModerate: jest.fn().mockReturnValue(false),
+    });
+
+    await controller.uploadFile(
+      [
+        {
+          data: '/tmp/upload.jpg',
+          filename: 'upload.jpg',
+          mimeType: 'text/html',
+          fieldName: 'file',
+        },
+      ] as never,
+      {
+        folder: 'moments',
+        fileName: '照片.jpg',
+        contentType: 'text/html',
+      }
+    );
+
+    expect(putFile).toHaveBeenCalledWith(
+      '/tmp/upload.jpg',
+      expect.objectContaining({ contentType: 'image/jpeg' })
+    );
+  });
+
+  it('中转上传拒绝非媒体扩展名', async () => {
+    const { controller, putFile } = createController();
+
+    await expect(
+      controller.uploadFile(
+        [
+          {
+            data: '/tmp/upload.html',
+            filename: 'upload.html',
+            mimeType: 'text/html',
+            fieldName: 'file',
+          },
+        ] as never,
+        { folder: 'moments', fileName: 'index.html', contentType: 'text/html' }
+      )
+    ).rejects.toMatchObject({
+      code: 'UPLOAD_FILE_TYPE_NOT_ALLOWED',
+      status: 400,
+    });
+    expect(putFile).not.toHaveBeenCalled();
   });
 });

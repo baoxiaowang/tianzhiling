@@ -1030,6 +1030,27 @@ export default {
       ['chat-imports']
     ),
   },
+  // 上传通道安全策略：与审核、配额分离，便于单独核验与回滚。
+  storageUpload: {
+    // 客户端直传签名通道：默认关闭。
+    // 该通道只做签名、不经过服务端，历史上允许任意 objectKey + 任意 Content-Type，
+    // 可被用于把任意文件托管在平台域名下（2026-10 安全事件）。
+    // 需要时显式开启，并必须同时配置允许的目录白名单。
+    signedUploadEnabled: readBooleanFrom(
+      ['NODE_STORAGE_SIGNED_UPLOAD_ENABLED'],
+      false
+    ),
+    // 直传允许的目录前缀；空表示全部拒绝。
+    signedUploadFolders: readStringListFrom(
+      ['NODE_STORAGE_SIGNED_UPLOAD_FOLDERS'],
+      []
+    ),
+    // 服务端中转上传以扩展名推导 Content-Type，忽略客户端声明，默认开启。
+    enforceContentTypeFromExtension: readBooleanFrom(
+      ['NODE_STORAGE_ENFORCE_CONTENT_TYPE'],
+      true
+    ),
+  },
   voiceClipping: {
     binaryPath: readStringFrom(['NODE_FFMPEG_BINARY_PATH'], 'ffmpeg'),
     timeoutMs: readNumberFrom(['NODE_FFMPEG_TIMEOUT_MS'], 300000),
