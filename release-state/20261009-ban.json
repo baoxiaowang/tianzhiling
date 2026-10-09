@@ -1,0 +1,32 @@
+{
+  "release": "20261009-ban",
+  "branch": "20261006",
+  "repo": "tianzhiling",
+  "createdAt": "2026-10-09T13:10:00+08:00",
+  "baselineCommit": "2d55fd5",
+  "baselineLabel": "20261009 已部署基线（存储桶安全热修）",
+  "commits": [
+    "0ac332c feat(auth): 新增账号封禁状态与微信 openId 登录拦截"
+  ],
+  "highlights": [
+    "新增账号封禁能力：UserAccountStatus / UserLoginAccountStatus 增加 banned，与 canceled（用户注销）语义分离，避免封禁被注销数据清理流程接管",
+    "登录链路优先判定封禁：同一微信 openId 命中被封账号直接拒绝登录，且不会回落成新建账号绕开封禁",
+    "鉴权中间件按封禁状态拒绝既有 token，并把 banned 写入状态缓存（不写注销标记）",
+    "用户实体新增 bannedAt / banReason 审计字段，支持留痕与解封",
+    "补齐 user.service 测试桩缺失的 resolveUserAvatarForResponse，修复该文件既有 12 个失败用例"
+  ],
+  "notes": [
+    "处置背景：腾讯云违规通知（色情内容）指向 conversation-images/2026/10/08/tmp_fceb0a3aa2343de5e92ce35abfc47d6c-c5ba3c9e4d39b1af.jpg；核实限制仅针对该对象（451），桶/域名/其他对象正常",
+    "定位依据：三个无消息引用的孤儿对象集中在 33 秒内上传（102472+102472+179114=384058 字节），与账号 6ac3e0dfe1501543673c2028 在 20261009 的配额计数（文件 3/图片 3/字节 384058）逐字节一致；全库（message 463 万条等）无该 key 引用",
+    "账号画像：消息 0、会话 0、智能体 0，仅有免费试用台账；上传走 /api/storage/upload（登录态中转通道），文件名 tmp_ 前缀为微信小程序临时文件",
+    "服务闭包 tzl_node、tzl_memory_worker、tzl_admin_node（packages/entities 变更纳入 admin-node）；无 schema 迁移、无索引变更，database-contract 阶段均为 --check",
+    "验证：受影闭包 7 套件 117/117 通过；tsc --noEmit 无错误；改动文件 ESLint 干净；发布 [RELEASE_OK]，三服务 running、restarts=0、public/admin 健康 ok、120s 稳定性窗口通过",
+    "发布方式：packages/entities 与 apps/node/src/*auth* 命中网关受保护路径，沿用服务器 root 完整发布流程 release-production.sh 20261006 0ac332c7",
+    "封禁执行：user.accountStatus=banned、bannedAt=2026-10-09T05:15:41.061Z、banReason 记录违规来源；user_account.status=banned；删除 Redis auth:user-status:<userId> 使其立即生效",
+    "回滚：代码回滚到 2d55fd5d；新增枚举值与被封数据互不影响——回滚代码后封禁不再生效，如需继续封禁须保留该提交或改用其他手段"
+  ],
+  "status": "deployed",
+  "deployedAt": "2026-10-09T13:00:22+08:00",
+  "deployedCommit": "0ac332c7353c4f0de8cb753b783b3ecc4dba2f76",
+  "upstream": "20261006"
+}
