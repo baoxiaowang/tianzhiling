@@ -1,0 +1,32 @@
+{
+  "release": "20261009",
+  "branch": "20261006",
+  "repo": "tianzhiling",
+  "createdAt": "2026-10-09T12:35:00+08:00",
+  "baselineCommit": "0f2d708",
+  "baselineLabel": "20261006 已部署基线（admin 虚拟支付退款观察期 + chat 误判修复）",
+  "commits": [
+    "2d55fd5 fix(storage): 关闭客户端直传签名通道并强制媒体类型"
+  ],
+  "highlights": [
+    "安全热修：客户端直传签名通道默认关闭（STORAGE_SIGNED_UPLOAD_DISABLED 403），开启时校验目录白名单并只接受媒体扩展名与媒体类型，拒绝伪造 Content-Type",
+    "服务端中转上传以扩展名推导 Content-Type（NODE_STORAGE_ENFORCE_CONTENT_TYPE 默认开启），拒绝非媒体扩展名，杜绝 HTML 伪装成图片后由对象存储按 text/html 返回",
+    "新增上传媒体类型白名单模块（覆盖入库白名单 19 种扩展名，映射与小程序端一致）",
+    "事故记录：docs/事故记录-20261009-存储桶匿名写入与任意文件托管.md"
+  ],
+  "notes": [
+    "事故背景：存储桶 ACL 为 public-read-write（AllUsers 具备 READ + WRITE），任何人可匿名写入与覆盖任意对象；桶内发现 5 个第三方引流页 HTML（2026-07-07/07-20/07-26 上传），可通过平台自有域名访问",
+    "处置：全量扫描 171,172 个对象定位异常 5 个 → 下载留证（sha256/ETag/LastModified/响应头，存 .tmp 未入库）→ 删除并复验为空 → ACL 收紧为 public-read",
+    "本次发布相对生产仅含 1 个提交（热修 rebase 于远端 20261006 之上，未覆盖他人提交 156263f5/0f2d7080）",
+    "服务闭包 tzl_node、tzl_memory_worker；无包依赖、无 schema 变化、无迁移，database-contract 阶段均为 --check",
+    "编译与验证：tsc --noEmit 无错误；受影响闭包 7 套件 101/101 通过（含他人提交的 permanent-agent-silence 用例）；改动文件 ESLint 干净；为保持热修 diff 最小未顺手修 config.default.ts 既有格式缺陷",
+    "发布方式：apps/node/src/config/ 命中网关受保护路径，沿用服务器 root 完整发布流程 release-production.sh 20261006 2d55fd5d",
+    "发布结果：2026-10-09 12:39 完成；tzl_node/tzl_memory_worker running、restarts=0、镜像 sha256:777c0354ce72ff80a9e8e359628372afc106bf6d610fcd10d64371c39372935e；public/admin health ok；120s 稳定性窗口通过；容器内 dist 已含闸门代码、signedUploadEnabled 默认 false 且未设置覆盖环境变量",
+    "安全复验：桶 ACL=public-read（无 AllUsers:WRITE）；5 个恶意路径列表为空、公网 404；正常图片公网 200；匿名 PUT 403",
+    "回滚：代码回滚到 0f2d708；如需恢复直传通道须同时设置 NODE_STORAGE_SIGNED_UPLOAD_ENABLED=true 与 NODE_STORAGE_SIGNED_UPLOAD_FOLDERS（空表示全拒），图片仍会因审核闸门要求改走服务端中转"
+  ],
+  "status": "deployed",
+  "deployedAt": "2026-10-09T12:39:13+08:00",
+  "deployedCommit": "2d55fd5d18e179936488a5252ead118300a708ab",
+  "upstream": "20261006"
+}
