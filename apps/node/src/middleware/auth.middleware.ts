@@ -4,11 +4,7 @@ import { JwtService } from '@midwayjs/jwt';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { Context, NextFunction } from '@midwayjs/koa';
-import {
-  MongoObjectId,
-  UserAccountStatus,
-  UserEntity,
-} from '@tzl/entities';
+import { MongoObjectId, UserAccountStatus, UserEntity } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
   getRevokedAccessTokenRedisKey,
@@ -94,11 +90,7 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
       await this.ensureTokenIsActive(auth);
 
       if (auth.previewReadOnly && !['GET', 'HEAD'].includes(ctx.method)) {
-        throw new AppError(
-          'PREVIEW_READ_ONLY',
-          '此预览会话只能查看数据',
-          403
-        );
+        throw new AppError('PREVIEW_READ_ONLY', '此预览会话只能查看数据', 403);
       }
 
       if (auth.testSession) {
@@ -150,7 +142,8 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     // Strip optional global prefix (e.g. 'api') if present.
     const stripped = normalized.replace(/^api\//, '');
     // Allow signing ASR session and sending test messages in own conversations.
-    if (/^conversation\/[^/]+\/realtime-voice-session\/?$/.test(stripped)) return true;
+    if (/^conversation\/[^/]+\/realtime-voice-session\/?$/.test(stripped))
+      return true;
     if (/^conversation\/[^/]+\/messages\/?$/.test(stripped)) return true;
     return false;
   }
@@ -277,6 +270,9 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     if (cachedStatus === UserAccountStatus.active) {
       return;
     }
+    if (cachedStatus === UserAccountStatus.banned) {
+      throw new AppError('ACCOUNT_BANNED', 'account has been banned', 403);
+    }
 
     const userId = MongoObjectId.isValid(auth.sub)
       ? new MongoObjectId(auth.sub)
@@ -292,6 +288,16 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
       }));
     if (!user) {
       throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 401);
+    }
+    // 封禁早于注销判定：封禁是永久拒绝，且不能复用注销语义（注销会触发数据清理）。
+    if (user.accountStatus === UserAccountStatus.banned) {
+      await this.redisService.set(
+        statusKey,
+        UserAccountStatus.banned,
+        'EX',
+        ACTIVE_USER_STATUS_CACHE_SECONDS
+      );
+      throw new AppError('ACCOUNT_BANNED', 'account has been banned', 403);
     }
     if (user.accountStatus === UserAccountStatus.canceled) {
       await this.redisService.set(

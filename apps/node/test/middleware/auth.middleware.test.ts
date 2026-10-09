@@ -159,6 +159,51 @@ describe('AuthMiddleware account revocation', () => {
     );
   });
 
+  it('rejects every token once the account is banned', async () => {
+    const redisGet = jest
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('banned');
+    const middleware = createActiveTokenMiddleware(redisGet);
+
+    await expect(
+      (middleware as any).ensureTokenIsActive(auth),
+    ).rejects.toMatchObject({
+      code: 'ACCOUNT_BANNED',
+      status: 403,
+    });
+  });
+
+  it('keeps the ban durable when Redis has lost the status cache', async () => {
+    const redisGet = jest.fn().mockResolvedValue(null);
+    const middleware = createActiveTokenMiddleware(redisGet);
+    middleware.userModel = {
+      findOne: jest.fn().mockResolvedValue({
+        accountStatus: 'banned',
+        bannedAt: new Date('2026-10-09T00:00:00.000Z'),
+      }),
+    } as never;
+
+    await expect(
+      (middleware as any).ensureTokenIsActive(auth),
+    ).rejects.toMatchObject({
+      code: 'ACCOUNT_BANNED',
+      status: 403,
+    });
+    expect(middleware.redisService.set).toHaveBeenCalledWith(
+      `auth:user-status:${auth.sub}`,
+      'banned',
+      'EX',
+      expect.any(Number),
+    );
+    // 封禁不得复用注销标记，否则会被注销数据清理流程接管。
+    expect(middleware.redisService.set).not.toHaveBeenCalledWith(
+      `auth:revoked-user:${auth.sub}`,
+      expect.anything(),
+    );
+  });
+
   it('rejects every token after the user account is canceled', async () => {
     const redisGet = jest
       .fn()

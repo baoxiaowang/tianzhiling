@@ -616,7 +616,9 @@ export class UserService {
   }
 
   /** Called only after a one-use admin device grant has been redeemed. */
-  async issueReadOnlyPreviewSession(userId: string): Promise<PasswordLoginResult> {
+  async issueReadOnlyPreviewSession(
+    userId: string
+  ): Promise<PasswordLoginResult> {
     const objectId = this.parseObjectId(userId);
     const user = await this.findUserById(objectId);
     const account = await this.userAccountModel.findOne({
@@ -1053,8 +1055,8 @@ export class UserService {
     const lifetimeSeconds = testSession
       ? 30 * 60
       : previewReadOnly
-        ? 365 * 24 * 60 * 60
-        : this.getTokenExpiresInSeconds();
+      ? 365 * 24 * 60 * 60
+      : this.getTokenExpiresInSeconds();
     const expiresAt = issuedAt + lifetimeSeconds * 1000;
     const accessToken = this.jwtService.signSync(
       {
@@ -1084,6 +1086,15 @@ export class UserService {
     user: UserEntity,
     userAccount: UserAccountEntity
   ): void {
+    // 封禁优先判定：用户级或登录账号级（微信 openId / 手机号）任一命中即拒绝。
+    // 必须早于注销分支，避免被封禁的账号被当成"已注销"而进入数据清理流程。
+    if (
+      user.accountStatus === UserAccountStatus.banned ||
+      userAccount.status === UserLoginAccountStatus.banned
+    ) {
+      throw new AppError('ACCOUNT_BANNED', 'account has been banned', 403);
+    }
+
     if (
       user.accountStatus === UserAccountStatus.canceled ||
       userAccount.status === UserLoginAccountStatus.canceled

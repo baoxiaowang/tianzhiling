@@ -4,6 +4,8 @@ import { BaseEntity, MongoObjectId, TableName } from './base';
 export enum UserLoginAccountStatus {
   active = 'active',
   canceled = 'canceled',
+  /** 违规封禁：登录账号（微信 openId / 手机号）维度永久拒绝登录。 */
+  banned = 'banned',
 }
 
 @Index(['account'], { background: true })

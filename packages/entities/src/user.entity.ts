@@ -10,6 +10,8 @@ export type UserGender = 'male' | 'female' | 'unknown';
 export enum UserAccountStatus {
   active = 'active',
   canceled = 'canceled',
+  /** 违规封禁：与「用户主动注销」语义分离，避免误入注销数据清理流程。 */
+  banned = 'banned',
 }
 
 export enum UserAccountCancellationStatus {
@@ -128,6 +130,13 @@ export class UserEntity extends BaseEntity {
 
   @Column()
   canceledAt?: Date;
+
+  /** 封禁时间与原因：保留审计依据，解封时清空。 */
+  @Column()
+  bannedAt?: Date;
+
+  @Column()
+  banReason?: string;
 
   @Column()
   accountCancellationCompletedAt?: Date;

@@ -84,6 +84,9 @@ function createService() {
   } as any;
   service.postImageService = {
     resolveForResponse: jest.fn((avatar: string) => avatar),
+    resolveUserAvatarForResponse: jest.fn((avatar?: string) =>
+      avatar?.trim() ? avatar : 'default-avatar'
+    ),
   } as any;
   service.wechatPayService = wechatPayService as any;
 
@@ -203,6 +206,51 @@ describe('UserService phoneLogin', () => {
         openId: WEAPP_OPENID,
       })
     );
+  });
+
+  it('rejects a banned weapp openid and never creates a replacement account', async () => {
+    const { service, userModel, userAccountModel } = createService();
+    userAccountModel.findOne = jest.fn().mockResolvedValue({
+      userId: createObjectId(CURRENT_USER_ID),
+      account: buildWeappAccount(WEAPP_OPENID),
+      openId: WEAPP_OPENID,
+      status: 'active',
+    });
+    userModel.findOne = jest.fn().mockResolvedValue({
+      id: createObjectId(CURRENT_USER_ID),
+      accountStatus: 'banned',
+      bannedAt: new Date('2026-10-09T00:00:00.000Z'),
+    });
+
+    await expect(
+      service.weappLogin({ jsCode: 'js-code' })
+    ).rejects.toMatchObject({
+      code: 'ACCOUNT_BANNED',
+      status: 403,
+    });
+    expect(userModel.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects login when the weapp login account itself is banned', async () => {
+    const { service, userModel, userAccountModel } = createService();
+    userAccountModel.findOne = jest.fn().mockResolvedValue({
+      userId: createObjectId(CURRENT_USER_ID),
+      account: buildWeappAccount(WEAPP_OPENID),
+      openId: WEAPP_OPENID,
+      status: 'banned',
+    });
+    userModel.findOne = jest.fn().mockResolvedValue({
+      id: createObjectId(CURRENT_USER_ID),
+      accountStatus: 'active',
+    });
+
+    await expect(
+      service.weappLogin({ jsCode: 'js-code' })
+    ).rejects.toMatchObject({
+      code: 'ACCOUNT_BANNED',
+      status: 403,
+    });
+    expect(userModel.save).not.toHaveBeenCalled();
   });
 
   it('does not create a weapp user during silent login recovery', async () => {
