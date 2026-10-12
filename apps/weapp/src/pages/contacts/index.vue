@@ -169,7 +169,7 @@ export default {
 </script>
 
 <script setup lang="ts">
-import { buildOssMediaUrl } from '@tzl/shared'
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
@@ -200,7 +200,7 @@ const isLoadingMoreConversations = ref(false)
 const hasLoadedContacts = ref(false)
 const isSavingCoverImage = ref(false)
 const showCollapsedAppBar = ref(false)
-const createAgentAvatarUrl = buildOssMediaUrl('/weapp/tianzhiling.png')
+const createAgentAvatarUrl = resolveMediaAssetUrl('/weapp/tianzhiling.png')
 
 let refreshContactsPromise: Promise<void> | null = null
 let loadMoreContactsPromise: Promise<void> | null = null

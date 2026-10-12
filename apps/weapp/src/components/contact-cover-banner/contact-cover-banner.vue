@@ -48,10 +48,10 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
-import { buildOssMediaUrl } from '@tzl/shared'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { uploadLocalImage } from '../../apis/storage'
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 
 interface ContactCoverPreset {
   id: string
@@ -70,7 +70,7 @@ const CONTACT_COVER_PRESET_KEYS = [
 const presetItems = CONTACT_COVER_PRESET_KEYS.map((imageKey, index) => ({
   id: `preset-${index + 1}`,
   imageKey,
-  imageUrl: buildOssMediaUrl(imageKey),
+  imageUrl: resolveMediaAssetUrl(imageKey),
 }))
 
 const props = withDefaults(defineProps<{
@@ -113,7 +113,7 @@ function resolveImageUrl(value: string | undefined) {
     return ''
   }
 
-  return /^https?:\/\//i.test(trimmed) ? trimmed : buildOssMediaUrl(trimmed)
+  return /^https?:\/\//i.test(trimmed) ? trimmed : resolveMediaAssetUrl(trimmed)
 }
 
 function handlePresetTap(item: ContactCoverPreset) {

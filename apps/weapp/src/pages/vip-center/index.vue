@@ -88,9 +88,11 @@ import {
   ensureAuthenticatedSession,
   redirectToAuthPage,
 } from '../../utils/auth-guard'
+import { isIosClientPlatform } from '../../utils/client-platform'
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 import {
   isWechatPaymentCancel,
-  requestWechatVirtualPaymentWithFallback,
+  requestWechatVirtualPaymentForOrder,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
@@ -104,7 +106,7 @@ const isPaying = ref(false)
 const isAwaitingPaymentResult = ref(false)
 const loadError = ref('')
 const preferredPlanGroup = ref<'basic' | 'voice'>('basic')
-const vipBenefitsImageUrl = 'https://oss.tianzhiling.chat/weapp/vip-diff.png'
+const vipBenefitsImageUrl = resolveMediaAssetUrl('/weapp/vip-diff.png')
 
 const selectedPlan = computed(() => {
   return center.value?.plans.find((plan) => plan.id === selectedPlanId.value)
@@ -341,7 +343,10 @@ async function handlePurchaseTap() {
 
     let paidOrderId = ''
 
-    if (virtualPaymentProductId) {
+    // 全品牌统一支付路由（天之灵 / 未了言一致）：
+    // - 非 iOS（安卓/鸿蒙/Windows）：只走小程序虚拟支付，失败不回退普通支付；
+    // - iOS：只走普通微信支付（iOS 的虚拟支付起不来，普通支付是唯一成功路径）。
+    if (virtualPaymentProductId && !isIosClientPlatform()) {
       const result = await createVipPlanVirtualPaymentOrder({
         vipPlanId,
         jsCode,
@@ -353,28 +358,13 @@ async function handlePurchaseTap() {
           throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        const paidOrder = await requestWechatVirtualPaymentWithFallback(
-          {
-            order: result.order,
-            virtualPayment: result.virtualPayment,
-          },
-          async () => {
-            const fallbackLoginResult = await Taro.login()
-            const fallbackJsCode = fallbackLoginResult.code?.trim()
-
-            if (!fallbackJsCode) {
-              throw new Error('微信登录凭证获取失败，请稍后重试')
-            }
-
-            return createVipPlanOrder({
-              vipPlanId,
-              jsCode: fallbackJsCode,
-            })
-          }
-        )
+        const paidOrder = await requestWechatVirtualPaymentForOrder({
+          order: result.order,
+          virtualPayment: result.virtualPayment,
+        })
         paidOrderId = paidOrder.id
       }
-    } else {
+    } else if (isIosClientPlatform()) {
       const result = await createVipPlanOrder({
         vipPlanId,
         jsCode,
@@ -388,6 +378,10 @@ async function handlePurchaseTap() {
         await Taro.requestPayment(result.payment)
       }
       paidOrderId = result.order.id
+    } else {
+      // 非 iOS 且套餐没有虚拟道具 ID：微信在非 iOS 已关闭普通支付，
+      // 不能回落，直接明确提示不可购买，避免"点了没有反应"。
+      throw new Error('当前会员套餐暂不可购买，请稍后重试')
     }
     invalidateVipPurchaseCenterCache()
     isAwaitingPaymentResult.value = true

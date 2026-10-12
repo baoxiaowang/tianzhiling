@@ -12,6 +12,14 @@ export interface NodeBrandConfig {
   key: string;
   name: string;
   companyName: string;
+  /**
+   * 品牌媒体资源域名（无尾斜杠）。
+   *
+   * 用于拼接客服二维码、聊天图片等对外可见的媒体地址；
+   * 未配置时保持历史默认（天之灵 OSS），未了言部署需在 .env 设
+   * BRAND_MEDIA_BASE_URL=https://oss.voloian.cn。
+   */
+  mediaBaseUrl: string;
   customerService: {
     phone: string;
     wechatQr: string;
@@ -25,6 +33,9 @@ export function brandConfig(): NodeBrandConfig {
     key: process.env.BRAND || 'tianzhiling',
     name: process.env.BRAND_NAME || '天之灵',
     companyName: process.env.BRAND_COMPANY || '武汉市天之灵智能技术有限公司',
+    mediaBaseUrl: (
+      process.env.BRAND_MEDIA_BASE_URL || 'https://oss.tianzhiling.chat'
+    ).replace(/\/+$/, ''),
     customerService: {
       phone: process.env.BRAND_CUSTOMER_SERVICE_PHONE || '19986943631',
       wechatQr: process.env.BRAND_CUSTOMER_SERVICE_WECHAT_QR || '/weapp/service.png',

@@ -20,7 +20,13 @@
   "companyName": "武汉市天之灵智能技术有限公司",  // 协议与合规主体
   "domain": "tianzhiling.chat",    // 官网/主站域名
   "adminDomain": "admin.tianzhiling.chat",
-  "weapp":   { "appid": "wxb6bcebdb61af0461", "navigationBarTitle": "天之灵" },
+  "weapp":   {
+    "appid": "wxb6bcebdb61af0461",
+    "navigationBarTitle": "天之灵",
+    "apiBaseUrl": "https://tianzhiling.chat",     // 小程序接口域名
+    "assetBaseUrl": "https://tianzhiling.chat",   // 小程序静态资源域名
+    "mediaBaseUrl": "https://oss.tianzhiling.chat" // 小程序媒体资源域名
+  },
   "app":     { "androidApplicationId": "com.tianzhiling.app", "androidLabel": "天之灵", "iosBundleId": "com.tianzhiling.app" },
   "adminTitle": "天之灵管理后台",
   "customerService": {
@@ -84,6 +90,30 @@ cd apps/app && flutter build apk \
   --dart-define=BRAND_COMPANY=武汉市未了言智能技术有限公司 \
   # 桌面图标名另需: 构建时设置 BRAND_APP_ANDROID_LABEL 环境变量
 ```
+
+### 小程序构建产物与上传
+
+- 输出目录：天之灵沿用 `apps/weapp/dist/weapp`；其他品牌默认 `apps/weapp/dist/weapp-<brand>`，两个品牌的产物不会互相覆盖。
+- 接口/静态资源/媒体域名来自品牌 JSON 的 `weapp.apiBaseUrl` / `assetBaseUrl` / `mediaBaseUrl`，**不再由 `.env.production` 决定**。
+- `dist/<输出目录>/project.config.json` 的 appid 由品牌 `weapp.appid` 注入；上传时请以该目录作为项目目录（或核对开发者工具里的 appid），避免把包传到另一个小程序。
+- 构建结束会自动跑 `apps/weapp/scripts/verify-weapp-release.mjs`，按品牌硬校验：本品牌域名必须在、其他品牌域名必须不在、appid 必须匹配、虚拟支付与普通微信支付两条链路必须都在、不允许出现「虚拟支付失败回退普通支付」的兜底。
+
+## 小程序支付路由（全品牌统一）
+
+两品牌**同一套**支付路由，按客户端平台选择通道，不做跨通道兜底：
+
+| 客户端 | 通道 | 原因 |
+|---|---|---|
+| 非 iOS（安卓 / 鸿蒙 / Windows / 开发者工具） | 微信小程序虚拟支付（`wx.requestVirtualPayment`） | 微信只对非 iOS 关闭了普通微信支付，普通支付在这里起不来 |
+| iOS | 普通微信支付（`Taro.requestPayment`） | iOS 的虚拟支付走不通，普通微信支付是唯一成功路径 |
+
+实现要点：
+
+- 平台判定：`apps/weapp/src/utils/client-platform.ts` 的 `isIosClientPlatform()`；
+- 页面入口：`pages/vip-center/index.vue`、`pages/voice-package-success/index.vue` 先按平台分支，非 iOS 才调虚拟支付；
+- 防线：`apps/weapp/src/utils/virtual-payment.ts` 的 `assertVirtualPaymentAvailable()` 在 iOS 直接抛错（普通 Error，避免被当成"用户取消"）；
+- 非 iOS 且套餐没有 `virtualPaymentProductId`：明确提示"暂不可购买"，**不回落**普通支付（回落只会留下一次注定失败的尝试，用户看到的就是"点了没有反应"）；
+- 服务端仍需按品牌各自配置：`NODE_WECHAT_MINI_PROGRAM_APP_ID`/`NODE_WECHAT_PAY_APP_ID`、`NODE_WECHAT_PAY_MCH_ID`、`NODE_WECHAT_VIRTUAL_PAY_ENABLED`/`OFFER_ID`/`ENV`/`*_APP_KEY`。生产虚拟支付 `NODE_WECHAT_VIRTUAL_PAY_ENV=1`（0 是沙箱，会报 `PAYMENT_ILLEGAL_IN_SANDBOX`）。
 
 ## 已合入主仓的未了言独有资产
 

@@ -384,7 +384,10 @@ export class MessengerService {
           ? Number((options.refundAmount / 100).toFixed(2))
           : undefined,
       wechatId: brand.customerService.wechatId,
-      wechatQrUrl: buildOssMediaUrl(brand.customerService.wechatQr),
+      wechatQrUrl: buildOssMediaUrl(
+        brand.customerService.wechatQr,
+        brand.mediaBaseUrl
+      ),
       needQr:
         options.eventType === 'voice_purchase' ||
         options.eventType === 'voice_package_purchase',
@@ -1216,7 +1219,7 @@ export class MessengerService {
       message.mediaUrl =
         options.mediaUrl ||
         (options.mediaObjectKey
-          ? buildOssMediaUrl(options.mediaObjectKey)
+          ? buildOssMediaUrl(options.mediaObjectKey, brandConfig().mediaBaseUrl)
           : undefined);
       message.mediaMimeType = options.mediaMimeType || 'image/jpeg';
     }

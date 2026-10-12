@@ -53,13 +53,13 @@ export default {
 <script setup lang="ts">
 import { computed } from 'vue'
 import { brand } from '../../config/brand'
-import { buildOssMediaUrl } from '@tzl/shared'
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 import type {
   VoicePackageRecord,
   VoiceTrainingTaskRecord,
 } from '../../apis/voice-package'
 
-const voicePackageHeroImage = buildOssMediaUrl('/weapp/voice_banner.png')
+const voicePackageHeroImage = resolveMediaAssetUrl('/weapp/voice_banner.png')
 
 const props = withDefaults(
   defineProps<{

@@ -179,7 +179,7 @@ export default {
 
 <script setup lang="ts">
 import { Check } from "@nutui/icons-vue-taro";
-import { buildOssMediaUrl } from "@tzl/shared";
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 import Taro, { useDidShow } from "@tarojs/taro";
 import { computed, ref } from "vue";
 import { brand } from "../../config/brand";
@@ -234,7 +234,7 @@ const selectedAgentId = computed(() => {
 
   return resolveSelectedConversation(conversations.value)?.agentId ?? "";
 });
-const createAgentAvatarUrl = buildOssMediaUrl("/weapp/tianzhiling.png");
+const createAgentAvatarUrl = resolveMediaAssetUrl("/weapp/tianzhiling.png");
 
 function showToast(title: string) {
   void Taro.showToast({

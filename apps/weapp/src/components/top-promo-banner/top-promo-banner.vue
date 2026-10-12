@@ -28,8 +28,8 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
-import { buildOssMediaUrl } from '@tzl/shared'
 
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 interface PromoBannerItem {
   id: string
   imageUrl: string
@@ -42,12 +42,12 @@ withDefaults(defineProps<{
   banners: () => [
     // {
     //   id: 'voice-clone',
-    //   imageUrl: buildOssMediaUrl('/weapp/post-banner-voice.png'),
+    //   imageUrl: resolveMediaAssetUrl('/weapp/post-banner-voice.png'),
     //   link: '/pages/voice-package/index',
     // },
     {
       id: 'vip',
-      imageUrl: buildOssMediaUrl('/weapp/post-banner-vip.png'),
+      imageUrl: resolveMediaAssetUrl('/weapp/post-banner-vip.png'),
       link: '/pages/vip-center/index',
     },
   ],

@@ -49,8 +49,24 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       BRAND: JSON.stringify(process.env.BRAND || 'tianzhiling'),
       BRAND_NAME: JSON.stringify(process.env.BRAND_NAME || '天之灵'),
       BRAND_COMPANY: JSON.stringify(process.env.BRAND_COMPANY || '武汉市天之灵智能技术有限公司'),
+      // 品牌主域名：品牌内默认值由它拼出来，避免包里残留另一品牌的域名字面量
+      BRAND_DOMAIN: JSON.stringify(process.env.BRAND_DOMAIN || 'tianzhiling.chat'),
+      BRAND_ADMIN_DOMAIN: JSON.stringify(
+        process.env.BRAND_ADMIN_DOMAIN || 'admin.tianzhiling.chat'
+      ),
       BRAND_WEAPP_NAV_TITLE: JSON.stringify(process.env.BRAND_WEAPP_NAV_TITLE || '天之灵'),
       BRAND_WEAPP_APPID: JSON.stringify(process.env.BRAND_WEAPP_APPID || 'wxb6bcebdb61af0461'),
+      // 品牌接口/静态资源域名与支付策略：不注入时即天之灵默认值。
+      // 未了言必须由 scripts/build-brand.sh weapp 注入，避免误用天之灵域名或普通支付链路。
+      BRAND_WEAPP_API_BASE_URL: JSON.stringify(
+        process.env.BRAND_WEAPP_API_BASE_URL || 'https://tianzhiling.chat'
+      ),
+      BRAND_WEAPP_ASSET_BASE_URL: JSON.stringify(
+        process.env.BRAND_WEAPP_ASSET_BASE_URL || 'https://tianzhiling.chat'
+      ),
+      BRAND_WEAPP_MEDIA_BASE_URL: JSON.stringify(
+        process.env.BRAND_WEAPP_MEDIA_BASE_URL || 'https://oss.tianzhiling.chat'
+      ),
       BRAND_CUSTOMER_SERVICE_PHONE: JSON.stringify(process.env.BRAND_CUSTOMER_SERVICE_PHONE || '19986943631'),
       BRAND_CUSTOMER_SERVICE_WECHAT_QR: JSON.stringify(process.env.BRAND_CUSTOMER_SERVICE_WECHAT_QR || '/weapp/service.png'),
       BRAND_CUSTOMER_SERVICE_EMAIL: JSON.stringify(process.env.BRAND_CUSTOMER_SERVICE_EMAIL || 'support@tianzhiling.chat'),

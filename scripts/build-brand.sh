@@ -45,6 +45,10 @@ eval "$(node -e '
     BRAND_ADMIN_DOMAIN: cfg.adminDomain,
     BRAND_WEAPP_APPID: cfg.weapp.appid,
     BRAND_WEAPP_NAV_TITLE: cfg.weapp.navigationBarTitle,
+    // 小程序生产接口/静态资源/媒体域名（缺字段时按品牌主域名推导）
+    BRAND_WEAPP_API_BASE_URL: cfg.weapp.apiBaseUrl || `https://${cfg.domain}`,
+    BRAND_WEAPP_ASSET_BASE_URL: cfg.weapp.assetBaseUrl || `https://${cfg.domain}`,
+    BRAND_WEAPP_MEDIA_BASE_URL: cfg.weapp.mediaBaseUrl || `https://oss.${cfg.domain}`,
     BRAND_APP_ANDROID_LABEL: cfg.app.androidLabel,
     BRAND_ADMIN_TITLE: cfg.adminTitle,
     BRAND_CUSTOMER_SERVICE_PHONE: cfg.customerService?.phone || "",
@@ -69,6 +73,19 @@ echo "== 构建品牌 [$BRAND] 目标 [$TARGET] =="
 
 case "$TARGET" in
   weapp)
+    # 生产包必须带本品牌的接口域名与 appid：
+    # - 接口/静态资源/媒体域名由 config/index.ts 的 BRAND_WEAPP_* 注入；
+    # - TARO_APP_ID 由 Taro 写进 dist/project.config.json，避免上传到另一个小程序；
+    # - 默认按品牌分目录输出，避免两个品牌的产物互相覆盖（天之灵沿用 dist/weapp）。
+    export TARO_APP_ID="$BRAND_WEAPP_APPID"
+    if [ "$BRAND" = "tianzhiling" ]; then
+      export TARO_BUILD_OUTPUT_ROOT="${TARO_BUILD_OUTPUT_ROOT:-dist/weapp}"
+    else
+      export TARO_BUILD_OUTPUT_ROOT="${TARO_BUILD_OUTPUT_ROOT:-dist/weapp-$BRAND}"
+    fi
+    echo "  接口地址: $BRAND_WEAPP_API_BASE_URL"
+    echo "  输出目录: apps/weapp/$TARO_BUILD_OUTPUT_ROOT"
+    echo "  上传用 appid: $TARO_APP_ID"
     pnpm --filter ./apps/weapp build:weapp
     ;;
   app)

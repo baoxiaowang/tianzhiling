@@ -111,9 +111,10 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import VoiceCustomerServiceCard from '../../components/voice-customer-service-card/voice-customer-service-card.vue'
 import VoicePackageSheet from '../../components/voice-package-sheet/voice-package-sheet.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import { isIosClientPlatform } from '../../utils/client-platform'
 import {
   isWechatPaymentCancel,
-  requestWechatVirtualPaymentWithFallback,
+  requestWechatVirtualPaymentForOrder,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 
@@ -319,36 +320,36 @@ async function handlePay() {
 
     let paidOrderId = ''
 
-    if (voicePackage.virtualPaymentProductId) {
+    // 全品牌统一支付路由（天之灵 / 未了言一致）：
+    // - 非 iOS（安卓/鸿蒙/Windows）：只走小程序虚拟支付，失败不回退普通支付；
+    // - iOS：只走普通微信支付（iOS 的虚拟支付起不来，普通支付是唯一成功路径）。
+    if (voicePackage.virtualPaymentProductId && !isIosClientPlatform()) {
       const result = await createVoicePackageVirtualPaymentOrder({
         voicePackageId: voicePackage.id,
         agentId: agentId.value,
         jsCode: code,
       })
-      const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
-        const fallbackLoginResult = await Taro.login()
-        const fallbackCode = fallbackLoginResult.code?.trim()
-
-        if (!fallbackCode) {
-          throw new Error('微信登录失败，请稍后重试')
-        }
-
-        return createVoicePackageOrder({
-          voicePackageId: voicePackage.id,
-          agentId: agentId.value,
-          jsCode: fallbackCode,
-        })
-      })
+      const paidOrder = await requestWechatVirtualPaymentForOrder(result)
       paidOrderId = paidOrder.id
-    } else {
+    } else if (isIosClientPlatform()) {
       const result = await createVoicePackageOrder({
         voicePackageId: voicePackage.id,
         agentId: agentId.value,
         jsCode: code,
       })
 
-      await Taro.requestPayment(result.payment)
+      if (result.order.payableAmount > 0) {
+        if (!result.payment) {
+          throw new Error('支付参数获取失败，请稍后重试')
+        }
+
+        await Taro.requestPayment(result.payment)
+      }
       paidOrderId = result.order.id
+    } else {
+      // 非 iOS 且套餐没有虚拟道具 ID：微信在非 iOS 已关闭普通支付，
+      // 不能回落，直接明确提示不可购买，避免"点了没有反应"。
+      throw new Error('当前声音套餐暂不可购买，请稍后重试')
     }
     voicePackagePopupVisible.value = false
     await Taro.redirectTo({

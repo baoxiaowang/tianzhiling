@@ -6,7 +6,10 @@
   "adminDomain": "admin.voloian.cn",
   "weapp": {
     "appid": "wx726227339067c7bb",
-    "navigationBarTitle": "未了言"
+    "navigationBarTitle": "未了言",
+    "apiBaseUrl": "https://voloian.cn",
+    "assetBaseUrl": "https://voloian.cn",
+    "mediaBaseUrl": "https://oss.voloian.cn"
   },
   "app": {
     "androidApplicationId": "com.tianzhiling.app",

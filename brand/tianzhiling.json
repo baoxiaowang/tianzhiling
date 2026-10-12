@@ -6,7 +6,10 @@
   "adminDomain": "admin.tianzhiling.chat",
   "weapp": {
     "appid": "wxb6bcebdb61af0461",
-    "navigationBarTitle": "天之灵"
+    "navigationBarTitle": "天之灵",
+    "apiBaseUrl": "https://tianzhiling.chat",
+    "assetBaseUrl": "https://tianzhiling.chat",
+    "mediaBaseUrl": "https://oss.tianzhiling.chat"
   },
   "app": {
     "androidApplicationId": "com.tianzhiling.app",
