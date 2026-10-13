@@ -163,6 +163,9 @@ export class UpdateAdminVoiceTimbreDTO {
   @Rule(RuleType.string().allow('').max(1000).optional())
   previewText?: string;
 
+  @Rule(RuleType.string().allow('').max(60).optional())
+  previewModel?: string;
+
   @Rule(speechDialectRule.optional())
   speechDialect?: string;
 

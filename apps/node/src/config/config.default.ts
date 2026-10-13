@@ -713,7 +713,7 @@ export default {
     ),
     defaultSpeechModel: readStringFrom(
       ['NODE_QWEN_VOICE_SPEECH_MODEL', 'ADMIN_API_QWEN_VOICE_PREVIEW_MODEL'],
-      'qwen3-tts-vc-2026-01-22'
+      'qwen-audio-3.0-tts-plus'
     ),
     defaultLanguageType: readStringFrom(
       ['NODE_QWEN_VOICE_LANGUAGE_TYPE', 'NODE_QWEN_VOICE_LANGUAGE'],

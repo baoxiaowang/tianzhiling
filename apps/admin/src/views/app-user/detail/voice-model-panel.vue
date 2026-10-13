@@ -1078,11 +1078,6 @@
     label: string;
   }> = [
     {
-      model: 'qwen3-tts-vc-2026-01-22',
-      provider: 'qwen',
-      label: '千问 Qwen3 TTS VC（普通话）',
-    },
-    {
       model: 'qwen-audio-3.0-tts-plus',
       provider: 'qwen',
       label: '千问 Qwen Audio 3.0 Plus（支持方言指令）',
@@ -1346,7 +1341,7 @@
   }>({
     name: '',
     provider: 'qwen',
-    previewModel: 'qwen3-tts-vc-2026-01-22',
+    previewModel: 'qwen-audio-3.0-tts-plus',
     providerVoiceId: '',
     previewText: DEFAULT_PREVIEW_TEXT,
     speechDialect: 'auto',
@@ -2035,7 +2030,7 @@
     vrsWizard.reset();
     form.name = '';
     form.provider = 'qwen';
-    form.previewModel = 'qwen3-tts-vc-2026-01-22';
+    form.previewModel = 'qwen-audio-3.0-tts-plus';
     form.providerVoiceId = '';
     form.previewText = DEFAULT_PREVIEW_TEXT;
     form.speechDialect = 'auto';

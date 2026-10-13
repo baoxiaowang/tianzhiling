@@ -90,7 +90,7 @@ export class QwenVoiceSpeechService {
     const model =
       input.model?.trim() ||
       this.config?.defaultSpeechModel?.trim() ||
-      'qwen3-tts-vc-2026-01-22';
+      'qwen-audio-3.0-tts-plus';
     const qwenAudio = this.isQwenAudioModel(model);
     const languageType = this.normalizeLanguageType(input.language);
     const languageHint = this.normalizeLanguageHint(input.language);

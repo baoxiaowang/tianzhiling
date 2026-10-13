@@ -553,6 +553,55 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     expect(result.status).toBe(VoiceTimbreStatus.creating);
   });
 
+  it('switches the provider model and re-clones with the same training audio', async () => {
+    const { service, queue } = createService();
+    const timbre = createTimbre(VoiceTimbreStatus.active);
+    timbre.provider = VoiceTimbreProvider.qwen;
+    timbre.previewModel = 'qwen3-tts-vc-2026-01-22';
+    timbre.providerVoiceId =
+      'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd';
+    timbre.audioObjectKey = 'voice-timbres/demo.wav';
+    const oldProviderVoiceId = timbre.providerVoiceId;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.updateVoiceTimbre(TIMBRE_ID.toHexString(), {
+      previewModel: 'qwen-audio-3.0-tts-plus',
+    });
+
+    expect(timbre.previewModel).toBe('qwen-audio-3.0-tts-plus');
+    expect(timbre.status).toBe(VoiceTimbreStatus.creating);
+    expect(timbre.audioObjectKey).toBe('voice-timbres/demo.wav');
+    expect(timbre.providerVoiceId).not.toBe(oldProviderVoiceId);
+    expect(queue.addJobToQueue).toHaveBeenCalledWith(
+      {
+        timbreId: TIMBRE_ID.toHexString(),
+      },
+      expect.objectContaining({
+        jobId: expect.stringContaining(
+          `voice-timbre-create:${TIMBRE_ID.toHexString()}:`
+        ),
+      })
+    );
+    expect(result.status).toBe(VoiceTimbreStatus.creating);
+  });
+
+  it('keeps the model and does not re-train when the submitted model is unchanged', async () => {
+    const { service, queue } = createService();
+    const timbre = createTimbre(VoiceTimbreStatus.active);
+    timbre.provider = VoiceTimbreProvider.qwen;
+    timbre.previewModel = 'qwen-audio-3.0-tts-plus';
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.updateVoiceTimbre(TIMBRE_ID.toHexString(), {
+      previewModel: 'qwen-audio-3.0-tts-plus',
+    });
+
+    expect(queue.addJobToQueue).not.toHaveBeenCalled();
+    expect(result.status).toBe(VoiceTimbreStatus.active);
+  });
+
   it('does not re-train a timbre when editing it to disabled', async () => {
     const { service, queue } = createService();
     const timbre = createTimbre(VoiceTimbreStatus.active);

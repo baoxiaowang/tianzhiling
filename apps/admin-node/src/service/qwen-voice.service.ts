@@ -87,7 +87,7 @@ export class QwenVoiceService {
 
   getDefaultPreviewModel(): string {
     return (
-      this.config?.defaultPreviewModel?.trim() || 'qwen3-tts-vc-2026-01-22'
+      this.config?.defaultPreviewModel?.trim() || 'qwen-audio-3.0-tts-plus'
     );
   }
 

@@ -508,6 +508,19 @@ export class AdminVoiceTimbreService {
     let shouldRetrain = false;
     const previousPreviewSignature = this.buildProviderPreviewSignature(timbre);
 
+    if (payload.previewModel !== undefined) {
+      const previewModel = this.normalizePreviewModel(
+        payload.previewModel,
+        timbre.provider
+      );
+      if (previewModel !== (timbre.previewModel?.trim() || '')) {
+        timbre.previewModel = previewModel;
+        // 复刻音色与创建时的 target_model 绑定，换模型必须用同一段训练音频重新复刻。
+        shouldRetrain = true;
+        changed = true;
+      }
+    }
+
     if (payload.name !== undefined) {
       timbre.name = this.normalizeName(payload.name);
       changed = true;

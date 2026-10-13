@@ -687,7 +687,6 @@
           <a-radio-group
             v-model="editForm.previewModel"
             type="button"
-            :disabled="Boolean(editingRecord)"
             @change="onQwenModelChange"
           >
             <a-radio
@@ -699,11 +698,10 @@
             </a-radio>
           </a-radio-group>
           <a-typography-text v-if="!editingRecord" type="secondary">
-            原有 Qwen3 与新接入的 Plus 同时保留；Plus 支持手写发音方言、
-            原生语速调节，以及输出层音量和音调调节。
+            Plus 支持手写发音方言、原生语速调节，以及输出层音量和音调调节。
           </a-typography-text>
           <a-typography-text v-if="editingRecord" type="secondary">
-            已创建音色的模型不可切换；需要其他模型时请新建音色。
+            修改模型会用同一段训练音频重新复刻音色，训练期间该音色暂不可用。
           </a-typography-text>
         </a-form-item>
 
@@ -1155,7 +1153,6 @@
   const fileInputRef = ref<HTMLInputElement>();
   const selectedAudioFile = ref<File>();
   const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'qwen';
-  const QWEN3_TTS_VC_MODEL = 'qwen3-tts-vc-2026-01-22';
   const QWEN_AUDIO_PLUS_MODEL = 'qwen-audio-3.0-tts-plus';
   const COSYVOICE_V35_PLUS_MODEL = 'cosyvoice-v3.5-plus';
   const DOUBAO_ICL2_EXPRESSIVE_MODEL = 'seed-tts-2.0-expressive';
@@ -1223,7 +1220,6 @@
       label: 'Qwen Audio 3.0 TTS Plus（默认，支持自定义合成指令）',
       value: QWEN_AUDIO_PLUS_MODEL,
     },
-    { label: 'Qwen3-TTS-VC（原有）', value: QWEN3_TTS_VC_MODEL },
   ];
   type VoiceTimbreEditForm = {
     name: string;
@@ -1635,7 +1631,7 @@
     } else if (record.provider === 'doubao') {
       editForm.previewModel = DOUBAO_ICL2_EXPRESSIVE_MODEL;
     } else {
-      editForm.previewModel = QWEN3_TTS_VC_MODEL;
+      editForm.previewModel = QWEN_AUDIO_PLUS_MODEL;
     }
     editForm.speechDialect = resolveSpeechDialect(record);
     editForm.speechInstruction = record.speechInstruction?.trim() || '';
@@ -1792,6 +1788,14 @@
     const formSnapshot = { ...editForm };
     const supportsSpeechInstructionSnapshot = supportsSpeechInstruction.value;
     const speechDialectSnapshot = resolveSpeechDialect(formSnapshot);
+    const editableModelProvider =
+      formSnapshot.provider === 'qwen' ||
+      formSnapshot.provider === 'cosyvoice' ||
+      formSnapshot.provider === 'doubao';
+    const previewModelChanged =
+      editableModelProvider &&
+      Boolean(formSnapshot.previewModel) &&
+      formSnapshot.previewModel !== editingRecord.value?.previewModel;
 
     try {
       saving.value = true;
@@ -1801,6 +1805,9 @@
           name: formSnapshot.name,
           status: formSnapshot.status,
           previewText: formSnapshot.previewText,
+          ...(previewModelChanged
+            ? { previewModel: formSnapshot.previewModel }
+            : {}),
           ...(supportsSpeechInstructionSnapshot
             ? {
                 speechDialect: speechDialectSnapshot,
@@ -1812,7 +1819,11 @@
           speechPitch: formSnapshot.speechPitch,
           remark: formSnapshot.remark,
         });
-        Message.success('音色已更新');
+        Message.success(
+          previewModelChanged
+            ? '已提交换模型，正在用原训练音频重新复刻音色'
+            : '音色已更新'
+        );
       } else {
         const uploaded = await uploadAdminFile(
           selectedAudioFile.value as File,
