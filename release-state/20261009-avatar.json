@@ -1,0 +1,29 @@
+{
+  "release": "20261009-avatar",
+  "branch": "20261006",
+  "repo": "tianzhiling",
+  "createdAt": "2026-10-09T14:05:00+08:00",
+  "baselineCommit": "7071548",
+  "baselineLabel": "20261006 已部署基线（语音默认模型迁移）",
+  "commits": [
+    "8a47f5c feat(upload): 头像目录每日上限 5 → 20"
+  ],
+  "highlights": [
+    "avatars 目录每日上限由 5 提升到 20：该目录由「用户换头像」与「创建/编辑智能体头像」共用，5 次/天在创建多个智能体时明显不足",
+    "防滥用仍由全局上限兜底：图片 30/天、文件 50/天、字节 256MB/天",
+    "成本影响可忽略：头像按 2 场景计费约 0.003 元/张，最坏 0.09 元/天/账号（约 2.7 元/月）"
+  ],
+  "notes": [
+    "服务器 .env 未设置任何 NODE_UPLOAD_QUOTA_* 覆盖，本次改的是代码默认值，所有环境一致；容器内已核实 avatars: 20 生效且 printenv 无覆盖",
+    "服务闭包 tzl_node、tzl_memory_worker；无包依赖、无 schema 变化、无迁移，database-contract 阶段均为 --check",
+    "验证：受影响闭包 5 套件 79/79 通过；改动文件 ESLint 干净（config.default.ts 仅剩既有格式问题：VRS 端点数组、重复 AppTestGrantEntity 行）",
+    "发布方式：apps/node/src/config/ 命中网关受保护路径，沿用服务器 root 完整发布流程 release-production.sh 20261006 8a47f5c3",
+    "发布结果：2026-10-09 14:00 完成；tzl_node/tzl_memory_worker running、restarts=0、public/admin health ok、120s 稳定性窗口通过",
+    "影响：已在当日用完 5 次的用户，发布后立即恢复可用（上限在每次请求时读取）；计数按北京时间自然日、按用户",
+    "回滚：代码回滚到 7071548；如需在服务器侧临时调整，可设置 NODE_UPLOAD_QUOTA_FOLDER_LIMITS（整表替换，须写全所有目录）"
+  ],
+  "status": "deployed",
+  "deployedAt": "2026-10-09T14:00:20+08:00",
+  "deployedCommit": "8a47f5c314fc76c21230ad148ea1b2c6997d3311",
+  "upstream": "20261006"
+}
