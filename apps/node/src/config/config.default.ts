@@ -1019,7 +1019,9 @@ export default {
         // 3 帖 × 9 图上限。
         moments: 27,
         'conversation-images': 15,
-        avatars: 5,
+        // 头像目录由「用户换头像」与「创建/编辑智能体头像」共用，
+        // 场景本身是突发的（一次创建流程 + 多次重试），给足余量，防滥用交给全局上限。
+        avatars: 20,
         'contact-covers': 5,
         // 与纪念馆照片非会员 3 次、会员 10 次的每日生成配额对齐。
         'memorial-source-photos': 10,

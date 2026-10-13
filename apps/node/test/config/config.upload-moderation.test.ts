@@ -99,7 +99,7 @@ describe('图片审核与上传配额配置', () => {
         'chat-imports': 30,
         moments: 27,
         'conversation-images': 15,
-        avatars: 5,
+        avatars: 20,
         'contact-covers': 5,
         'memorial-source-photos': 10,
       },
@@ -175,7 +175,7 @@ describe('图片审核与上传配额配置', () => {
       'chat-imports': 30,
       moments: 27,
       'conversation-images': 15,
-      avatars: 5,
+      avatars: 20,
       'contact-covers': 5,
       'memorial-source-photos': 10,
     });
