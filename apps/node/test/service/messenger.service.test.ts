@@ -936,6 +936,8 @@ describe('MessengerService', () => {
       expect(saved.length).toBeGreaterThan(1);
       expect(imageMessage).toBeDefined();
       expect(imageMessage?.mediaUrl).toContain('https://oss.tianzhiling.chat');
+      // 品牌没配客服微信号时，图注要给出可操作动作，而不是干巴巴的「客服微信二维码」
+      expect(imageMessage?.content).toBe('长按识别二维码添加客服微信');
     });
 
     it('声音服务购买（普通话/方言模型）：fallback 说明人工声音服务并引导添加客服微信，非首次不自我介绍', async () => {

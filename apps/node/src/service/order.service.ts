@@ -68,6 +68,14 @@ const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD =
   'membershipFinancialOperationLock';
 const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS = 60 * 1000;
 export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
+/** 兜底清扫任务：无 orderId，处理函数会把所有已过支付窗口的 pending 单关掉。 */
+export const ORDER_PAYMENT_EXPIRE_SWEEP_JOB_ID = 'order-payment-expire-sweep';
+export const ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+/**
+ * 复用未支付订单时要求的最小剩余支付窗口：不足这个时长就按新单处理，
+ * 避免把用户塞进一张马上要过期的订单。
+ */
+const REUSABLE_PENDING_ORDER_MIN_WINDOW_MS = 2 * 60 * 1000;
 
 /**
  * 下单请求的客户端上下文。
@@ -363,39 +371,62 @@ export class OrderService {
         if (!openid) {
           needsOpenid = true;
         } else {
-          const now = new Date();
-          const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
-          const order = new OrderEntity();
-
-          Object.assign(order, {
-            orderNo: this.generateOrderNo(),
+          const reusable = await this.findReusablePendingOrder({
             userId,
             orderType: OrderType.vipPlan,
-            targetId: plan.id,
             targetCode: plan.code,
-            title: plan.name,
-            amount: plan.priceAmount,
-            discountAmount: Math.max(
-              (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
-              0
-            ),
-            couponAmount: 0,
-            payableAmount: pricing.payableAmount,
-            currency: plan.currency || 'CNY',
-            status: OrderStatus.pending,
-            source: OrderSource.weapp,
             paymentProvider: WECHAT_PAY_PROVIDER,
-            paymentExpiredAt: expireAt,
-            payerOpenid: openid,
-            snapshot: {
-              vipPlan: this.buildVipPlanSnapshot(plan),
-              vipUpgrade: pricing,
-            },
-            createdAt: now,
-            updatedAt: now,
+            payableAmount: pricing.payableAmount,
           });
 
-          savedOrder = await this.orderModel.save(order);
+          if (reusable) {
+            reusable.payerOpenid = openid;
+            savedOrder = reusable;
+          } else {
+            await this.closeSiblingPendingOrders(
+              {
+                userId,
+                orderType: OrderType.vipPlan,
+                targetCode: plan.code,
+                paymentProvider: WECHAT_PAY_PROVIDER,
+              },
+              { includeUnexpired: false }
+            );
+            const now = new Date();
+            const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+            const order = new OrderEntity();
+
+            Object.assign(order, {
+              orderNo: this.generateOrderNo(),
+              userId,
+              orderType: OrderType.vipPlan,
+              targetId: plan.id,
+              targetCode: plan.code,
+              title: plan.name,
+              amount: plan.priceAmount,
+              discountAmount: Math.max(
+                (plan.originalPriceAmount ?? plan.priceAmount) -
+                  plan.priceAmount,
+                0
+              ),
+              couponAmount: 0,
+              payableAmount: pricing.payableAmount,
+              currency: plan.currency || 'CNY',
+              status: OrderStatus.pending,
+              source: OrderSource.weapp,
+              paymentProvider: WECHAT_PAY_PROVIDER,
+              paymentExpiredAt: expireAt,
+              payerOpenid: openid,
+              snapshot: {
+                vipPlan: this.buildVipPlanSnapshot(plan),
+                vipUpgrade: pricing,
+              },
+              createdAt: now,
+              updatedAt: now,
+            });
+
+            savedOrder = await this.orderModel.save(order);
+          }
         }
       } finally {
         await this.releaseMembershipFinancialOperationLock(lease);
@@ -461,48 +492,80 @@ export class OrderService {
     );
     const now = new Date();
     const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
-    const order = new OrderEntity();
-
-    Object.assign(order, {
-      orderNo: this.generateOrderNo('VOICE'),
+    const reusable = await this.findReusablePendingOrder({
       userId,
       orderType: OrderType.voicePackage,
-      targetId: voicePackage.id,
       targetCode: voicePackage.code,
-      agentId: agent.id,
-      title: voicePackage.name,
-      amount: voicePackage.priceAmount,
-      discountAmount: Math.max(
-        (voicePackage.originalPriceAmount ?? voicePackage.priceAmount) -
-          voicePackage.priceAmount,
-        0
-      ),
-      couponAmount: 0,
-      payableAmount: voicePackage.priceAmount,
-      currency: voicePackage.currency || 'CNY',
-      status: OrderStatus.pending,
-      source: OrderSource.weapp,
       paymentProvider: WECHAT_PAY_PROVIDER,
-      paymentExpiredAt: expireAt,
-      payerOpenid: openid,
-      snapshot: {
-        voicePackage: this.buildVoicePackageSnapshot(voicePackage),
-        agent: this.buildAgentSnapshot(agent),
+      payableAmount: voicePackage.priceAmount,
+      agentId: agent.id,
+    });
+    let savedOrder: OrderEntity;
+
+    if (reusable) {
+      // 复用同一张待支付单：刷新 openid 与本次选中的素材快照
+      reusable.payerOpenid = openid;
+      reusable.snapshot = {
+        ...(reusable.snapshot ?? {}),
         voiceTrainingMaterialObjectKeys: materialObjectKeys,
         voiceTrainingMaterialDurationSeconds: materialDurationSeconds,
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
+      };
+      savedOrder = reusable;
+    } else {
+      await this.closeSiblingPendingOrders(
+        {
+          userId,
+          orderType: OrderType.voicePackage,
+          targetCode: voicePackage.code,
+          paymentProvider: WECHAT_PAY_PROVIDER,
+          agentId: agent.id,
+        },
+        { includeUnexpired: false }
+      );
+      const order = new OrderEntity();
 
-    const savedOrder = await this.orderModel.save(order);
+      Object.assign(order, {
+        orderNo: this.generateOrderNo('VOICE'),
+        userId,
+        orderType: OrderType.voicePackage,
+        targetId: voicePackage.id,
+        targetCode: voicePackage.code,
+        agentId: agent.id,
+        title: voicePackage.name,
+        amount: voicePackage.priceAmount,
+        discountAmount: Math.max(
+          (voicePackage.originalPriceAmount ?? voicePackage.priceAmount) -
+            voicePackage.priceAmount,
+          0
+        ),
+        couponAmount: 0,
+        payableAmount: voicePackage.priceAmount,
+        currency: voicePackage.currency || 'CNY',
+        status: OrderStatus.pending,
+        source: OrderSource.weapp,
+        paymentProvider: WECHAT_PAY_PROVIDER,
+        paymentExpiredAt: expireAt,
+        payerOpenid: openid,
+        snapshot: {
+          voicePackage: this.buildVoicePackageSnapshot(voicePackage),
+          agent: this.buildAgentSnapshot(agent),
+          voiceTrainingMaterialObjectKeys: materialObjectKeys,
+          voiceTrainingMaterialDurationSeconds: materialDurationSeconds,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      savedOrder = await this.orderModel.save(order);
+    }
+
     const { prepayId, payment } =
       await this.wechatPayService.createVipPlanPrepay({
         orderNo: savedOrder.orderNo,
         title: savedOrder.title,
         amount: savedOrder.payableAmount,
         openid,
-        expireAt,
+        expireAt: savedOrder.paymentExpiredAt ?? expireAt,
       });
 
     savedOrder.paymentPrepayId = prepayId;
@@ -566,42 +629,66 @@ export class OrderService {
         if (!productId || !session) {
           needsPaymentSession = true;
         } else {
-          const now = new Date();
-          const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
-          const env = this.wechatPayService.getVirtualPayEnv();
-          const order = new OrderEntity();
-
-          Object.assign(order, {
-            orderNo: this.generateOrderNo(),
+          const reusable = await this.findReusablePendingOrder({
             userId,
             orderType: OrderType.vipPlan,
-            targetId: plan.id,
             targetCode: plan.code,
-            title: plan.name,
-            amount: plan.priceAmount,
-            discountAmount: Math.max(
-              (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
-              0
-            ),
-            couponAmount: 0,
-            payableAmount: pricing.payableAmount,
-            currency: plan.currency || 'CNY',
-            status: OrderStatus.pending,
-            source: OrderSource.weapp,
             paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
-            paymentExpiredAt: expireAt,
-            payerOpenid: session.openid,
+            payableAmount: pricing.payableAmount,
             virtualPaymentProductId: productId,
-            virtualPaymentEnv: env,
-            snapshot: {
-              vipPlan: this.buildVipPlanSnapshot(plan),
-              vipUpgrade: pricing,
-            },
-            createdAt: now,
-            updatedAt: now,
           });
 
-          savedOrder = await this.orderModel.save(order);
+          if (reusable) {
+            reusable.payerOpenid = session.openid;
+            savedOrder = reusable;
+          } else {
+            await this.closeSiblingPendingOrders(
+              {
+                userId,
+                orderType: OrderType.vipPlan,
+                targetCode: plan.code,
+                paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+              },
+              { includeUnexpired: false }
+            );
+            const now = new Date();
+            const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+            const env = this.wechatPayService.getVirtualPayEnv();
+            const order = new OrderEntity();
+
+            Object.assign(order, {
+              orderNo: this.generateOrderNo(),
+              userId,
+              orderType: OrderType.vipPlan,
+              targetId: plan.id,
+              targetCode: plan.code,
+              title: plan.name,
+              amount: plan.priceAmount,
+              discountAmount: Math.max(
+                (plan.originalPriceAmount ?? plan.priceAmount) -
+                  plan.priceAmount,
+                0
+              ),
+              couponAmount: 0,
+              payableAmount: pricing.payableAmount,
+              currency: plan.currency || 'CNY',
+              status: OrderStatus.pending,
+              source: OrderSource.weapp,
+              paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+              paymentExpiredAt: expireAt,
+              payerOpenid: session.openid,
+              virtualPaymentProductId: productId,
+              virtualPaymentEnv: env,
+              snapshot: {
+                vipPlan: this.buildVipPlanSnapshot(plan),
+                vipUpgrade: pricing,
+              },
+              createdAt: now,
+              updatedAt: now,
+            });
+
+            savedOrder = await this.orderModel.save(order);
+          }
         }
       } finally {
         await this.releaseMembershipFinancialOperationLock(lease);
@@ -668,43 +755,76 @@ export class OrderService {
     const now = new Date();
     const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
     const env = this.wechatPayService.getVirtualPayEnv();
-    const order = new OrderEntity();
-
-    Object.assign(order, {
-      orderNo: this.generateOrderNo('VOICE'),
+    const reusable = await this.findReusablePendingOrder({
       userId,
       orderType: OrderType.voicePackage,
-      targetId: voicePackage.id,
       targetCode: voicePackage.code,
-      agentId: agent.id,
-      title: voicePackage.name,
-      amount: voicePackage.priceAmount,
-      discountAmount: Math.max(
-        (voicePackage.originalPriceAmount ?? voicePackage.priceAmount) -
-          voicePackage.priceAmount,
-        0
-      ),
-      couponAmount: 0,
-      payableAmount: voicePackage.priceAmount,
-      currency: voicePackage.currency || 'CNY',
-      status: OrderStatus.pending,
-      source: OrderSource.weapp,
       paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
-      paymentExpiredAt: expireAt,
-      payerOpenid: session.openid,
+      payableAmount: voicePackage.priceAmount,
+      agentId: agent.id,
       virtualPaymentProductId: productId,
-      virtualPaymentEnv: env,
-      snapshot: {
-        voicePackage: this.buildVoicePackageSnapshot(voicePackage),
-        agent: this.buildAgentSnapshot(agent),
+    });
+    let savedOrder: OrderEntity;
+
+    if (reusable) {
+      // 复用同一张待支付单：刷新 openid 与本次选中的素材快照
+      reusable.payerOpenid = session.openid;
+      reusable.snapshot = {
+        ...(reusable.snapshot ?? {}),
         voiceTrainingMaterialObjectKeys: materialObjectKeys,
         voiceTrainingMaterialDurationSeconds: materialDurationSeconds,
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
+      };
+      savedOrder = reusable;
+    } else {
+      await this.closeSiblingPendingOrders(
+        {
+          userId,
+          orderType: OrderType.voicePackage,
+          targetCode: voicePackage.code,
+          paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+          agentId: agent.id,
+        },
+        { includeUnexpired: false }
+      );
+      const order = new OrderEntity();
 
-    const savedOrder = await this.orderModel.save(order);
+      Object.assign(order, {
+        orderNo: this.generateOrderNo('VOICE'),
+        userId,
+        orderType: OrderType.voicePackage,
+        targetId: voicePackage.id,
+        targetCode: voicePackage.code,
+        agentId: agent.id,
+        title: voicePackage.name,
+        amount: voicePackage.priceAmount,
+        discountAmount: Math.max(
+          (voicePackage.originalPriceAmount ?? voicePackage.priceAmount) -
+            voicePackage.priceAmount,
+          0
+        ),
+        couponAmount: 0,
+        payableAmount: voicePackage.priceAmount,
+        currency: voicePackage.currency || 'CNY',
+        status: OrderStatus.pending,
+        source: OrderSource.weapp,
+        paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+        paymentExpiredAt: expireAt,
+        payerOpenid: session.openid,
+        virtualPaymentProductId: productId,
+        virtualPaymentEnv: env,
+        snapshot: {
+          voicePackage: this.buildVoicePackageSnapshot(voicePackage),
+          agent: this.buildAgentSnapshot(agent),
+          voiceTrainingMaterialObjectKeys: materialObjectKeys,
+          voiceTrainingMaterialDurationSeconds: materialDurationSeconds,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      savedOrder = await this.orderModel.save(order);
+    }
+
     const virtualPayment = this.wechatPayService.buildVirtualPaymentParams({
       sessionKey: session.sessionKey,
       productId,
@@ -864,10 +984,46 @@ export class OrderService {
     data: OrderPaymentExpireJobData
   ): Promise<void> {
     if (!data?.orderId) {
+      // 无 orderId 的重复任务：兜底清扫所有已过支付窗口的待支付单
+      await this.closeExpiredPendingOrders();
       return;
     }
 
     await this.closeExpiredWechatOrder(data.orderId);
+  }
+
+  /**
+   * 兜底清扫：把已过支付窗口、仍停在 pending 的订单关掉。
+   *
+   * 正常路径由 BullMQ 到期任务关单；但任务丢失 / Redis 重启 / 关单时服务不可用时，
+   * 订单会永远挂在「待支付」并出现在后台列表。这里按 `paymentExpiredAt` 收敛，
+   * 只关已经真正过期的单，不动任何还在支付窗口内的订单。
+   */
+  async closeExpiredPendingOrders(): Promise<number> {
+    const now = new Date();
+    const result = await this.orderModel.updateMany(
+      {
+        status: OrderStatus.pending,
+        paymentExpiredAt: { $lte: now },
+      } as never,
+      {
+        $set: {
+          status: OrderStatus.closed,
+          closedAt: now,
+          updatedAt: now,
+        },
+      } as never
+    );
+    const closed = result?.modifiedCount ?? 0;
+
+    if (closed > 0) {
+      this.logger?.info?.(
+        '[order-payment-expire] sweep closed %d expired pending order(s)',
+        closed
+      );
+    }
+
+    return closed;
   }
 
   async closeExpiredWechatOrder(
@@ -1017,6 +1173,10 @@ export class OrderService {
       );
       return;
     }
+
+    // 同一商品的其它待支付单立即关闭：用户可能同时开着另一张单的支付面板，
+    // 不关掉就会重复购买（本地关单 + 微信侧自动失效）。
+    await this.closeSiblingPendingOrdersAfterPayment(order);
 
     order.status = OrderStatus.granting;
     order.paidAmount = paidAmount;
@@ -1316,6 +1476,9 @@ export class OrderService {
       );
       return;
     }
+
+    // 同一商品的其它待支付单立即关闭，避免用户把另一张单也付了。
+    await this.closeSiblingPendingOrdersAfterPayment(order);
 
     order.status = OrderStatus.granting;
     order.paidAmount = paidAmount;
@@ -2040,6 +2203,134 @@ export class OrderService {
     order.closedAt = now;
     order.updatedAt = now;
     await this.orderModel.save(order);
+  }
+
+  /**
+   * 复用未过期的待支付订单。
+   *
+   * 用户反复点「立即支付」时不再新建订单：同一用户 + 同一商品 + 同一支付通道、
+   * 且支付窗口仍有余量的 pending 单直接复用（微信对同一 out_trade_no 重新下单会
+   * 返回新的 prepay_id，不影响继续支付）。只有窗口即将关闭或金额/商品变化时才新建，
+   * 否则后台与用户订单页会堆满重复的「待支付」。
+   */
+  private async findReusablePendingOrder(params: {
+    userId: MongoObjectId;
+    orderType: OrderType;
+    targetCode: string;
+    paymentProvider: string;
+    payableAmount: number;
+    agentId?: MongoObjectId;
+    virtualPaymentProductId?: string;
+  }): Promise<OrderEntity | null> {
+    const filter: Record<string, unknown> = {
+      userId: params.userId,
+      orderType: params.orderType,
+      targetCode: params.targetCode,
+      paymentProvider: params.paymentProvider,
+      payableAmount: params.payableAmount,
+      status: OrderStatus.pending,
+      paymentExpiredAt: {
+        $gt: new Date(Date.now() + REUSABLE_PENDING_ORDER_MIN_WINDOW_MS),
+      },
+    };
+
+    if (params.agentId) {
+      filter.agentId = params.agentId;
+    }
+
+    if (params.virtualPaymentProductId) {
+      filter.virtualPaymentProductId = params.virtualPaymentProductId;
+    }
+
+    const order = await this.orderModel.findOne({
+      where: filter as never,
+      order: { createdAt: 'DESC' } as never,
+    });
+
+    return order ?? null;
+  }
+
+  /**
+   * 关闭同一用户 + 同一商品的其它待支付订单。
+   * - `includeUnexpired=false`：只清理已过期的（下单前的兜底清扫）；
+   * - `includeUnexpired=true`：连未过期的也关（支付成功后调用，避免用户把
+   *   另一张同套餐的待支付单也付了）。
+   */
+  private async closeSiblingPendingOrders(
+    params: {
+      userId: MongoObjectId;
+      orderType: OrderType;
+      targetCode: string;
+      paymentProvider: string;
+      agentId?: MongoObjectId;
+    },
+    options: { keepOrderId?: MongoObjectId; includeUnexpired: boolean }
+  ): Promise<number> {
+    const now = new Date();
+    const filter: Record<string, unknown> = {
+      userId: params.userId,
+      orderType: params.orderType,
+      targetCode: params.targetCode,
+      paymentProvider: params.paymentProvider,
+      status: OrderStatus.pending,
+    };
+
+    if (params.agentId) {
+      filter.agentId = params.agentId;
+    }
+
+    if (options.keepOrderId) {
+      filter._id = { $ne: options.keepOrderId };
+    }
+
+    if (!options.includeUnexpired) {
+      filter.paymentExpiredAt = { $lte: now };
+    }
+
+    const result = await this.orderModel.updateMany(
+      filter as never,
+      {
+        $set: {
+          status: OrderStatus.closed,
+          closedAt: now,
+          updatedAt: now,
+        },
+      } as never
+    );
+
+    return result?.modifiedCount ?? 0;
+  }
+
+  /** 支付成功后的清理：关掉同一商品其它待支付单。失败只告警，不影响发放主流程。 */
+  private async closeSiblingPendingOrdersAfterPayment(
+    order: OrderEntity
+  ): Promise<void> {
+    try {
+      const closed = await this.closeSiblingPendingOrders(
+        {
+          userId: order.userId,
+          orderType: order.orderType,
+          targetCode: order.targetCode,
+          paymentProvider: order.paymentProvider,
+          agentId: order.agentId,
+        },
+        { keepOrderId: order.id, includeUnexpired: true }
+      );
+
+      if (closed > 0) {
+        this.logger?.info?.(
+          '[order] closed %d sibling pending order(s) after payment: orderNo=%s',
+          closed,
+          order.orderNo
+        );
+      }
+    } catch (error) {
+      this.logger?.warn?.(
+        '[order] close sibling pending orders failed: orderNo=%s err=%s',
+        order.orderNo,
+        (error as Error).message
+      );
+    }
   }
 
   private async enqueueOrderPaymentExpireJob(

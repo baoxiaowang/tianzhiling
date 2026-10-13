@@ -444,8 +444,12 @@ export class MessengerService {
       facts.push('退款金额：{{refundAmount}}元（原路退回）');
     }
     if (context.needQr) {
+      // 客服微信号目前是空的（品牌统一用二维码），此时不要把 {{wechatId}} 写进事实，
+      // 否则模型会照抄占位符，兜底替换后出现「加一下客服微信客服微信」这种病句。
       facts.push(
-        '客服微信号：{{wechatId}}；客服微信二维码会随消息单独发送一张图片，文字里只需引导用户添加客服微信。'
+        context.wechatId
+          ? '客服微信号：{{wechatId}}；客服微信二维码会随消息单独发送一张图片，文字里只需引导用户添加客服微信。'
+          : '客服微信二维码会随消息单独发送一张图片，文字里只需引导用户长按识别二维码添加客服微信；不要编造、猜测或补全微信号。'
       );
     }
 
@@ -626,8 +630,8 @@ export class MessengerService {
       qrMessage.role = MessageRole.assistant;
       qrMessage.type = MessageType.image;
       qrMessage.content = context.wechatId
-        ? `客服微信：${context.wechatId}`
-        : '客服微信二维码';
+        ? `客服微信号：${context.wechatId}，也可长按识别二维码添加`
+        : '长按识别二维码添加客服微信';
       qrMessage.mediaUrl = context.wechatQrUrl;
       qrMessage.mediaMimeType = 'image/png';
       qrMessage.status = MessageStatus.sent;

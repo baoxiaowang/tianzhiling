@@ -43,6 +43,7 @@ import {
 } from '../dto/admin-app-user.dto';
 import { AdminAvatarUrlService } from './admin-avatar-url.service';
 import { AdminMilvusService } from './admin-milvus.service';
+import { AdminStorageFileService } from './admin-storage-file.service';
 import {
   buildCoreInfoView,
   type CoreFactInput,
@@ -284,6 +285,9 @@ export class AdminAppUserService {
 
   @Inject()
   adminMilvusService: AdminMilvusService;
+
+  @Inject()
+  storageFileService: AdminStorageFileService;
 
   async listUsers(
     query: ListAdminAppUsersQueryDTO
@@ -1681,10 +1685,24 @@ export class AdminAppUserService {
       type: message.type ?? '',
       content: message.content ?? '',
       mediaObjectKey: message.mediaObjectKey ?? '',
-      mediaUrl: message.mediaUrl ?? '',
+      mediaUrl: this.resolveMessengerMediaUrl(message),
       mediaMimeType: message.mediaMimeType ?? '',
       createdAt: this.formatDate(message.createdAt),
     };
+  }
+
+  /**
+   * 消息媒体统一给出可直接渲染的地址：用户自己发的图片只存 mediaObjectKey，
+   * 不解析会让后台把小使者/用户的图片消息显示成一行文字（[图片] 或说明文案）。
+   */
+  private resolveMessengerMediaUrl(message: MessageEntity): string {
+    const objectKey = message.mediaObjectKey?.trim();
+
+    if (objectKey) {
+      return this.storageFileService?.resolve(objectKey) ?? objectKey;
+    }
+
+    return message.mediaUrl?.trim() ?? '';
   }
 
   /** 校验聊天对象确实属于该用户（不限小使者），用于只读联查。 */

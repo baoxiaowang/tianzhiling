@@ -272,7 +272,12 @@ function createOrderModel(
 
       const id = where?.id ?? where?._id;
 
-      return id && sameObjectId(id, order.id) ? order : null;
+      if (id) {
+        return sameObjectId(id, order.id) ? order : null;
+      }
+
+      // 复用未支付订单的查询：字段需全部命中，时间窗口要订单确实还没过期
+      return matchesPendingOrderFilter(order, where) ? order : null;
     }),
     save: jest.fn(async (entity: OrderEntity) => {
       entity.id = entity.id ?? new MongoObjectId(ORDER_ID);
@@ -295,9 +300,60 @@ function createOrderModel(
       savedSnapshots.push(snapshotOrder(order));
       return { matchedCount: 1, modifiedCount: 1 };
     }),
+    // 批量关单（同商品其它待支付单 / 过期清扫）：条件命中才改，语义与真实 Mongo 一致
+    updateMany: jest.fn(async (filter: any, update: any) => {
+      if (!matchesPendingOrderFilter(order, filter)) {
+        return { matchedCount: 0, modifiedCount: 0 };
+      }
+
+      Object.assign(order, update?.$set ?? {});
+      savedSnapshots.push(snapshotOrder(order));
+      return { matchedCount: 1, modifiedCount: 1 };
+    }),
   };
 
   return model;
+}
+
+/** 判断订单是否匹配「同商品 + 待支付 + 支付窗口」的筛选条件（复用/关单共用）。 */
+function matchesPendingOrderFilter(order: OrderEntity, filter: any): boolean {
+  if (!filter || typeof filter !== 'object') {
+    return false;
+  }
+
+  for (const field of ['userId', 'agentId'] as const) {
+    const expected = filter[field];
+    if (expected === undefined) continue;
+    if (!sameObjectId((order as any)[field], expected)) return false;
+  }
+
+  for (const field of [
+    'orderType',
+    'targetCode',
+    'paymentProvider',
+    'payableAmount',
+    'status',
+    'virtualPaymentProductId',
+  ]) {
+    const expected = filter[field];
+    if (expected === undefined) continue;
+    if (String((order as any)[field]) !== String(expected)) return false;
+  }
+
+  const excludedId = filter?._id?.$ne;
+  if (excludedId !== undefined && sameObjectId(excludedId, order.id)) {
+    return false;
+  }
+
+  const expiry = filter?.paymentExpiredAt;
+  if (expiry?.$gt && (order.paymentExpiredAt ?? new Date(0)) <= expiry.$gt) {
+    return false;
+  }
+  if (expiry?.$lte && (order.paymentExpiredAt ?? new Date(0)) > expiry.$lte) {
+    return false;
+  }
+
+  return true;
 }
 
 function createVipPlanModel(plan: VipPlanEntity) {
@@ -613,6 +669,92 @@ describe('OrderService payment expiration and reconciliation', () => {
         attempts: 3,
       })
     );
+  });
+
+  it('复用未过期的待支付订单，不再新建同套餐订单', async () => {
+    const { service, auth, order, orderModel, wechatPayService } = createService({
+      status: OrderStatus.pending,
+      paymentExpiredAt: new Date(Date.now() + 20 * 60 * 1000),
+    });
+
+    const result = await service.createVipPlanOrder(
+      auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+      { userAgent: IOS_UA }
+    );
+
+    // 复用同一张单：订单号不变，且只回写了一次 prepayId（没有新建第二张订单）
+    expect(result.order.orderNo).toBe(ORDER_NO);
+    expect(order.id).toEqual(new MongoObjectId(ORDER_ID));
+    expect(orderModel.save).toHaveBeenCalledTimes(1);
+    expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
+      expect.objectContaining({ orderNo: ORDER_NO })
+    );
+  });
+
+  it('待支付单已过期时新建订单，不复用旧单', async () => {
+    const { service, auth, orderModel } = createService();
+
+    const result = await service.createVipPlanOrder(
+      auth,
+      { vipPlanId: VIP_PLAN_ID, jsCode: 'wx-code' },
+      { userAgent: IOS_UA }
+    );
+
+    expect(result.order.orderNo).not.toBe(ORDER_NO);
+    // 新建订单 + 回写 prepayId
+    expect(orderModel.save).toHaveBeenCalledTimes(2);
+  });
+
+  it('兜底清扫只关闭已过支付窗口的待支付单', async () => {
+    const expired = createService();
+
+    expect(await expired.service.closeExpiredPendingOrders()).toBe(1);
+    expect(expired.order.status).toBe(OrderStatus.closed);
+    expect(expired.order.closedAt).toBeInstanceOf(Date);
+
+    const fresh = createService({
+      status: OrderStatus.pending,
+      paymentExpiredAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    expect(await fresh.service.closeExpiredPendingOrders()).toBe(0);
+    expect(fresh.order.status).toBe(OrderStatus.pending);
+  });
+
+  it('支付成功后把同商品其它待支付单一起关闭', async () => {
+    const { service, order, orderModel } = createService();
+    const updateMany = jest.fn(
+      async (
+        _filter: Record<string, unknown>,
+        _update: Record<string, unknown>
+      ) => ({
+        matchedCount: 2,
+        modifiedCount: 2,
+      })
+    );
+    orderModel.updateMany = updateMany as never;
+
+    await service.handleWechatPaymentSuccess({
+      out_trade_no: ORDER_NO,
+      transaction_id: '420000000020260501000003',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: { total: order.payableAmount, payer_total: order.payableAmount },
+    } as never);
+
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    const [filter, update] = updateMany.mock.calls[0] as [any, any];
+    expect(filter).toMatchObject({
+      status: OrderStatus.pending,
+      orderType: order.orderType,
+      targetCode: order.targetCode,
+      paymentProvider: order.paymentProvider,
+    });
+    // 排除当前已付款单，且不限制支付窗口（未过期的兄弟单也要关）
+    expect(filter._id).toEqual({ $ne: order.id });
+    expect(filter.paymentExpiredAt).toBeUndefined();
+    expect(update.$set).toMatchObject({ status: OrderStatus.closed });
   });
 
   it('拒绝为已配置虚拟支付商品的会员套餐创建普通微信支付订单', async () => {

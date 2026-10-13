@@ -259,7 +259,27 @@
                         v-if="message.role !== 'system'"
                         class="agent-detail-page__message-bubble"
                       >
-                        {{ formatMessageContent(message) }}
+                        <template
+                          v-if="
+                            message.type === 'image' &&
+                            resolveMessageImageUrl(message)
+                          "
+                        >
+                          <a-image
+                            :src="resolveMessageImageUrl(message)"
+                            width="160"
+                            class="agent-detail-page__message-image"
+                          />
+                          <div
+                            v-if="message.content?.trim()"
+                            class="agent-detail-page__message-image-caption"
+                          >
+                            {{ message.content }}
+                          </div>
+                        </template>
+                        <template v-else>
+                          {{ formatMessageContent(message) }}
+                        </template>
                       </div>
                       <a-typography-paragraph
                         v-else
@@ -381,6 +401,7 @@
   type MessageLike = {
     type: string;
     content?: string;
+    mediaUrl?: string;
     mediaTranscript?: string;
   };
 
@@ -751,6 +772,18 @@
     return message.content?.trim() || '-';
   };
 
+  /**
+   * 图片消息给出可直接渲染的地址：后端已把 mediaObjectKey 解析成公网 URL，
+   * 这里只做类型判断，拿不到地址时回退成文字（[图片]/说明）。
+   */
+  const resolveMessageImageUrl = (message: MessageLike) => {
+    if (message.type !== 'image') {
+      return '';
+    }
+
+    return message.mediaUrl?.trim() ?? '';
+  };
+
   const isRenderableAvatar = (avatar: string) => {
     const value = avatar?.trim();
 
@@ -1074,6 +1107,17 @@
           color: #fff;
         }
       }
+    }
+
+    &__message-image {
+      display: block;
+      border-radius: 6px;
+    }
+
+    &__message-image-caption {
+      margin-top: 4px;
+      font-size: 12px;
+      opacity: 0.75;
     }
 
     &__message-avatar {

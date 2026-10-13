@@ -440,6 +440,11 @@ export class AdminOrderService {
           ...(refundStatus ? [{ kind: 'refund', status: refundStatus }] : []),
         ],
       });
+    } else {
+      // 默认不展示已关闭订单：它们只是放弃支付/超时关单的流水（历史 4k+ 条），
+      // 会把真正需要处理的「待支付/已支付」淹没。需要时用 status=closed 显式筛选
+      // （前端筛选项里已有「已关闭」）。
+      and.push({ status: { $ne: OrderStatus.closed } });
     }
 
     const orderType = this.normalizeOptionalOrderType(query?.orderType);
@@ -1088,7 +1093,8 @@ export class AdminOrderService {
         );
         const status = refund.status?.trim().toUpperCase() || 'PROCESSING';
         if (status === 'SUCCESS') summary.completed += 1;
-        else if (status === 'CLOSED' || status === 'ABNORMAL') summary.failed += 1;
+        else if (status === 'CLOSED' || status === 'ABNORMAL')
+          summary.failed += 1;
         else summary.pending += 1;
       } catch (err) {
         summary.failed += 1;
@@ -2471,10 +2477,7 @@ export class AdminOrderService {
       );
       // 虚拟支付退款是异步的：接口返回 OK 只代表「受理」，必须回查确认微信真的创建了退款单。
       // 真实事故：4 笔共 338 元本地记为已退款，但微信侧 left_fee 未变、退款单列表为空。
-      const confirmed = await this.confirmVirtualRefund(
-        order,
-        virtualRefundId
-      );
+      const confirmed = await this.confirmVirtualRefund(order, virtualRefundId);
       if (!confirmed) {
         const unconfirmedAt = new Date();
         await this.recordCompletedRefundOrder(
@@ -3416,8 +3419,7 @@ export class AdminOrderService {
   ): Promise<boolean> {
     if (!order.payerOpenid) return false;
     const env =
-      order.virtualPaymentEnv ??
-      this.adminWechatPayService.getVirtualPayEnv();
+      order.virtualPaymentEnv ?? this.adminWechatPayService.getVirtualPayEnv();
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (attempt > 0) {
@@ -3581,9 +3583,7 @@ export class AdminOrderService {
         // 微信侧有退款单，但不是这一笔（单号对不上）：留给下一轮继续核对。
         summary.pending += 1;
       } catch (err) {
-        summary.errors.push(
-          `${record.refundNo}: ${(err as Error).message}`
-        );
+        summary.errors.push(`${record.refundNo}: ${(err as Error).message}`);
       }
     }
 

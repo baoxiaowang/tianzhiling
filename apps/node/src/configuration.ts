@@ -36,6 +36,11 @@ import {
 } from './service/memory-pipeline-task.service';
 import { Queue as BullQueue } from 'bullmq';
 import { DEPARTURE_DURATION_QUEUE } from './service/agents/departure-duration.service';
+import {
+  ORDER_PAYMENT_EXPIRE_QUEUE,
+  ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS,
+  ORDER_PAYMENT_EXPIRE_SWEEP_JOB_ID,
+} from './service/order.service';
 import { resolveNodeRuntimeRole } from './processor/runtime-processor';
 
 @Configuration({
@@ -249,6 +254,30 @@ export class MainConfiguration {
     } catch (error) {
       this.logger.warn(
         '[voice-timbre-retention] scheduling failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
+    // 到期待支付订单的兜底清扫：正常由 BullMQ 延迟任务关单，任务丢失时过期单会永远
+    // 挂在「待支付」并出现在后台列表；这里每 10 分钟扫一次，只关已过支付窗口的单。
+    try {
+      const queue = this.bullmqFramework?.getQueue(ORDER_PAYMENT_EXPIRE_QUEUE);
+      if (!queue) {
+        this.logger.warn('[order-payment-expire] queue is unavailable');
+      } else {
+        await queue.addJobToQueue(
+          {},
+          {
+            jobId: ORDER_PAYMENT_EXPIRE_SWEEP_JOB_ID,
+            repeat: { every: ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS },
+            removeOnComplete: true,
+            removeOnFail: 30,
+          }
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        '[order-payment-expire] sweep scheduling failed, reason=%s',
         error instanceof Error ? error.message : String(error)
       );
     }
