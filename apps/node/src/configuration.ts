@@ -17,6 +17,8 @@ const RUNTIME_WATCHDOG_INTERVAL_MS = 60_000;
 const RUNTIME_WATCHDOG_LOG_COOLDOWN_MS = 10 * 60_000;
 const RUNTIME_WATCHDOG_LAG_MS = 300;
 const RUNTIME_WATCHDOG_RSS_MB = 1_500;
+/** 到期待支付订单兜底清扫：启动后先跑一次，之后按间隔重复投递。 */
+const ORDER_PAYMENT_EXPIRE_SWEEP_FIRST_DELAY_MS = 60_000;
 import { NotFoundFilter } from './filter/notfound.filter';
 import { AuthMiddleware } from './middleware/auth.middleware';
 import { ReportMiddleware } from './middleware/report.middleware';
@@ -259,30 +261,63 @@ export class MainConfiguration {
     }
 
     // 到期待支付订单的兜底清扫：正常由 BullMQ 延迟任务关单，任务丢失时过期单会永远
-    // 挂在「待支付」并出现在后台列表；这里每 10 分钟扫一次，只关已过支付窗口的单。
-    try {
-      const queue = this.bullmqFramework?.getQueue(ORDER_PAYMENT_EXPIRE_QUEUE);
-      if (!queue) {
-        this.logger.warn('[order-payment-expire] queue is unavailable');
-      } else {
+    // 挂在「待支付」并出现在后台列表；这里每 10 分钟投一个空载荷任务，只关已过支付窗口的单。
+    //
+    // 为什么不用 queue 的 repeat/scheduler：本框架的 addJobToQueue 在带 repeat 时会改走
+    // upsertJobScheduler，而我们传的 jobId 会与该调度器自己的任务 id 冲突 —— 2026-10-14
+    // 生产实测该任务卡在 unknown 状态、永不执行。这里改成普通延迟任务（已验证可用的路径），
+    // 多个 PM2 进程按同一时间片共享 jobId，重复投递由 BullMQ 去重。
+    this.startOrderPaymentExpireSweep();
+
+    this.startRuntimeWatchdog();
+  }
+
+  /**
+   * 每 10 分钟投递一次「到期待支付订单清扫」任务（service 侧收到没有 orderId 的任务即执行清扫）。
+   */
+  private startOrderPaymentExpireSweep(): void {
+    if (process.env.NODE_ORDER_PAYMENT_SWEEP === '0') return;
+
+    const enqueue = async () => {
+      try {
+        const queue = this.bullmqFramework?.getQueue(
+          ORDER_PAYMENT_EXPIRE_QUEUE
+        );
+
+        if (!queue) {
+          this.logger.warn('[order-payment-expire] queue is unavailable');
+          return;
+        }
+
+        const tick = Math.floor(
+          Date.now() / ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS
+        );
+
         await queue.addJobToQueue(
           {},
           {
-            jobId: ORDER_PAYMENT_EXPIRE_SWEEP_JOB_ID,
-            repeat: { every: ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS },
+            jobId: `${ORDER_PAYMENT_EXPIRE_SWEEP_JOB_ID}:${tick}`,
             removeOnComplete: true,
-            removeOnFail: 30,
+            removeOnFail: true,
           }
         );
+      } catch (error) {
+        this.logger.warn(
+          '[order-payment-expire] sweep enqueue failed, reason=%s',
+          error instanceof Error ? error.message : String(error)
+        );
       }
-    } catch (error) {
-      this.logger.warn(
-        '[order-payment-expire] sweep scheduling failed, reason=%s',
-        error instanceof Error ? error.message : String(error)
-      );
-    }
+    };
 
-    this.startRuntimeWatchdog();
+    const timer = setInterval(() => {
+      enqueue().catch(() => undefined);
+    }, ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS);
+    timer.unref?.();
+
+    const first = setTimeout(() => {
+      enqueue().catch(() => undefined);
+    }, ORDER_PAYMENT_EXPIRE_SWEEP_FIRST_DELAY_MS);
+    first.unref?.();
   }
 
   /**

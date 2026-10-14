@@ -722,6 +722,14 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(fresh.order.status).toBe(OrderStatus.pending);
   });
 
+  it('无 orderId 的到期任务走兜底清扫（清扫任务由配置侧定时投递）', async () => {
+    const { service, order } = createService();
+
+    await service.processPaymentExpireJob({} as never);
+
+    expect(order.status).toBe(OrderStatus.closed);
+  });
+
   it('支付成功后把同商品其它待支付单一起关闭', async () => {
     const { service, order, orderModel } = createService();
     const updateMany = jest.fn(
