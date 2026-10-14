@@ -68,9 +68,18 @@ const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD =
   'membershipFinancialOperationLock';
 const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS = 60 * 1000;
 export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
-/** 兜底清扫任务：无 orderId，处理函数会把所有已过支付窗口的 pending 单关掉。 */
+/**
+ * 兜底任务（无 orderId）：处理函数会
+ * 1) 把所有已过支付窗口的 pending 单关掉；2) 把最近仍在 pending 的订单拿去支付渠道对账一次。
+ * 调度侧按「固定前缀 + 时间片」投递，多进程共享同一 jobId 由 BullMQ 去重。
+ */
 export const ORDER_PAYMENT_EXPIRE_SWEEP_JOB_ID = 'order-payment-expire-sweep';
-export const ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+/**
+ * 兜底任务间隔。1 分钟一次：任务本身很轻（一条 updateMany + 少量渠道查询），
+ * 但「刚付完款就想看到会员生效」依赖它——微信回调可能延迟甚至丢失（实测某单晚了 9 分钟），
+ * 客户端轮询又只坚持十几秒。
+ */
+export const ORDER_PAYMENT_EXPIRE_SWEEP_INTERVAL_MS = 60 * 1000;
 /**
  * 复用未支付订单时要求的最小剩余支付窗口：不足这个时长就按新单处理，
  * 避免把用户塞进一张马上要过期的订单。
@@ -984,12 +993,86 @@ export class OrderService {
     data: OrderPaymentExpireJobData
   ): Promise<void> {
     if (!data?.orderId) {
-      // 无 orderId 的重复任务：兜底清扫所有已过支付窗口的待支付单
+      // 无 orderId 的兜底任务：先关过期单，再把最近还在 pending 的订单对账一次
       await this.closeExpiredPendingOrders();
+      await this.syncRecentPendingOrders();
       return;
     }
 
     await this.closeExpiredWechatOrder(data.orderId);
+  }
+
+  /**
+   * 支付后主动对账：把最近创建、仍在 pending 的订单拿去支付渠道核对一次，已支付就立即发放权益。
+   *
+   * 为什么需要：发放目前依赖「微信异步回调」或「客户端支付后轮询」，两者都不保证及时 ——
+   * 2026-10-14 实测某单 00:38:23 支付成功，微信回调未到、客户端只轮询了 10 秒，
+   * 直到 00:47:36 运营在后台手动同步才发放，用户侧表现为「买了会员，状态一直不刷新」。
+   * 到期任务只在支付窗口结束时才对账，帮不上「刚付完就想看到生效」这个场景。
+   */
+  async syncRecentPendingOrders(
+    limit = 50,
+    windowMinutes = 30
+  ): Promise<{
+    scanned: number;
+    granted: number;
+    closed: number;
+    errors: string[];
+  }> {
+    const since = new Date(Date.now() - windowMinutes * 60 * 1000);
+    const orders = await this.orderModel.find({
+      where: {
+        status: OrderStatus.pending,
+        createdAt: { $gte: since },
+      } as never,
+      order: { createdAt: 'ASC' } as never,
+      take: limit,
+    } as never);
+
+    const summary = {
+      scanned: orders.length,
+      granted: 0,
+      closed: 0,
+      errors: [] as string[],
+    };
+
+    for (const order of orders) {
+      try {
+        // 复用到期任务的对账逻辑：查支付渠道 → 已支付则发放，未支付且未过期则原样保留
+        const synced = await this.closeExpiredWechatOrder(
+          this.stringifyObjectId(order.id)
+        );
+        const status = synced?.status;
+
+        if (
+          status === OrderStatus.completed ||
+          status === OrderStatus.granting
+        ) {
+          summary.granted += 1;
+        } else if (status === OrderStatus.closed) {
+          summary.closed += 1;
+        }
+      } catch (error) {
+        summary.errors.push(`${order.orderNo}: ${(error as Error).message}`);
+      }
+    }
+
+    if (summary.granted > 0) {
+      this.logger?.info?.(
+        '[order] 主动对账补发权益 %d 单（scanned=%d）',
+        summary.granted,
+        summary.scanned
+      );
+    }
+
+    if (summary.errors.length) {
+      this.logger?.warn?.(
+        '[order] 主动对账存在失败项: %s',
+        summary.errors.join(' | ')
+      );
+    }
+
+    return summary;
   }
 
   /**

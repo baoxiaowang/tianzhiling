@@ -264,7 +264,16 @@ function createOrderModel(
   const savedSnapshots: ReturnType<typeof snapshotOrder>[] = [];
   const model = {
     savedSnapshots,
-    find: jest.fn().mockResolvedValue(historicalVipOrders),
+    find: jest.fn(async (options: any) => {
+      const where = options?.where;
+
+      // 主动对账扫描「最近仍在 pending」的订单：夹具即这一单
+      if (where?.status === OrderStatus.pending && where?.createdAt) {
+        return matchesPendingOrderFilter(order, where) ? [order] : [];
+      }
+
+      return historicalVipOrders;
+    }),
     findOne: jest.fn(async ({ where }: any) => {
       if (where?.orderNo) {
         return where.orderNo === order.orderNo ? order : null;
@@ -350,6 +359,14 @@ function matchesPendingOrderFilter(order: OrderEntity, filter: any): boolean {
     return false;
   }
   if (expiry?.$lte && (order.paymentExpiredAt ?? new Date(0)) > expiry.$lte) {
+    return false;
+  }
+
+  const createdAt = filter?.createdAt;
+  if (
+    createdAt?.$gte &&
+    (order.createdAt ?? new Date(0)) < new Date(createdAt.$gte)
+  ) {
     return false;
   }
 
@@ -728,6 +745,46 @@ describe('OrderService payment expiration and reconciliation', () => {
     await service.processPaymentExpireJob({} as never);
 
     expect(order.status).toBe(OrderStatus.closed);
+  });
+
+  it('最近待支付单会被主动对账并补发权益（微信回调延迟/丢失时）', async () => {
+    const { service, order, wechatPayService } = createService({
+      status: OrderStatus.pending,
+      paymentExpiredAt: new Date(Date.now() + 20 * 60 * 1000),
+    });
+
+    wechatPayService.queryTransactionByOrderNo.mockResolvedValue({
+      out_trade_no: ORDER_NO,
+      transaction_id: '420000000020260501000009',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: { total: order.payableAmount, payer_total: order.payableAmount },
+    });
+
+    const summary = await service.syncRecentPendingOrders();
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.granted).toBe(1);
+    expect(order.status).toBe(OrderStatus.completed);
+  });
+
+  it('主动对账遇到渠道未支付时不改状态、也不报错', async () => {
+    const { service, order, wechatPayService } = createService({
+      status: OrderStatus.pending,
+      paymentExpiredAt: new Date(Date.now() + 20 * 60 * 1000),
+    });
+
+    wechatPayService.queryTransactionByOrderNo.mockResolvedValue({
+      out_trade_no: ORDER_NO,
+      trade_state: 'NOTPAY',
+    });
+
+    const summary = await service.syncRecentPendingOrders();
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.granted).toBe(0);
+    expect(summary.errors).toEqual([]);
+    expect(order.status).toBe(OrderStatus.pending);
   });
 
   it('支付成功后把同商品其它待支付单一起关闭', async () => {

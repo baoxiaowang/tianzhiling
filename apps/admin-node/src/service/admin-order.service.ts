@@ -604,6 +604,17 @@ export class AdminOrderService {
       refundedAt: this.formatOptionalDate(row.completedAt),
       refundFailureReason: row.failureReason || '',
       refundFailedAt: this.formatOptionalDate(row.failedAt),
+      // 观察期内的退款流水：微信侧钱已退（退款单已存在），只是本地还没到收敛时间，
+      // 后台据此显示「已退款·观察中」，避免误读成「微信还在处理退款」。
+      refundObservationEndsAt:
+        (row.status || '') === OrderRefundStatus.processing && row.requestedAt
+          ? this.formatOptionalDate(
+              new Date(
+                new Date(row.requestedAt).getTime() +
+                  VIRTUAL_REFUND_OBSERVATION_MS
+              )
+            )
+          : undefined,
       createdAt: this.formatOptionalDate(row.requestedAt || row.createdAt),
       updatedAt: this.formatOptionalDate(row.completedAt || row.updatedAt),
     } as unknown as AdminOrderRecordDTO;
@@ -3486,11 +3497,6 @@ export class AdminOrderService {
 
     for (const record of records) {
       try {
-        const order = await this.getOrderById(String(record.originalOrderId));
-        if (!order?.payerOpenid) continue;
-        const env =
-          order.virtualPaymentEnv ??
-          this.adminWechatPayService.getVirtualPayEnv();
         // 提交时点：观察期与缺失判定都从它起算。老记录可能没有 requestedAt，
         // 这种情况视为「早已过观察期」，避免历史遗留记录永远无法收敛。
         const submittedAt = record.requestedAt ?? record.createdAt;
@@ -3500,12 +3506,41 @@ export class AdminOrderService {
         const elapsedMs = Number.isNaN(submittedMs)
           ? Number.POSITIVE_INFINITY
           : Date.now() - submittedMs;
+        const order = await this.getOrderById(String(record.originalOrderId));
+
+        if (!order || !order.payerOpenid) {
+          // 连回查都做不了（订单缺失 / 没有 openid）：宽限期内保持处理中，
+          // 超期按失败收口，否则这条流水会永远挂在「处理中」。
+          const outcome = await this.failUnverifiableVirtualRefund(
+            record,
+            order ?? null,
+            order ? 'order payer openid missing' : 'original order not found',
+            elapsedMs
+          );
+          summary[outcome === 'failed' ? 'failed' : 'pending'] += 1;
+          continue;
+        }
+
+        const env =
+          order.virtualPaymentEnv ??
+          this.adminWechatPayService.getVirtualPayEnv();
         const snapshot = await this.adminWechatPayService.queryVirtualOrder({
           openid: order.payerOpenid,
           orderNo: order.orderNo,
           env,
         });
-        if (!snapshot) continue;
+
+        if (!snapshot) {
+          const outcome = await this.failUnverifiableVirtualRefund(
+            record,
+            order,
+            'wechat virtual order not found for refund check',
+            elapsedMs
+          );
+          summary[outcome === 'failed' ? 'failed' : 'pending'] += 1;
+          continue;
+        }
+
         const refunds = snapshot.refund_info?.refund_order;
         const hasRefund = Array.isArray(refunds) && refunds.length > 0;
         const refundIdMatched =
@@ -3588,6 +3623,55 @@ export class AdminOrderService {
     }
 
     return summary;
+  }
+
+  /**
+   * 无法回查的虚拟支付退款收口：宽限期内保持处理中，超期判失败（能拿到订单就一并还原）。
+   *
+   * 为什么要收口：这类记录（原订单缺失 / 缺 openid / 微信侧查不到订单）以前直接跳过，
+   * 会永远挂在 `processing`，后台一直显示「退款处理中」，运营既不敢重试也不知道结果。
+   */
+  private async failUnverifiableVirtualRefund(
+    record: OrderRefundEntity,
+    order: OrderEntity | null,
+    reason: string,
+    elapsedMs: number
+  ): Promise<'pending' | 'failed'> {
+    if (elapsedMs < VIRTUAL_REFUND_MISSING_GRACE_MS) {
+      return 'pending';
+    }
+
+    const failedAt = new Date();
+    await this.orderRefundModel.updateOne(
+      { _id: record.id } as never,
+      {
+        $set: {
+          status: OrderRefundStatus.failed,
+          failureReason: `自动对账：${reason}，无法确认退款结果，已按失败处理，用户未收到款项`,
+          failedAt,
+          updatedAt: failedAt,
+        },
+      } as never
+    );
+
+    if (order) {
+      await this.restoreOrderRefundState(
+        order,
+        Number(record.amount) || 0,
+        `unverifiable virtual refund: ${reason}`
+      );
+    }
+
+    this.alertRefundFailure(
+      '[refund-alert] virtual refund cannot be verified: orderNo=%s refundNo=%s refundWxOrderId=%s amount=%s reason=%s',
+      order?.orderNo ?? record.originalOrderNo ?? '-',
+      record.refundNo,
+      record.paymentRefundId || '-',
+      record.amount,
+      reason
+    );
+
+    return 'failed';
   }
 
   private async refundVirtualPaymentOrder(

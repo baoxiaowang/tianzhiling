@@ -2082,6 +2082,17 @@
 
   const getRecordStatusText = (record: OrderRecord) => {
     if (record.kind === 'refund') {
+      // 观察期内：微信侧退款单已创建、钱已扣减，只是本地流水还没到收敛时间，
+      // 显示成「退款处理中」会让人以为微信还在处理（或卡住了）。
+      if (
+        record.refundStatus === 'processing' &&
+        record.refundObservationEndsAt
+      ) {
+        return `已退款·观察中（预计 ${dayjs(
+          record.refundObservationEndsAt
+        ).format('HH:mm')} 确认）`;
+      }
+
       const refundStatusLabels: Record<string, string> = {
         processing: '退款处理中',
         completed: '退款已完成',

@@ -160,6 +160,13 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   refundFailureReason?: string;
   /** 判定退款失败的时间（ISO） */
   refundFailedAt?: string;
+  /**
+   * 虚拟支付退款的观察期结束时间（ISO，仅处于观察期的退款行有值）。
+   *
+   * 微信侧退款单已创建、钱已扣减，但按风控要求要观察满 `VIRTUAL_REFUND_OBSERVATION_MS`
+   * 才把流水收敛为 completed；这期间后台应显示「已退款·观察中」而不是「退款处理中」。
+   */
+  refundObservationEndsAt?: string;
   userId: string;
   user?: AdminOrderUserDTO;
   amount: number;
