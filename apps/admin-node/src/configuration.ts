@@ -20,8 +20,14 @@ import { AdminRelationshipLlmBackfillService } from './service/admin-relationshi
 
 const DAILY_STATS_INTERVAL_MS = 30 * 60 * 1000; // 30 分钟
 const RELATIONSHIP_BACKFILL_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 每小时检查一次
-/** 会员降级退款自动收敛：每 30 分钟查一次微信退款状态。 */
-const DOWNGRADE_RECONCILE_INTERVAL_MS = 30 * 60 * 1000;
+/**
+ * 会员降级退款/尾款退款自动收敛：每 1 分钟查一次微信退款状态。
+ *
+ * 2026-10-14 实测：微信侧 04:58:51 就已退款成功，快照却一直停在 processing，
+ * 直到运营 8 分钟后手动点「刷新降级」才收敛（后台一直显示「降级退款中」）。
+ * 查询本身很轻（一条 Mongo 查询 + 每笔一次退款单查询），所以改成 1 分钟。
+ */
+const DOWNGRADE_RECONCILE_INTERVAL_MS = 60 * 1000;
 
 @Configuration({
   imports: [
@@ -75,9 +81,13 @@ export class MainConfiguration {
             .getAsync(AdminDailyStatsService);
           const today = adminDailyStats.getTodayBeijing();
           const startDate = this.subtractDays(today, BACKFILL_DAYS);
-          this.app.getLogger().info('[daily-stats] backfill start: %s ~ %s', startDate, today);
+          this.app
+            .getLogger()
+            .info('[daily-stats] backfill start: %s ~ %s', startDate, today);
           await adminDailyStats.computeRange(startDate, today);
-          this.app.getLogger().info('[daily-stats] backfill done: %s ~ %s', startDate, today);
+          this.app
+            .getLogger()
+            .info('[daily-stats] backfill done: %s ~ %s', startDate, today);
         } catch (err) {
           this.app
             .getLogger()
@@ -94,8 +104,8 @@ export class MainConfiguration {
     }
     if (this.relationshipBackfillTimer) {
       clearInterval(this.relationshipBackfillTimer);
-    if (this.downgradeReconcileTimer)
-      clearInterval(this.downgradeReconcileTimer);
+      if (this.downgradeReconcileTimer)
+        clearInterval(this.downgradeReconcileTimer);
       this.relationshipBackfillTimer = undefined;
     }
   }
@@ -115,7 +125,9 @@ export class MainConfiguration {
         const yesterday = this.subtractOneDay(today);
         await adminDailyStats.computeDay(yesterday);
         await adminDailyStats.computeDay(today);
-        this.app.getLogger().info('[daily-stats] precompute done: %s, %s', yesterday, today);
+        this.app
+          .getLogger()
+          .info('[daily-stats] precompute done: %s, %s', yesterday, today);
 
         // 预热仪表盘 reports 缓存，避免用户打开时冷启动全表聚合（~5s）
         try {
@@ -127,7 +139,10 @@ export class MainConfiguration {
         } catch (warmErr) {
           this.app
             .getLogger()
-            .warn('[daily-stats] reports warm failed: %s', (warmErr as Error).message);
+            .warn(
+              '[daily-stats] reports warm failed: %s',
+              (warmErr as Error).message
+            );
         }
       } catch (err) {
         this.app
@@ -166,7 +181,9 @@ export class MainConfiguration {
     const checkAndRun = async () => {
       try {
         const now = new Date();
-        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const todayStr = `${now.getFullYear()}-${String(
+          now.getMonth() + 1
+        ).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
         // 判断今天是否是当月最后一天（明天是下个月1号）
         const tomorrow = new Date(now);
@@ -181,7 +198,9 @@ export class MainConfiguration {
         if (hour < 1 || hour > 5) return;
 
         this.relationshipBackfillLastRunDate = todayStr;
-        this.app.getLogger().info('[relationship-llm] last day of month, start backfill');
+        this.app
+          .getLogger()
+          .info('[relationship-llm] last day of month, start backfill');
 
         const service = await this.app
           .getApplicationContext()
@@ -199,7 +218,10 @@ export class MainConfiguration {
       } catch (err) {
         this.app
           .getLogger()
-          .error('[relationship-llm] scheduler failed: %s', (err as Error).message);
+          .error(
+            '[relationship-llm] scheduler failed: %s',
+            (err as Error).message
+          );
       }
     };
 
@@ -251,7 +273,8 @@ export class MainConfiguration {
                 : ''
             );
         }
-        const summary = await service.reconcilePendingVoiceMembershipDowngrades();
+        const summary =
+          await service.reconcilePendingVoiceMembershipDowngrades();
         if (summary.scanned > 0) {
           this.app
             .getLogger()
@@ -261,7 +284,9 @@ export class MainConfiguration {
               summary.completed,
               summary.pending,
               summary.failed,
-              summary.errors.length ? ' errors=' + summary.errors.join(' | ') : ''
+              summary.errors.length
+                ? ' errors=' + summary.errors.join(' | ')
+                : ''
             );
         }
       } catch (err) {
@@ -274,10 +299,10 @@ export class MainConfiguration {
       }
     };
 
-    // 启动 2 分钟后跑一次，之后每 30 分钟
+    // 启动 20 秒后跑一次，之后每 1 分钟
     setTimeout(() => {
       run().catch(() => {});
-    }, 2 * 60 * 1000);
+    }, 20 * 1000);
     this.downgradeReconcileTimer = setInterval(() => {
       run().catch(() => {});
     }, DOWNGRADE_RECONCILE_INTERVAL_MS);

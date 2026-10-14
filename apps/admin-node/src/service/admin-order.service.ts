@@ -1040,19 +1040,25 @@ export class AdminOrderService {
   }
 
   /**
-   * 自动收敛卡在 processing 的会员降级退款（供定时任务调用）。
+   * 自动收敛卡在 processing 的会员降级退款与尾款退款（供定时任务调用）。
    *
-   * 只做「向微信查询退款状态并回写」，**绝不发起或重试退款**：
+   * 只做「向微信查询退款状态并回写」，**绝不凭空发起退款**：
    * - 仅非虚拟支付通道：虚拟支付的同步路径会重新发起退款，不能自动执行；
    * - 仅 status=processing 且已有 wechatRefundId（确认退款已提交过）；
    * - 仅 requestedAt 早于 graceMinutes 的记录，避免与刚提交的退款抢跑；
+   * - 尾款那条走 `syncDowngradedMembershipFinalRefund`，它同样先查退款单、
+   *   查不到才会提交，所以重复调用是安全的；
    * - 微信查询无结果时保持原状留待下一轮，不做任何兜底动作。
    *
    * 背景：降级退款只在同步成功后才会写入 `order_refund`；长期停在 processing
-   * 会让这笔退款在所有收入统计（净收入、净收入下钻、月度报表）里消失。
+   * 会让这笔退款在所有收入统计（净收入、净收入下钻、月度报表）里消失，
+   * 后台也会一直显示「降级退款中」/「退款中」。
+   * 2026-10-14 实测：微信侧 04:58:51 就已退款成功，但快照一直 processing，
+   * 直到运营 8 分钟后手动点「刷新降级」才收敛 —— 所以宽限期从 30 分钟降到 2 分钟、
+   * 调度间隔从 30 分钟降到 1 分钟。
    */
   async reconcilePendingVoiceMembershipDowngrades(
-    graceMinutes = 30,
+    graceMinutes = 2,
     limit = 50
   ): Promise<{
     scanned: number;
@@ -1107,6 +1113,66 @@ export class AdminOrderService {
         else if (status === 'CLOSED' || status === 'ABNORMAL')
           summary.failed += 1;
         else summary.pending += 1;
+      } catch (err) {
+        summary.failed += 1;
+        summary.errors.push(`${order.orderNo}: ${(err as Error).message}`);
+      }
+    }
+
+    // 尾款退款（降级已成、剩余金额退回）：同样只有「查退款单」这一条收敛路径，
+    // 卡在 processing 时后台会一直显示退款中，所以一并在这里收敛。
+    const finalField = (key: string) =>
+      `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.${key}`;
+    const finalOrders = await this.orderModel.find({
+      where: {
+        paymentProvider: { $ne: WECHAT_VIRTUAL_PAY_PROVIDER },
+        [finalField('status')]: 'processing',
+        [finalField('wechatRefundId')]: { $exists: true, $nin: [null, ''] },
+      } as never,
+      order: { createdAt: 'ASC' } as never,
+    });
+
+    for (const order of finalOrders.slice(0, limit)) {
+      const finalRefund = this.getVoiceMembershipFinalRefund(order);
+      if (!finalRefund) continue;
+
+      // 宽限期：刚提交的尾款先让同步路径跑完，避免抢跑重复提交
+      const submittedAt = new Date(
+        finalRefund.attemptRequestedAt ??
+          finalRefund.requestedAt ??
+          finalRefund.updatedAt
+      );
+      if (
+        !Number.isNaN(submittedAt.getTime()) &&
+        submittedAt.getTime() > cutoff.getTime()
+      ) {
+        summary.pending += 1;
+        continue;
+      }
+
+      summary.scanned += 1;
+
+      try {
+        await this.syncDowngradedMembershipFinalRefund(
+          order,
+          finalRefund.refundAmount,
+          order.paidAmount ?? order.payableAmount ?? 0,
+          VOICE_MEMBERSHIP_DOWNGRADE_REASON
+        );
+        const refreshed = await this.refreshOrderEntity(order);
+        const status = this.getVoiceMembershipFinalRefund(refreshed)?.status;
+
+        if (status === 'failed') {
+          summary.failed += 1;
+        } else if (
+          status === 'completed' ||
+          status === 'benefits_processing' ||
+          status === 'benefits_failed'
+        ) {
+          summary.completed += 1;
+        } else {
+          summary.pending += 1;
+        }
       } catch (err) {
         summary.failed += 1;
         summary.errors.push(`${order.orderNo}: ${(err as Error).message}`);
