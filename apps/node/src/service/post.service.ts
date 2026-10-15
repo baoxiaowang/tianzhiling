@@ -9,6 +9,7 @@ import type {
 } from 'openai/resources/chat/completions';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
+import { primaryCallName } from '../common/call-name';
 import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
 import {
   AgentEntity,
@@ -3775,7 +3776,7 @@ export class PostService {
       latestUserComment?.repliedComment?.type === PostCommentType.agent
         ? latestUserComment.repliedComment.content?.trim() || ''
         : '';
-    const callMe = agent.agentCallMe?.trim() || '';
+    const callMe = primaryCallName(agent.agentCallMe);
     const prefix = callMe ? `${callMe}，` : '';
 
     if (this.isMomentContextCorrection(content, repliedAgentText)) {

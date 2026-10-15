@@ -45,6 +45,10 @@ import {
   UnsafeAssistantMessageContentMatch,
 } from '../common/message-content-safety';
 import {
+  normalizeCallNameInText,
+  primaryCallName,
+} from '../common/call-name';
+import {
   hasConversationMessageSegmentSeparator,
   splitConversationMessageSegments,
   stripConversationMessageSegmentMarkup,
@@ -6998,10 +7002,16 @@ export class ConversationService {
     identity?: AgentIdentityContract
   ): { agentCallsUser: string; userCallsAgent: string } {
     return {
+      // 只取主称呼：用户可能在一个字段里填多个称呼（如“老婆，姓傅的”），
+      // 展示层带上全部会让列表/预览很别扭。原始值仍在实体里保留。
       agentCallsUser:
-        identity?.user.preferredName?.trim() || agent?.agentCallMe?.trim() || '',
+        identity?.user.preferredName?.trim() ||
+        primaryCallName(agent?.agentCallMe) ||
+        '',
       userCallsAgent:
-        identity?.agent.preferredName?.trim() || agent?.iCallAgent?.trim() || '',
+        identity?.agent.preferredName?.trim() ||
+        primaryCallName(agent?.iCallAgent) ||
+        '',
     };
   }
 
@@ -8911,11 +8921,13 @@ export class ConversationService {
       agentSex: agent?.sex ?? 0,
       agentCallMe:
         isSharedConversation && !identity
-          ? conversation.agentCallsUser?.trim() || ''
+          ? primaryCallName(conversation.agentCallsUser) || ''
           : displayAddress.agentCallsUser,
       iCallAgent:
         isSharedConversation && !identity
-          ? conversation.userCallsAgent?.trim() || agent?.name?.trim() || ''
+          ? primaryCallName(conversation.userCallsAgent) ||
+            agent?.name?.trim() ||
+            ''
           : displayAddress.userCallsAgent,
       agentIsDefault: Boolean(
         agent?.isDefault &&
@@ -8967,7 +8979,10 @@ export class ConversationService {
     }
 
     if (agent.description?.trim()) {
-      return agent.description.trim();
+      return normalizeCallNameInText(
+        normalizeCallNameInText(agent.description.trim(), agent.iCallAgent),
+        agent.agentCallMe
+      );
     }
 
     return '点击开始和他对话';
@@ -12501,12 +12516,12 @@ export class ConversationService {
     }
 
     const agentCallsUser =
-      member.agentCallsUser?.trim() ||
-      conversation.agentCallsUser?.trim() ||
+      primaryCallName(member.agentCallsUser) ||
+      primaryCallName(conversation.agentCallsUser) ||
       '';
     const userCallsAgent =
-      member.userCallsAgent?.trim() ||
-      conversation.userCallsAgent?.trim() ||
+      primaryCallName(member.userCallsAgent) ||
+      primaryCallName(conversation.userCallsAgent) ||
       agent.name?.trim() ||
       '';
 

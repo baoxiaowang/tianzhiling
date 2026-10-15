@@ -7,6 +7,7 @@ import {
   MessageRole,
 } from '@tzl/entities';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
+import { normalizeCallNameInText } from '../../common/call-name';
 import type {
   ConversationMovePlan,
   ReplyIntentRiskLevel,
@@ -241,7 +242,13 @@ function resolveProfileQuality(
       dimensions.add('identity_detail');
       explicitAnchorCount += 1;
     }
-    addTextDimension('background', agent.description);
+    addTextDimension(
+      'background',
+      normalizeCallNameInText(
+        normalizeCallNameInText(agent.description, agent.iCallAgent),
+        agent.agentCallMe
+      )
+    );
     addTextDimension('biography', agent.lifeExperience);
     addTextDimension('personality', agent.personalityTraits);
     addTextDimension('language', agent.languageHabits);

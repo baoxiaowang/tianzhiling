@@ -1,4 +1,5 @@
 import { AgentEntity, AgentSex } from '@tzl/entities';
+import { normalizeCallNameInText, primaryCallName } from '../common/call-name';
 import { brandName } from '../config/brand';
 
 export interface MomentImageContext {
@@ -132,9 +133,15 @@ function buildAgentProfile(
 ) {
   const name = options.agent?.name?.trim() || 'TA';
   const sex = resolveSexText(options.agent?.sex);
-  const iCallAgent = options.agent?.iCallAgent?.trim() || 'TA';
-  const agentCallMe = options.agent?.agentCallMe?.trim() || '我';
-  const description = options.agent?.description?.trim() || '';
+  const iCallAgent = primaryCallName(options.agent?.iCallAgent) || 'TA';
+  const agentCallMe = primaryCallName(options.agent?.agentCallMe) || '我';
+  const description = normalizeCallNameInText(
+    normalizeCallNameInText(
+      options.agent?.description?.trim() || '',
+      options.agent?.iCallAgent
+    ),
+    options.agent?.agentCallMe
+  );
   const birthday = formatDate(options.agent?.birthday);
   const deathDate = formatDate(options.agent?.deathDate);
 

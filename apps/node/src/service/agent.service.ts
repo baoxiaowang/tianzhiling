@@ -15,6 +15,7 @@ import type {
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
+import { primaryCallName } from '../common/call-name';
 import {
   AcceptAgentShareInviteDTO,
   AgentShareQRCodeDTO as AgentShareQRCodeRequestDTO,
@@ -1315,14 +1316,14 @@ export class AgentService {
     userId: MongoObjectId,
     options: { usePersonalCallName?: boolean } = {}
   ): Promise<string> {
-    const ownerCallName = agent.agentCallMe?.trim() || '';
+    const ownerCallName = primaryCallName(agent.agentCallMe);
     if (options.usePersonalCallName !== false) return ownerCallName;
     try {
       const member = await this.findActiveShareMemberByAgentAndUser(
         agent.id,
         userId
       );
-      const sharedCallName = member?.agentCallsUser?.trim() || '';
+      const sharedCallName = primaryCallName(member?.agentCallsUser);
       if (sharedCallName) return sharedCallName;
     } catch {
       // 查不到分享成员时退回 role 的称呼，绝不生成没有称呼的开场白。

@@ -312,4 +312,25 @@ describe('agent identity contract', () => {
     });
     expect(buildAgentIdentityPrompt(identity)).toContain('本轮相关其他人物');
   });
+
+  it('keeps only the primary call name when the field holds several alternatives', () => {
+    const identity = buildAgentIdentityContract({
+      agent: {
+        name: '老公',
+        sex: AgentSex.man,
+        // 用户可能一次填多个称呼，模型只应使用第一个。
+        iCallAgent: '老公/亲爱的',
+        agentCallMe: '老婆，姓傅的',
+      } as AgentEntity,
+    });
+
+    expect(identity.addresses.agentCallsUser).toBe('老婆');
+    expect(identity.addresses.userCallsAgent).toBe('老公');
+    expect(identity.relationship.label).toBe('老公');
+
+    const prompt = buildAgentIdentityPrompt(identity);
+    expect(prompt).toContain('老婆');
+    expect(prompt).not.toContain('姓傅的');
+    expect(prompt).not.toContain('亲爱的');
+  });
 });

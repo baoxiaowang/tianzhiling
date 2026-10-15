@@ -5,6 +5,7 @@ import {
   AgentSex,
   UserRelativeFactStatus,
 } from '@tzl/entities';
+import { primaryCallName } from '../../common/call-name';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import type { ConversationKnownObject } from './reply-intent';
@@ -105,7 +106,7 @@ export function buildAgentIdentityContract(options: {
       USER_PREFERRED_NAME_FACT_KEY,
       '当前用户希望当前角色称呼其为'
     );
-  const explicitRelationship = clean(agent?.iCallAgent, 24);
+  const explicitRelationship = clean(primaryCallName(agent?.iCallAgent), 24);
   const profileRelationship = clean(
     agent?.personaProfile?.demographics?.relationshipType,
     24
@@ -116,7 +117,7 @@ export function buildAgentIdentityContract(options: {
     clean(agent?.name, 24) || clean(agent?.realName, 24) || relationshipLabel;
   const realName =
     clean(agent?.realName, 24) || clean(nameMemory.canonicalName, 24);
-  const agentCallsUser = clean(agent?.agentCallMe, 24) || '你';
+  const agentCallsUser = clean(primaryCallName(agent?.agentCallMe), 24) || '你';
 
   return {
     version: 'agent_identity_v1',

@@ -31,6 +31,10 @@ import {
   stripPromptLeakageContent,
 } from '../../common/message-content-safety';
 import {
+  normalizeCallNameInText,
+  primaryCallName,
+} from '../../common/call-name';
+import {
   RECENT_HISTORY_MESSAGE_CAP,
   RECENT_HISTORY_TURNS,
   RecentHistoryTurnSelection,
@@ -3446,8 +3450,8 @@ export class AgentContextService {
 
     const evidence: AgentEvidenceItem[] = [];
     const name = agent.name?.trim() || 'TA';
-    const userCallsAgent = agent.iCallAgent?.trim() || name;
-    const agentCallsUser = agent.agentCallMe?.trim() || '我';
+    const userCallsAgent = primaryCallName(agent.iCallAgent) || name;
+    const agentCallsUser = primaryCallName(agent.agentCallMe) || '我';
     let index = 0;
     const addProfileAtom = (options: {
       factKey: string;
@@ -3556,7 +3560,10 @@ export class AgentContextService {
       ...styleCandidates,
       {
         key: 'description',
-        value: agent.description,
+        value: normalizeCallNameInText(
+          normalizeCallNameInText(agent.description, agent.iCallAgent),
+          agent.agentCallMe
+        ),
         assertionPolicy: 'can_assert' as const,
         baseScore: 0,
       },

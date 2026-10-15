@@ -76,4 +76,38 @@ describe('buildMomentsSystemPrompt', () => {
       '禁止输出“我和爸在后院玩”“我和某某在一起玩”'
     );
   });
+
+  it('uses only the primary call name when the agent stores several', () => {
+    const agent = createAgent();
+    Object.assign(agent, {
+      iCallAgent: '老公/亲爱的',
+      agentCallMe: '老婆，姓傅的',
+      description: '老公，男性，你称呼他为老公，他会称呼你为老婆，姓傅的。',
+    });
+
+    const prompt = buildMomentsSystemPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      agent,
+      context: {
+        moment: {
+          id: POST_ID,
+          userId: USER_ID,
+          authorName: '苗苗',
+          content: '今天有点想你',
+          images: [],
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+        comments: [],
+        latestUserComment: null,
+        userRepliedComment: null,
+        task: '请基于这条朋友圈内容发表一条自然简短、不要重复现有评论的评论',
+      },
+    });
+
+    expect(prompt).toContain('"agentCallMe": "老婆"');
+    expect(prompt).toContain('"iCallAgent": "老公"');
+    expect(prompt).not.toContain('姓傅的');
+    expect(prompt).not.toContain('亲爱的');
+  });
 });
