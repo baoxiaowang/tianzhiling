@@ -333,4 +333,69 @@ describe('agent identity contract', () => {
     expect(prompt).not.toContain('姓傅的');
     expect(prompt).not.toContain('亲爱的');
   });
+
+  it('picks the call name by scene temperature when the reply context is given', () => {
+    const agent = {
+      name: '老公',
+      sex: AgentSex.man,
+      iCallAgent: '老公',
+      agentCallMe: '老婆，媳妇，宝贝',
+    } as AgentEntity;
+
+    expect(
+      buildAgentIdentityContract({
+        agent,
+        addressContext: { scene: 'grief_crisis' },
+      }).addresses.agentCallsUser
+    ).toBe('老婆');
+    expect(
+      buildAgentIdentityContract({
+        agent,
+        addressContext: { scene: 'smalltalk' },
+      }).addresses.agentCallsUser
+    ).toBe('媳妇');
+    expect(
+      buildAgentIdentityContract({
+        agent,
+        addressContext: { scene: 'miss_longing' },
+      }).addresses.agentCallsUser
+    ).toBe('宝贝');
+    // 不传上下文（展示、列表）固定用主称呼。
+    expect(buildAgentIdentityContract({ agent }).addresses.agentCallsUser).toBe(
+      '老婆'
+    );
+  });
+
+  it('promotes a dynamically taught call name ahead of the configured order', () => {
+    const agent = {
+      name: '老公',
+      sex: AgentSex.man,
+      iCallAgent: '老公',
+      agentCallMe: '老婆，姓傅的',
+    } as AgentEntity;
+    const profileFacts = [
+      {
+        type: AgentProfileFactType.relationship,
+        key: 'relationship.preferred_user_name',
+        value: '当前用户希望当前角色称呼其为宝贝',
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: AgentProfileFactConfidence.confirmed,
+        priority: 2,
+        status: AgentProfileFactStatus.active,
+        assertionPolicy: AgentProfileFactAssertionPolicy.canAssert,
+      },
+    ];
+
+    expect(
+      buildAgentIdentityContract({ agent, profileFacts }).addresses
+        .agentCallsUser
+    ).toBe('宝贝');
+    expect(
+      buildAgentIdentityContract({
+        agent,
+        profileFacts,
+        addressContext: { scene: 'smalltalk' },
+      }).addresses.agentCallsUser
+    ).toBe('老婆');
+  });
 });

@@ -6,6 +6,11 @@ import {
   UserRelativeFactStatus,
 } from '@tzl/entities';
 import { primaryCallName } from '../../common/call-name';
+import {
+  resolveCallNamePool,
+  selectCallName,
+} from './call-name-policy';
+import type { CallNameAddressContext } from './call-name-policy';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import type { ConversationKnownObject } from './reply-intent';
@@ -77,6 +82,11 @@ export function buildAgentIdentityContract(options: {
   userIdentity?: UserIdentityPromptProfile | null;
   knownPeople?: UserKnownPersonPromptProfile[];
   relatives?: UserRelativePromptProfile[];
+  /**
+   * 本轮回复的称呼上下文。回复链路传入场景/情绪以选择称呼池里的某一个；
+   * 展示、列表等路径不传，固定使用主称呼。
+   */
+  addressContext?: CallNameAddressContext;
 }): AgentIdentityContract {
   const agent = options.agent;
   const nameMemory = resolveAgentNameMemory(options.profileFacts);
@@ -117,7 +127,12 @@ export function buildAgentIdentityContract(options: {
     clean(agent?.name, 24) || clean(agent?.realName, 24) || relationshipLabel;
   const realName =
     clean(agent?.realName, 24) || clean(nameMemory.canonicalName, 24);
-  const agentCallsUser = clean(primaryCallName(agent?.agentCallMe), 24) || '你';
+  const callNamePool = resolveCallNamePool(
+    agent?.agentCallMe,
+    userPreferredName
+  );
+  const agentCallsUser =
+    clean(selectCallName(callNamePool, options.addressContext), 24) || '你';
 
   return {
     version: 'agent_identity_v1',
@@ -131,7 +146,7 @@ export function buildAgentIdentityContract(options: {
     },
     user: {
       objectId: 'user',
-      addressedAs: userPreferredName || agentCallsUser,
+      addressedAs: agentCallsUser,
       ...(globalUserIdentity?.realName || userNameMemory.canonicalName
         ? {
             realName:
@@ -160,7 +175,7 @@ export function buildAgentIdentityContract(options: {
         clean(agentPreferredName, 24) ||
         explicitRelationship ||
         relationshipLabel,
-      agentCallsUser: userPreferredName || agentCallsUser,
+      agentCallsUser,
     },
     ...(options.knownPeople?.length
       ? { knownPeople: options.knownPeople.slice(0, 8) }

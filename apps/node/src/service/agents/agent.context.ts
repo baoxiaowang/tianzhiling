@@ -34,6 +34,7 @@ import {
   normalizeCallNameInText,
   primaryCallName,
 } from '../../common/call-name';
+import type { CallNameAddressContext } from './call-name-policy';
 import {
   RECENT_HISTORY_MESSAGE_CAP,
   RECENT_HISTORY_TURNS,
@@ -1019,6 +1020,33 @@ export class AgentContextService {
       intent: replyIntent,
       allowLegacyResponseStrategyRouting: false,
     });
+    // 本轮称呼：按场景温度在称呼池里选一个。分类用的 identity/persona 仍用主称呼，
+    // 这里为回复提示词单独生成一份，保证身份契约、画像与证据里的称呼一致。
+    const addressContext: CallNameAddressContext = {
+      scene: replyRoute.primaryScene?.scene,
+      emotion: emotionState?.primaryEmotion,
+    };
+    const replyIdentity = buildAgentIdentityContract({
+      agent: options.agent,
+      profileFacts,
+      userIdentity,
+      knownPeople,
+      relatives,
+      addressContext,
+    });
+    const replyAgentCallsUser =
+      replyIdentity.addresses.agentCallsUser ||
+      primaryCallName(options.agent?.agentCallMe) ||
+      '我';
+    const replyPersona = buildAgentPersonaPrompt({
+      agent: options.agent,
+      identityContract: replyIdentity,
+      coreLanguageSettings: buildCoreLanguageSettings({ profileFacts }),
+    });
+    const replyKnownObjects = buildKnownConversationObjects({
+      identity: replyIdentity,
+      profileFacts,
+    });
     const chatToolStableKey = [
       options.auth.sub,
       this.stringifyObjectId(options.conversation.id),
@@ -1040,7 +1068,7 @@ export class AgentContextService {
         .map(fact => fact.value?.trim())
         .filter((value): value is string => Boolean(value)),
       recentMessages: routingHistoryMessages,
-      knownObjects,
+      knownObjects: replyKnownObjects,
       relationshipSignals,
     };
     const preflightChatToolPlan = resolveAgentChatToolTurnPlan({
@@ -1354,6 +1382,7 @@ export class AgentContextService {
       suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
       currentUserCanAssert: Boolean(replyBrief.correctionPolicy),
       objectPlan: replyBrief.objectPlan,
+      agentCallsUser: replyAgentCallsUser,
     });
     // 本地记忆候选：优先用入口显式传入的材料（测试/特殊调用）；生产路径没有传，
     // 就由**本函数自己的自动预取结果**（retrievedMemories）生成有界片段——不依赖任何试用入口。
@@ -1400,8 +1429,8 @@ export class AgentContextService {
           options,
           evidence,
           replyBrief,
-          persona,
-          identity,
+          replyPersona,
+          replyIdentity,
           temporalProfiles,
           chatToolPlan,
           replyPlanningDecision.mode,
@@ -1460,7 +1489,7 @@ export class AgentContextService {
     );
     const historyLayer = this.buildHistoryLayer(
       recentHistoryMessages,
-      identity
+      replyIdentity
     );
     this.appendCurrentTurnToHistory(historyLayer, options, currentTurnMessages);
     const layers = [systemLayer, historyLayer];
@@ -3442,7 +3471,8 @@ export class AgentContextService {
 
   private buildAgentProfileEvidence(
     agent: AgentEntity | null,
-    currentQuery: string
+    currentQuery: string,
+    selectedAgentCallsUser?: string
   ): AgentEvidenceItem[] {
     if (!agent) {
       return [];
@@ -3451,7 +3481,10 @@ export class AgentContextService {
     const evidence: AgentEvidenceItem[] = [];
     const name = agent.name?.trim() || 'TA';
     const userCallsAgent = primaryCallName(agent.iCallAgent) || name;
-    const agentCallsUser = primaryCallName(agent.agentCallMe) || '我';
+    const agentCallsUser =
+      selectedAgentCallsUser?.trim() ||
+      primaryCallName(agent.agentCallMe) ||
+      '我';
     let index = 0;
     const addProfileAtom = (options: {
       factKey: string;
@@ -3561,8 +3594,13 @@ export class AgentContextService {
       {
         key: 'description',
         value: normalizeCallNameInText(
-          normalizeCallNameInText(agent.description, agent.iCallAgent),
-          agent.agentCallMe
+          normalizeCallNameInText(
+            agent.description,
+            agent.iCallAgent,
+            userCallsAgent
+          ),
+          agent.agentCallMe,
+          agentCallsUser
         ),
         assertionPolicy: 'can_assert' as const,
         baseScore: 0,
@@ -3629,6 +3667,8 @@ export class AgentContextService {
     suppressPriorFacts?: boolean;
     currentUserCanAssert?: boolean;
     objectPlan?: ConversationObjectPlan;
+    /** 本轮选定的“智能体怎么称呼用户”，用于证据与画像事实保持一致。 */
+    agentCallsUser?: string;
   }): AgentEvidenceItem[] {
     const evidence: AgentEvidenceItem[] = [];
     const seenTexts = new Set<string>();
@@ -3673,7 +3713,8 @@ export class AgentContextService {
     if (!options.suppressPriorFacts) {
       for (const item of this.buildAgentProfileEvidence(
         options.agent,
-        currentQuery
+        currentQuery,
+        options.agentCallsUser
       )) {
         addEvidence(item);
       }
