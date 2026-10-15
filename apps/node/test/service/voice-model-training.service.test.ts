@@ -6,10 +6,33 @@ import {
   VoiceTimbreStatus,
 } from '@tzl/entities';
 import { AppError } from '../../src/common/errors';
-import { VoiceModelTrainingService } from '../../src/service/voice-model-training.service';
+import {
+  DEFAULT_VOICE_PREVIEW_TEXT,
+  VoiceModelTrainingService,
+  buildVoicePreviewText,
+} from '../../src/service/voice-model-training.service';
 
 const SESSION_ID = '665000000000000000000301';
 const TIMBRE_ID = '665000000000000000000302';
+
+describe('buildVoicePreviewText', () => {
+  it('多值称呼只播报主称呼（连念两个称呼会像在点名）', () => {
+    expect(buildVoicePreviewText('老婆，姓傅的')).toBe(
+      `老婆，${DEFAULT_VOICE_PREVIEW_TEXT}`
+    );
+  });
+
+  it('单个称呼原样播报，并清掉结尾标点', () => {
+    expect(buildVoicePreviewText(' 妈妈？ ')).toBe(
+      `妈妈，${DEFAULT_VOICE_PREVIEW_TEXT}`
+    );
+  });
+
+  it('没有称呼时只用默认播报文案', () => {
+    expect(buildVoicePreviewText()).toBe(DEFAULT_VOICE_PREVIEW_TEXT);
+    expect(buildVoicePreviewText('   ')).toBe(DEFAULT_VOICE_PREVIEW_TEXT);
+  });
+});
 
 describe('VoiceModelTrainingService', () => {
   it('combines accepted clips into one file before creating the voice model', async () => {
