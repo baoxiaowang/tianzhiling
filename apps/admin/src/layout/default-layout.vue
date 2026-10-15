@@ -27,21 +27,22 @@
           :visible="drawerVisible"
           placement="left"
           :footer="false"
+          title="菜单"
           mask-closable
-          :closable="false"
           @cancel="drawerCancel"
         >
           <Menu />
         </a-drawer>
         <a-layout class="layout-content" :style="paddingStyle">
-          <TabBar v-if="appStore.tabBar" />
+          <TabBar v-if="appStore.tabBar && !hideMenu" />
           <a-layout-content>
             <PageLayout />
           </a-layout-content>
-          <Footer v-if="footer" />
+          <Footer v-if="footer && !hideMenu" />
         </a-layout>
       </a-layout>
     </a-layout>
+    <MobileNav v-if="hideMenu" />
   </a-layout>
 </template>
 
@@ -53,8 +54,10 @@
   import Menu from '@/components/menu/index.vue';
   import Footer from '@/components/footer/index.vue';
   import TabBar from '@/components/tab-bar/index.vue';
+  import MobileNav from '@/components/mobile-nav/index.vue';
   import usePermission from '@/hooks/permission';
   import useResponsive from '@/hooks/responsive';
+  import useTableCards from '@/hooks/use-table-cards';
   import PageLayout from './page-layout.vue';
 
   const isInit = ref(false);
@@ -98,6 +101,9 @@
   const drawerCancel = () => {
     drawerVisible.value = false;
   };
+  // 手机端菜单用抽屉：留一条遮罩、带关闭按钮，选中菜单后自动收起（宽度见 responsive.less）
+  // 宽表格在手机上统一渲染成卡片（见 hooks/use-table-cards.ts）
+  useTableCards(hideMenu);
   provide('toggleDrawerMenu', () => {
     drawerVisible.value = !drawerVisible.value;
   });

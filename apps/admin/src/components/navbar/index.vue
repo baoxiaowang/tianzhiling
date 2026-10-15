@@ -178,6 +178,14 @@
               </a-space>
             </a-doption>
             <a-doption>
+              <a-space @click="toggleViewMode">
+                <component :is="isMobile ? IconDesktop : IconMobile" />
+                <span>
+                  {{ isMobile ? '切换到电脑版' : '切换到手机版' }}
+                </span>
+              </a-space>
+            </a-doption>
+            <a-doption>
               <a-space @click="handleLogout">
                 <icon-export />
                 <span>
@@ -196,11 +204,13 @@
   import { computed, ref, inject } from 'vue';
   import { Message } from '@arco-design/web-vue';
   import { useDark, useToggle, useFullscreen } from '@vueuse/core';
+  import { IconDesktop, IconMobile } from '@arco-design/web-vue/es/icon';
   import { useAppStore, useUserStore } from '@/store';
   import { brand } from '@/config/brand';
   import { LOCALE_OPTIONS } from '@/locale';
   import useLocale from '@/hooks/locale';
   import useUser from '@/hooks/user';
+  import { writeViewMode, applyDeviceClass } from '@/hooks/device-mode';
   import Menu from '@/components/menu/index.vue';
   import MessageBox from '../message-box/index.vue';
 
@@ -244,6 +254,14 @@
       cancelable: true,
     });
     refBtn.value.dispatchEvent(event);
+  };
+  // 手机/电脑版切换：识别不准时用户可手动覆盖（写入 localStorage 后重载）
+  const isMobile = computed(() => appStore.device === 'mobile');
+  const toggleViewMode = () => {
+    const next = isMobile.value ? 'desktop' : 'mobile';
+    writeViewMode(next);
+    applyDeviceClass(next);
+    window.location.reload();
   };
   const handleLogout = () => {
     logout();

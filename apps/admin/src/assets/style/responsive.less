@@ -269,21 +269,39 @@
   }
 
   // 抽屉在手机上接近全屏（详情类抽屉才有足够宽度）。
-  // 注意：**不能写成 100vw** —— 手机端左侧导航菜单就是一个 a-drawer，且
-  // `:closable="false"`（没有关闭按钮），唯一的关闭方式是点抽屉旁边的遮罩。
-  // 一旦抽屉占满整屏，遮罩面积归零 → 用户被永久困在导航里（线上实测 390/390）。
+  // 注意：**不能写成 100vw** —— 手机端左侧导航菜单就是一个 a-drawer，
+  // 一旦抽屉占满整屏，点遮罩关闭这条路径就没了（线上实测 390/390 时用户被困在导航里）。
   // 因此统一留出 ≥12vw 的遮罩条，保证任何抽屉都能点关闭。
   .arco-drawer {
     width: min(88vw, 720px) !important;
     max-width: 88vw !important;
   }
 
-  // 左侧导航菜单抽屉：保持 Arco 默认的紧凑宽度，遮罩条更宽、更好点。
+  // 左侧导航菜单抽屉：比详情抽屉窄一些（能看清菜单项，右侧仍留可点遮罩）。
   // 注意 a-drawer 上的 class 落在抽屉的父级容器（遮罩与抽屉的公共父级）上，
   // 所以要往下选一层，不能直接给父级设宽度。
   .layout-menu-drawer > .arco-drawer {
-    width: min(78vw, 260px) !important;
-    max-width: min(78vw, 260px) !important;
+    width: min(86vw, 320px) !important;
+    max-width: min(86vw, 320px) !important;
+  }
+
+  // 手机端菜单项做成大号触控行，一眼能看清、也好点
+  .layout-menu-drawer {
+    .arco-drawer-header {
+      height: 52px;
+      padding: 0 14px;
+    }
+
+    .arco-menu-item,
+    .arco-menu-inline-header {
+      height: 46px !important;
+      font-size: 15px !important;
+      line-height: 46px !important;
+    }
+
+    .arco-menu-icon {
+      font-size: 18px !important;
+    }
   }
 
   .arco-drawer-body {
@@ -345,5 +363,362 @@
   textarea,
   select {
     max-width: 100%;
+  }
+}
+
+// ============================================================================
+// 手机版（重做）：把「电脑版缩小」变成手机原生观感
+//
+//   1. 宽表格 → 卡片列表（配合 hooks/use-table-cards.ts 写入的 data-label）
+//   2. 字号、行高、触控尺寸按手指来（正文 ≥14px，按钮/输入 ≥40px）
+//   3. 底部标签栏 + 全屏菜单，页面之间一键切换
+//   4. 筛选区折叠成整行大控件，分页变成大按钮
+//
+// 只在手机模式生效：body.tzl-mobile（由 hooks/device-mode.ts 打标，
+// 识别 UA + 触摸 + 宽度，微信内打开、手机「桌面版网站」都能正确判为手机）。
+// ============================================================================
+
+// ------------------------------------------------------------- 手机模式打底
+body.tzl-mobile {
+  font-size: 14px;
+
+  .layout-content {
+    // 给固定底部标签栏留位置
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0)) !important;
+    background-color: var(--color-fill-1);
+  }
+
+  .layout-navbar {
+    height: 50px;
+  }
+
+  .navbar {
+    padding: 0 12px;
+  }
+
+  // 正文与常用控件统一放大（原来是 12px 一档，手机上偏小）
+  .arco-typography,
+  .arco-card-body,
+  .arco-form-item-label-col > label,
+  .arco-descriptions-item-label,
+  .arco-descriptions-item-value {
+    font-size: 14px;
+  }
+
+  .arco-btn {
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 14px;
+  }
+
+  .arco-btn-size-mini,
+  .arco-btn-size-small {
+    min-height: 34px;
+    padding: 0 10px;
+  }
+
+  // 表格里的行内操作按钮：又小又挤，手机上统一成 34px 高
+  .arco-table .arco-btn,
+  .arco-table-cell .arco-btn {
+    min-height: 34px;
+    margin: 2px 4px 2px 0;
+  }
+
+  .arco-input,
+  .arco-input-inner-wrapper,
+  .arco-select-view,
+  .arco-picker,
+  .arco-input-number,
+  .arco-textarea {
+    min-height: 40px;
+    font-size: 14px;
+  }
+
+  .arco-select-view-value,
+  .arco-picker-input > input {
+    font-size: 14px;
+  }
+
+  .arco-form-item {
+    margin-bottom: 14px;
+  }
+
+  // 筛选区：每项占满一行，标签在上、控件在下，点起来稳
+  .arco-form-layout-inline {
+    display: block;
+
+    .arco-form-item {
+      display: block;
+      width: 100%;
+      margin-right: 0;
+    }
+
+    .arco-form-item-label-col {
+      display: block;
+      width: 100%;
+      padding: 0 0 6px;
+      margin: 0;
+      text-align: left;
+    }
+
+    .arco-form-item-wrapper-col,
+    .arco-form-item-control-wrapper {
+      display: block;
+      width: 100%;
+    }
+  }
+
+  // 卡片：圆角 + 轻阴影，间距更松
+  .arco-card,
+  .general-card {
+    border-radius: 12px;
+  }
+
+  .arco-card-body {
+    padding: 14px;
+  }
+
+  .general-card > .arco-card-header {
+    height: auto;
+    padding: 14px 14px 0;
+  }
+
+  .general-card > .arco-card-body {
+    padding: 12px 14px 14px;
+  }
+
+  // 标签页：一行不换行，横向可滑，字号够大
+  .arco-tabs-tab {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+
+  // 分页：大按钮，只留上一页/下一页/页码
+  .arco-pagination {
+    justify-content: center;
+    padding: 4px 0 2px;
+  }
+
+  .arco-pagination-item,
+  .arco-pagination-item-prev,
+  .arco-pagination-item-next {
+    min-width: 38px;
+    height: 38px;
+    font-size: 14px;
+    line-height: 36px;
+  }
+
+  .arco-pagination [class*='option'],
+  .arco-pagination [class*='jumper'],
+  .arco-pagination-total {
+    display: none !important;
+  }
+
+  .arco-pagination-list {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+// ------------------------------------------------- 宽表格 → 卡片（手机核心）
+body.tzl-mobile {
+  .arco-table.m-table-cards {
+    width: 100% !important;
+    min-width: 0 !important;
+    background: transparent;
+
+    // 表头在卡片模式下没有意义（实测 DOM 为原生 thead，不同版本另有 .arco-table-header/.arco-table-thead）
+    // 注意：固定列（操作列 sticky）是同一张表里的 td，不能隐藏
+    thead,
+    .arco-table-header,
+    .arco-table-thead,
+    .arco-table-tfoot {
+      display: none !important;
+    }
+
+    // 内层是真 <table>：改成块级，去掉 scroll.x 写死的 min-width
+    .arco-table-element {
+      display: block !important;
+      width: 100% !important;
+      min-width: 0 !important;
+      table-layout: auto !important;
+    }
+
+    .arco-table-element,
+    .arco-table-colgroup,
+    .arco-table-colgroup col,
+    col {
+      width: auto !important;
+      min-width: 0 !important;
+      max-width: none !important;
+    }
+
+    .arco-table-container,
+    .arco-table-content,
+    .arco-table-scroll,
+    .arco-scrollbar,
+    .arco-scrollbar-container {
+      width: 100% !important;
+      min-width: 0 !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+    }
+
+    tbody,
+    .arco-table-body,
+    .arco-table-tbody {
+      display: block !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+    }
+
+    // 每一行 = 一张卡片
+    .arco-table-tr {
+      display: block;
+      padding: 8px 12px;
+      margin: 0 0 10px;
+      overflow: hidden;
+      background-color: var(--color-bg-2);
+      border: 1px solid var(--color-border-2);
+      border-radius: 12px;
+      box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+    }
+
+    .arco-table-td {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      min-height: 30px;
+      padding: 6px 0 !important;
+      font-size: 14px;
+      line-height: 22px;
+      border-bottom: 1px dashed var(--color-border-1);
+
+      &:last-child {
+        border-bottom: 0;
+      }
+
+      // 字段名（由 use-table-cards.ts 从表头写入）
+      &[data-label]::before {
+        flex: 0 0 76px;
+        font-size: 13px;
+        color: var(--color-text-3);
+        content: attr(data-label);
+      }
+
+      // 「操作」列：按钮整行铺开，不要字段名
+      &[data-label='操作'] {
+        display: block;
+        padding-top: 8px !important;
+      }
+
+      &[data-label='操作']::before {
+        display: none;
+      }
+    }
+
+    .arco-table-cell {
+      flex: 1;
+      min-width: 0;
+      padding: 0 !important;
+      overflow: visible;
+      font-size: 14px !important;
+      line-height: 22px;
+      text-align: left;
+      word-break: break-word;
+      white-space: normal !important;
+    }
+
+    // 选择列（复选框）：单独一行，居中偏左
+    .arco-table-td.arco-table-td-checkbox,
+    .arco-table-td:not([data-label]) {
+      justify-content: flex-start;
+      border-bottom: 0;
+    }
+
+    // 卡片里不需要「省略号截断」：长订单号（mono 等宽字体 + nowrap）会顶出屏幕
+    .arco-table-cell *,
+    .arco-table-cell {
+      max-width: 100% !important;
+    }
+
+    .arco-table-cell [class*='__mono'],
+    .arco-table-cell [class*='__ellipsis'],
+    .arco-table-cell .arco-typography {
+      display: inline !important;
+      overflow: visible !important;
+      white-space: normal !important;
+      overflow-wrap: anywhere;
+      word-break: break-all;
+    }
+
+    // 空状态别塌成一条线
+    .arco-table-tr-empty,
+    .arco-table-tr-empty .arco-table-td,
+    .arco-table-td-empty {
+      display: block;
+      padding: 24px 0 !important;
+      text-align: center;
+      border-bottom: 0;
+    }
+
+    .arco-table-tr-empty .arco-table-td::before,
+    .arco-table-td-empty::before {
+      display: none;
+    }
+  }
+}
+
+// --------------------------------------------------------------- 底部标签栏
+body.tzl-mobile {
+  .mobile-tabbar {
+    box-shadow: 0 -1px 8px rgb(0 0 0 / 6%);
+  }
+
+  // 详情抽屉：整屏高度、内部滚动
+  .arco-drawer-body {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0));
+  }
+}
+
+// ------------------------------------------------------------------ 登录页
+body.tzl-mobile {
+  .container {
+    // 手机上不再挤一条 25% 宽的装饰横幅，整屏留给登录表单
+    .banner {
+      display: none !important;
+    }
+
+    .content {
+      padding: 24px 16px 64px;
+    }
+  }
+
+  .logo {
+    position: static;
+    padding: 18px 16px 0;
+
+    &-text {
+      color: var(--color-text-1) !important;
+      font-size: 18px !important;
+    }
+  }
+
+  .login-form-wrapper,
+  .login-form {
+    width: 100% !important;
+    max-width: 360px;
+  }
+
+  .login-form-title {
+    font-size: 22px !important;
+  }
+
+  // 登录按钮整行大按钮
+  .login-form .arco-btn {
+    width: 100%;
+    min-height: 44px;
+    font-size: 16px;
   }
 }

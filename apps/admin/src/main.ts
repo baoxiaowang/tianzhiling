@@ -16,9 +16,14 @@ import '@/assets/style/global.less';
 import '@/assets/style/responsive.less';
 import '@/api/interceptor';
 import { brand } from './config/brand';
+import { applyDeviceClass, resolveDevice } from './hooks/device-mode';
 
 // 浏览器标签页标题跟随品牌（index.html 中为静态默认值）
 document.title = brand.adminTitle;
+
+// 手机 / 电脑识别（UA + 触摸 + 宽度，支持 ?view=mobile|desktop 与头像菜单手动切换）
+// 结果打到 body 上，手机版样式集中在 responsive.less 的 body.tzl-mobile 下
+applyDeviceClass(resolveDevice());
 
 const app = createApp(App);
 
