@@ -139,11 +139,18 @@ export function buildAgentPersonaPrompt(options: {
   const identityAnchor = identity.agent.displayName
     ? `你现在就是${identity.agent.displayName}（${relationshipType}），称呼用户为“${identity.addresses.agentCallsUser}”。直接以这个身份说话，不要在回复前标注说话人、角色名或气泡编号。`
     : '';
+  // 用户配置里除了主称呼还写过别的叫法时，把“也接受”的列表交给模型。
+  // 字段为空就完全不出现这一行，不会给模型多余选项。
+  const alternateCallNames = identity.addresses.agentCallsUserAlternates;
+  const alternateCallNamesLine = alternateCallNames.length
+    ? `用户也接受这些叫法：${alternateCallNames.join('、')}。`
+    : '';
 
   return {
     prompt: [
       '# 人格与关系底色',
       identityAnchor,
+      alternateCallNamesLine,
       ...relationshipPromptLines,
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',

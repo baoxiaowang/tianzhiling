@@ -77,25 +77,48 @@ export function primaryCallName(value?: string | null): string {
 }
 
 /**
- * 组装称呼池：动态改口的最新称呼优先，其后是后台配置的顺序。
- * 例：配置“老婆，姓傅的” + 聊天里说“以后叫我宝贝” → [宝贝, 老婆, 姓傅的]。
+ * 主称呼之外的其它叫法（“用户也接受这些叫法”）。
+ * 例：`老婆，姓傅的` → ["姓傅的"]；只有一个称呼时返回空数组。
  */
-export function buildCallNamePool(
-  configuredValue?: string | null,
-  preferredName?: string | null
-): string[] {
-  const pool: string[] = [];
+export function buildCallNameAlternates(value?: string | null): string[] {
+  return parseCallNames(value).slice(1);
+}
 
-  for (const name of [
-    ...parseCallNames(preferredName),
-    ...parseCallNames(configuredValue),
-  ]) {
-    if (!pool.includes(name)) {
-      pool.push(name);
+/**
+ * 合并并去重有序称呼列表，用于“主称呼 + 也叫法 + 动态改口”的统一整理。
+ */
+export function mergeCallNames(
+  ...lists: Array<string[] | undefined>
+): string[] {
+  const merged: string[] = [];
+
+  for (const list of lists) {
+    for (const name of list || []) {
+      const trimmed = typeof name === 'string' ? name.trim() : '';
+
+      if (trimmed && !merged.includes(trimmed)) {
+        merged.push(trimmed);
+      }
     }
   }
 
-  return pool;
+  return merged;
+}
+
+/**
+ * 读取“也叫法”：程序维护的字段是权威值。
+ * 字段存在（含显式空数组）就照字段来，不能再从原始文本复活用户已经去掉的叫法；
+ * 只有老数据没有该字段时才从 agentCallMe 推导。
+ */
+export function resolveCallNameAlternates(
+  storedAlternates?: string[] | null,
+  rawCallName?: string | null
+): string[] {
+  if (Array.isArray(storedAlternates)) {
+    return mergeCallNames(storedAlternates);
+  }
+
+  return buildCallNameAlternates(rawCallName);
 }
 
 /**

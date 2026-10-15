@@ -15,7 +15,10 @@ import type {
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
-import { primaryCallName } from '../common/call-name';
+import {
+  buildCallNameAlternates,
+  primaryCallName,
+} from '../common/call-name';
 import {
   AcceptAgentShareInviteDTO,
   AgentShareQRCodeDTO as AgentShareQRCodeRequestDTO,
@@ -604,6 +607,7 @@ export class AgentService {
     agent.sex = sex;
     agent.iCallAgent = iCallAgent;
     agent.agentCallMe = agentCallMe;
+    agent.agentCallMeAlternates = buildCallNameAlternates(agentCallMe);
     agent.description = this.buildDescription({
       name,
       sex,
@@ -735,6 +739,8 @@ export class AgentService {
         payload.agentCallMe,
         'INVALID_AGENT_CALL_ME'
       );
+      // 原始文本保留，程序同步刷新“也叫法”字段。
+      agent.agentCallMeAlternates = buildCallNameAlternates(agent.agentCallMe);
     }
 
     if (payload?.birthday !== undefined) {

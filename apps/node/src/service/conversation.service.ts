@@ -45,6 +45,8 @@ import {
   UnsafeAssistantMessageContentMatch,
 } from '../common/message-content-safety';
 import {
+  buildCallNameAlternates,
+  mergeCallNames,
   normalizeCallNameInText,
   primaryCallName,
 } from '../common/call-name';
@@ -12531,6 +12533,10 @@ export class ConversationService {
     return {
       ...agent,
       agentCallMe: agentCallsUser,
+      agentCallMeAlternates: mergeCallNames(
+        buildCallNameAlternates(member.agentCallsUser),
+        buildCallNameAlternates(conversation.agentCallsUser)
+      ),
       iCallAgent: userCallsAgent,
       isDefault: false,
     } as AgentEntity;

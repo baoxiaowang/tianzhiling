@@ -313,60 +313,61 @@ describe('agent identity contract', () => {
     expect(buildAgentIdentityPrompt(identity)).toContain('本轮相关其他人物');
   });
 
-  it('keeps only the primary call name when the field holds several alternatives', () => {
+  it('keeps only the primary call name and lists the rest as accepted names', () => {
     const identity = buildAgentIdentityContract({
       agent: {
         name: '老公',
         sex: AgentSex.man,
-        // 用户可能一次填多个称呼，模型只应使用第一个。
+        // 用户可能一次填多个称呼：主称呼只取第一个，其余作为“也接受”。
         iCallAgent: '老公/亲爱的',
         agentCallMe: '老婆，姓傅的',
       } as AgentEntity,
     });
 
     expect(identity.addresses.agentCallsUser).toBe('老婆');
+    expect(identity.addresses.agentCallsUserAlternates).toEqual(['姓傅的']);
     expect(identity.addresses.userCallsAgent).toBe('老公');
     expect(identity.relationship.label).toBe('老公');
 
     const prompt = buildAgentIdentityPrompt(identity);
     expect(prompt).toContain('老婆');
-    expect(prompt).not.toContain('姓傅的');
+    expect(prompt).toContain('姓傅的');
     expect(prompt).not.toContain('亲爱的');
   });
 
-  it('picks the call name by scene temperature when the reply context is given', () => {
-    const agent = {
-      name: '老公',
-      sex: AgentSex.man,
-      iCallAgent: '老公',
-      agentCallMe: '老婆，媳妇，宝贝',
-    } as AgentEntity;
+  it('uses the program-maintained alternates field when it exists', () => {
+    const identity = buildAgentIdentityContract({
+      agent: {
+        name: '老公',
+        sex: AgentSex.man,
+        iCallAgent: '老公',
+        agentCallMe: '老婆，姓傅的',
+        // 程序维护的字段已去掉“姓傅的”，读取时应以它为准。
+        agentCallMeAlternates: ['小傅'],
+      } as AgentEntity,
+    });
 
-    expect(
-      buildAgentIdentityContract({
-        agent,
-        addressContext: { scene: 'grief_crisis' },
-      }).addresses.agentCallsUser
-    ).toBe('老婆');
-    expect(
-      buildAgentIdentityContract({
-        agent,
-        addressContext: { scene: 'smalltalk' },
-      }).addresses.agentCallsUser
-    ).toBe('媳妇');
-    expect(
-      buildAgentIdentityContract({
-        agent,
-        addressContext: { scene: 'miss_longing' },
-      }).addresses.agentCallsUser
-    ).toBe('宝贝');
-    // 不传上下文（展示、列表）固定用主称呼。
-    expect(buildAgentIdentityContract({ agent }).addresses.agentCallsUser).toBe(
-      '老婆'
+    expect(identity.addresses.agentCallsUser).toBe('老婆');
+    expect(identity.addresses.agentCallsUserAlternates).toEqual(['小傅']);
+  });
+
+  it('omits the accepted-names field when there is only one call name', () => {
+    const identity = buildAgentIdentityContract({
+      agent: {
+        name: '老公',
+        sex: AgentSex.man,
+        iCallAgent: '老公',
+        agentCallMe: '老婆',
+      } as AgentEntity,
+    });
+
+    expect(identity.addresses.agentCallsUserAlternates).toEqual([]);
+    expect(buildAgentIdentityPrompt(identity)).not.toContain(
+      'agentCallsUserAlternates'
     );
   });
 
-  it('promotes a dynamically taught call name ahead of the configured order', () => {
+  it('promotes a dynamically taught call name and keeps the old one as accepted', () => {
     const agent = {
       name: '老公',
       sex: AgentSex.man,
@@ -386,16 +387,12 @@ describe('agent identity contract', () => {
       },
     ];
 
-    expect(
-      buildAgentIdentityContract({ agent, profileFacts }).addresses
-        .agentCallsUser
-    ).toBe('宝贝');
-    expect(
-      buildAgentIdentityContract({
-        agent,
-        profileFacts,
-        addressContext: { scene: 'smalltalk' },
-      }).addresses.agentCallsUser
-    ).toBe('老婆');
+    const identity = buildAgentIdentityContract({ agent, profileFacts });
+
+    expect(identity.addresses.agentCallsUser).toBe('宝贝');
+    expect(identity.addresses.agentCallsUserAlternates).toEqual([
+      '老婆',
+      '姓傅的',
+    ]);
   });
 });

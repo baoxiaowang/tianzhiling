@@ -5,12 +5,11 @@ import {
   AgentSex,
   UserRelativeFactStatus,
 } from '@tzl/entities';
-import { primaryCallName } from '../../common/call-name';
 import {
-  resolveCallNamePool,
-  selectCallName,
-} from './call-name-policy';
-import type { CallNameAddressContext } from './call-name-policy';
+  mergeCallNames,
+  primaryCallName,
+  resolveCallNameAlternates,
+} from '../../common/call-name';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import type { ConversationKnownObject } from './reply-intent';
@@ -71,6 +70,11 @@ export interface AgentIdentityContract {
   addresses: {
     userCallsAgent: string;
     agentCallsUser: string;
+    /**
+     * 主称呼之外用户也接受的叫法（“只用于理解，不必主动使用”）。
+     * 由程序从 agentCallMe / agentCallMeAlternates 维护；为空时提示词不渲染。
+     */
+    agentCallsUserAlternates: string[];
   };
   knownPeople?: UserKnownPersonPromptProfile[];
   relatives?: UserRelativePromptProfile[];
@@ -82,11 +86,6 @@ export function buildAgentIdentityContract(options: {
   userIdentity?: UserIdentityPromptProfile | null;
   knownPeople?: UserKnownPersonPromptProfile[];
   relatives?: UserRelativePromptProfile[];
-  /**
-   * 本轮回复的称呼上下文。回复链路传入场景/情绪以选择称呼池里的某一个；
-   * 展示、列表等路径不传，固定使用主称呼。
-   */
-  addressContext?: CallNameAddressContext;
 }): AgentIdentityContract {
   const agent = options.agent;
   const nameMemory = resolveAgentNameMemory(options.profileFacts);
@@ -127,12 +126,23 @@ export function buildAgentIdentityContract(options: {
     clean(agent?.name, 24) || clean(agent?.realName, 24) || relationshipLabel;
   const realName =
     clean(agent?.realName, 24) || clean(nameMemory.canonicalName, 24);
-  const callNamePool = resolveCallNamePool(
-    agent?.agentCallMe,
-    userPreferredName
+  // 主称呼固定一个：动态改口（以后叫我 X）优先，否则用配置的第一个。
+  // 其余叫法作为“用户也接受这些叫法”的软信息，不再参与主动称呼。
+  const configuredPrimary = primaryCallName(agent?.agentCallMe);
+  const configuredCallNames = resolveCallNameAlternates(
+    agent?.agentCallMeAlternates,
+    agent?.agentCallMe
   );
-  const agentCallsUser =
-    clean(selectCallName(callNamePool, options.addressContext), 24) || '你';
+  const callNamePool = mergeCallNames(
+    userPreferredName ? [userPreferredName] : [],
+    configuredPrimary ? [configuredPrimary] : [],
+    configuredCallNames
+  );
+  const agentCallsUser = clean(callNamePool[0], 24) || '你';
+  const agentCallsUserAlternates = callNamePool
+    .slice(1)
+    .map(name => clean(name, 24))
+    .filter(name => Boolean(name) && name !== agentCallsUser);
 
   return {
     version: 'agent_identity_v1',
@@ -176,6 +186,7 @@ export function buildAgentIdentityContract(options: {
         explicitRelationship ||
         relationshipLabel,
       agentCallsUser,
+      agentCallsUserAlternates,
     },
     ...(options.knownPeople?.length
       ? { knownPeople: options.knownPeople.slice(0, 8) }
@@ -214,6 +225,7 @@ export function buildKnownConversationObjects(options: {
       label: identity.user.addressedAs,
       aliases: unique([
         identity.user.addressedAs,
+        ...identity.addresses.agentCallsUserAlternates,
         identity.user.realName,
         ...identity.user.aliases,
         identity.user.preferredName,
@@ -322,6 +334,12 @@ export function buildAgentIdentityPrompt(
   const user = {
     id: identity.user.objectId,
     agentCallsUser: identity.addresses.agentCallsUser,
+    ...(identity.addresses.agentCallsUserAlternates.length
+      ? {
+          agentCallsUserAlternates:
+            identity.addresses.agentCallsUserAlternates,
+        }
+      : {}),
     realName: identity.user.realName || '未知',
     aliases: identity.user.aliases,
     preferredName: identity.user.preferredName || '未设置',

@@ -87,6 +87,14 @@ export class AgentEntity extends BaseEntity {
   @Column()
   agentCallMe?: string;
 
+  /**
+   * 用户配置里除主称呼外的其它叫法，由程序从 agentCallMe 拆分并维护。
+   * 只用于让模型理解（用户也接受这些叫法），不用于主动称呼；
+   * 为空时提示词不渲染这一行。原始文本仍保留在 agentCallMe。
+   */
+  @Column()
+  agentCallMeAlternates?: string[];
+
   @Column()
   iCallAgent?: string;
 

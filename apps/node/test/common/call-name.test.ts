@@ -1,8 +1,10 @@
 import {
-  buildCallNamePool,
+  buildCallNameAlternates,
+  mergeCallNames,
   normalizeCallNameInText,
   parseCallNames,
   primaryCallName,
+  resolveCallNameAlternates,
 } from '../../src/common/call-name';
 
 describe('parseCallNames', () => {
@@ -52,27 +54,48 @@ describe('primaryCallName', () => {
   });
 });
 
-describe('buildCallNamePool', () => {
-  it('puts the dynamically taught name ahead of the configured order', () => {
-    expect(buildCallNamePool('老婆，姓傅的', '宝贝')).toEqual([
-      '宝贝',
-      '老婆',
-      '姓傅的',
-    ]);
-  });
-
-  it('uses only the configured order when no dynamic name exists', () => {
-    expect(buildCallNamePool('女儿，闺女', undefined)).toEqual([
-      '女儿',
+describe('buildCallNameAlternates', () => {
+  it('returns everything after the primary call name', () => {
+    expect(buildCallNameAlternates('老婆，姓傅的')).toEqual(['姓傅的']);
+    expect(buildCallNameAlternates('女儿，闺女，小棉袄')).toEqual([
       '闺女',
+      '小棉袄',
     ]);
   });
 
-  it('deduplicates a dynamic name that is already configured', () => {
-    expect(buildCallNamePool('老婆，姓傅的', '老婆')).toEqual([
-      '老婆',
+  it('returns an empty list for a single call name', () => {
+    expect(buildCallNameAlternates('老婆')).toEqual([]);
+    expect(buildCallNameAlternates('')).toEqual([]);
+    expect(buildCallNameAlternates(undefined)).toEqual([]);
+  });
+});
+
+describe('mergeCallNames', () => {
+  it('merges in order and drops duplicates and blanks', () => {
+    expect(
+      mergeCallNames(['宝贝'], ['老婆', '宝贝'], ['', '  '], ['姓傅的'])
+    ).toEqual(['宝贝', '老婆', '姓傅的']);
+  });
+
+  it('tolerates undefined lists', () => {
+    expect(mergeCallNames(undefined, ['老婆'], undefined)).toEqual(['老婆']);
+    expect(mergeCallNames()).toEqual([]);
+  });
+});
+
+describe('resolveCallNameAlternates', () => {
+  it('derives from the raw text when the field is missing', () => {
+    expect(resolveCallNameAlternates(undefined, '老婆，姓傅的')).toEqual([
       '姓傅的',
     ]);
+  });
+
+  it('treats the stored field as authoritative', () => {
+    expect(resolveCallNameAlternates(['小傅'], '老婆，姓傅的')).toEqual([
+      '小傅',
+    ]);
+    // 程序显式清空后，不能再从原始文本复活。
+    expect(resolveCallNameAlternates([], '老婆，姓傅的')).toEqual([]);
   });
 });
 

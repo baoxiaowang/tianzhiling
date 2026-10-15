@@ -184,4 +184,33 @@ describe('buildAgentPersonaPrompt', () => {
       expect(prompt).toContain(value);
     }
   });
+
+  it('renders the accepted call names only when the field is not empty', () => {
+    const withAlternates = buildAgentPersonaPrompt({
+      agent: {
+        name: '老公',
+        sex: AgentSex.man,
+        iCallAgent: '老公',
+        agentCallMe: '老婆，姓傅的',
+        agentCallMeAlternates: ['姓傅的'],
+      } as AgentEntity,
+    });
+
+    expect(withAlternates.prompt).toContain('称呼用户为“老婆”');
+    expect(withAlternates.prompt).toContain('用户也接受这些叫法：姓傅的。');
+    // 不写“只用于理解、不必主动使用”，模型可以自然使用这些叫法。
+    expect(withAlternates.prompt).not.toContain('不必主动使用');
+
+    const withoutAlternates = buildAgentPersonaPrompt({
+      agent: {
+        name: '老公',
+        sex: AgentSex.man,
+        iCallAgent: '老公',
+        agentCallMe: '老婆',
+      } as AgentEntity,
+    });
+
+    expect(withoutAlternates.prompt).toContain('称呼用户为“老婆”');
+    expect(withoutAlternates.prompt).not.toContain('用户也接受这些叫法');
+  });
 });
