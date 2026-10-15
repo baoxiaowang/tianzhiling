@@ -544,7 +544,12 @@
       unmount-on-close
       @cancel="closeDetail"
     >
-      <a-descriptions v-if="currentOrder" :column="1" bordered size="large">
+      <a-descriptions
+        v-if="currentOrder"
+        :column="{ xs: 1, sm: 2, md: 1, lg: 1 }"
+        bordered
+        size="large"
+      >
         <a-descriptions-item label="订单号">
           <a-typography-text copyable>{{
             currentOrder.orderNo
@@ -742,7 +747,7 @@
             "
           />
           <template v-else>
-            <a-descriptions :column="1" bordered>
+            <a-descriptions :column="{ xs: 1, sm: 2, md: 1, lg: 1 }" bordered>
               <a-descriptions-item label="当前会员">
                 {{ downgradePreview.sourcePlan?.name || '-' }}
               </a-descriptions-item>

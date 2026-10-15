@@ -305,6 +305,7 @@
                       </a-descriptions-item>
                     </a-descriptions>
                     <a-table
+                      :scroll="{ x: 'max-content' }"
                       :data="person.facts"
                       :pagination="false"
                       size="small"
@@ -376,7 +377,11 @@
                 @clear="agentVtUrl = ''"
               >
                 <template #append>
-                  <a-button type="text" :disabled="!agentVtUrl" @click="copyAgentVtUrl">
+                  <a-button
+                    type="text"
+                    :disabled="!agentVtUrl"
+                    @click="copyAgentVtUrl"
+                  >
                     复制
                   </a-button>
                 </template>
@@ -390,7 +395,8 @@
               </a-button>
             </div>
             <div style="font-size: 12px; color: #86909c; line-height: 1.6">
-              通过该链接可对话式上传音频训练声音，训练完成后自动绑定到该账号的默认 AI 亲人。
+              通过该链接可对话式上传音频训练声音，训练完成后自动绑定到该账号的默认
+              AI 亲人。
             </div>
           </a-card>
           <voice-model-panel
@@ -648,7 +654,9 @@
     }
     agentVtLoading.value = true;
     try {
-      const { data } = await axios.get(`/admin_api/agent-vt/links/${userId.value}`);
+      const { data } = await axios.get(
+        `/admin_api/agent-vt/links/${userId.value}`
+      );
       agentVtUrl.value = `${window.location.origin}/admin_api/agent_vt/p/${data.token}`;
       Message.success('已生成对话式训练入口链接');
     } catch (error) {
@@ -676,7 +684,12 @@
   });
 
   watch(activeTab, (tab) => {
-    if (tab === 'voice' && userId.value && !agentVtUrl.value && !agentVtLoading.value) {
+    if (
+      tab === 'voice' &&
+      userId.value &&
+      !agentVtUrl.value &&
+      !agentVtLoading.value
+    ) {
       loadAgentVtLink();
     }
   });

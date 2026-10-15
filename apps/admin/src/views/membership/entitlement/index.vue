@@ -42,6 +42,7 @@
       </a-form>
 
       <a-table
+        :scroll="{ x: 'max-content' }"
         row-key="id"
         :data="entitlements"
         :pagination="false"

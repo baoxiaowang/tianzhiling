@@ -14,6 +14,7 @@
         <a-button :loading="loading" @click="fetchList">刷新</a-button>
       </div>
       <a-table
+        :scroll="{ x: 'max-content' }"
         row-key="id"
         :data="renderList"
         :loading="loading"
@@ -856,7 +857,11 @@
         </a-descriptions>
 
         <div v-if="vrsResult.timbreId" style="margin-top: 16px">
-          <a-descriptions :column="1" bordered size="medium">
+          <a-descriptions
+            :column="{ xs: 1, sm: 2, md: 1, lg: 1 }"
+            bordered
+            size="medium"
+          >
             <a-descriptions-item label="任务 ID">
               {{ vrsResult.providerTaskId }}
             </a-descriptions-item>

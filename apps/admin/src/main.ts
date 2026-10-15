@@ -12,6 +12,8 @@ import App from './App.vue';
 // 样式通过 arco-plugin 插件导入。详见目录文件 config/plugin/arcoStyleImport.ts
 // https://arco.design/docs/designlab/use-theme-package
 import '@/assets/style/global.less';
+// 响应式适配层（手机 / 平板 / 小笔记本 / 大屏）：必须排在全局样式之后
+import '@/assets/style/responsive.less';
 import '@/api/interceptor';
 import { brand } from './config/brand';
 

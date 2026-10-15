@@ -598,7 +598,7 @@
 
         <a-descriptions
           v-if="vrsResult.timbreId"
-          :column="1"
+          :column="{ xs: 1, sm: 2, md: 1, lg: 1 }"
           style="margin-top: 16px"
           bordered
         >
@@ -991,7 +991,7 @@
     >
       <a-descriptions
         v-if="validationResult"
-        :column="1"
+        :column="{ xs: 1, sm: 2, md: 1, lg: 1 }"
         bordered
         size="medium"
         class="voice-timbre-page__validation"

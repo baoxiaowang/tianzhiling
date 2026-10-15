@@ -233,7 +233,7 @@
       <a-descriptions
         v-if="editingAgent"
         class="agent-page__edit-context"
-        :column="1"
+        :column="{ xs: 1, sm: 2, md: 1, lg: 1 }"
         size="small"
         bordered
       >

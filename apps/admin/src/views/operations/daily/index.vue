@@ -23,6 +23,7 @@
 
     <a-spin :loading="loading">
       <a-table
+        :scroll="{ x: 'max-content' }"
         class="daily-detail-page__table"
         row-key="date"
         :data="daily"

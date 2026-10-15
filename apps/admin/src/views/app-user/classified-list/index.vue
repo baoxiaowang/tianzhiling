@@ -53,6 +53,7 @@
       />
 
       <a-table
+        :scroll="{ x: 'max-content' }"
         row-key="id"
         :data="renderList"
         :loading="loading"

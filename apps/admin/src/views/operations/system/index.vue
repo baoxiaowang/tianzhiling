@@ -12,7 +12,7 @@
       <a-grid :cols="24" :col-gap="16" :row-gap="16">
         <a-grid-item :span="{ xs: 24, lg: 14 }">
           <a-card title="运行信息" :bordered="false">
-            <a-descriptions :column="1" bordered>
+            <a-descriptions :column="{ xs: 1, sm: 2, md: 1, lg: 1 }" bordered>
               <a-descriptions-item label="服务">
                 <a-tag color="green">{{ runtime?.service || '-' }} 正常</a-tag>
               </a-descriptions-item>

@@ -1,0 +1,337 @@
+// ============================================================================
+// 管理端响应式适配层
+//
+// 断点（与 Arco 保持一致，另加手机档）：
+//   ≤576px  手机          ≤768px  大手机 / 竖屏平板
+//   ≤992px  平板（菜单进抽屉，layout 已处理）
+//   ≤1200px 小笔记本      ≥1600px 大屏
+//
+// 目标：
+//   1. 任何视口都不出现「页面级」横向滚动（宽表格内部滚动，不把整页撑破）；
+//   2. 卡片、表单、统计、描述列表在小屏纵向堆叠，不再互相挤压；
+//   3. 弹层在手机上接近全屏，长表格可读；
+//   4. 点击目标不小于 ~32px，关键按钮不因换行错位。
+//
+// 说明：这里只处理「骨架」层面的通用规则；页面内个别固定宽度由各页面自己的
+//      @media 兜底（本文件末尾会强制收敛常见的固定宽度写法）。
+// ============================================================================
+
+// ---------------------------------------------------------------- 布局与容器
+// flex/grid 子项默认 min-width:auto，宽表格会把整条父链顶宽 → 页面级横向滚动。
+// 这里沿「布局 → 内容 → 卡片」整条链允许收缩，表格改为容器内部滚动。
+.layout,
+.layout > .arco-layout,
+.layout-content,
+.layout-content > .arco-layout,
+.layout-content > .arco-layout > .arco-layout-content,
+.arco-layout-content,
+.arco-card,
+.arco-card-body,
+.general-card,
+.general-card > .arco-card-body {
+  min-width: 0;
+}
+
+.layout-content {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.arco-table-container {
+  max-width: 100%;
+}
+
+@media (max-width: 992px) {
+  .layout-content {
+    padding: 12px 12px 20px !important;
+  }
+
+  .layout-navbar {
+    height: 52px;
+  }
+
+  .navbar {
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 768px) {
+  .layout-content {
+    padding: 8px 8px 16px !important;
+  }
+
+  // 头部在手机上只保留：菜单按钮 + 标题 + 用户头像，其余收纳
+  .navbar {
+    .left-side img {
+      width: 22px;
+      height: 22px;
+    }
+
+    .left-side .arco-typography {
+      font-size: 15px !important;
+    }
+
+    .right-side > li:not(:last-child) {
+      display: none;
+    }
+  }
+
+  // 标签页导航可横向滚动，不换行挤压内容
+  .arco-tabs-nav {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .arco-tabs-nav::-webkit-scrollbar {
+    height: 0;
+  }
+}
+
+// ---------------------------------------------------------- 卡片 / 描述 / 统计
+@media (max-width: 768px) {
+  .general-card {
+    > .arco-card-header {
+      height: auto;
+      padding: 12px 12px 0;
+    }
+
+    > .arco-card-body {
+      padding: 0 12px 12px;
+    }
+  }
+
+  .arco-card-body {
+    padding: 12px;
+  }
+
+  // 描述列表：手机上每一项占满一行，值可换行
+  .arco-descriptions-item-label,
+  .arco-descriptions-item-value {
+    padding: 4px 8px !important;
+    font-size: 12px;
+  }
+
+  .arco-descriptions-item-value {
+    word-break: break-all;
+  }
+
+  // 统计数值不再用大号字撑破卡片
+  .arco-statistic-value {
+    font-size: 20px !important;
+  }
+}
+
+// ------------------------------------------------------------------ 表格
+// a-spin 的包裹层默认是 inline-block（收缩到内容宽度）：里面放一张带 scroll.x 的宽表格时，
+// 它会按表格的 min-width 撑开，顺带把卡片/整页顶宽，右侧内容被裁掉、且不出现滚动条。
+// 统一改成「块级 + 满宽」，让表格在自己的容器里滚动。
+.arco-spin {
+  display: block !important;
+  width: 100%;
+  max-width: 100%;
+}
+
+.arco-spin-children {
+  width: 100%;
+  min-width: 0;
+}
+
+// Arco 表格带 scroll.x 时，内层表格有一个按 scroll.x 计算的 min-width。
+// 如果不把外层包装链收敛，这个 min-width 会顺着块级父链把卡片/整页顶宽
+// （实测 1024/1440 视口下页面被撑到 1500+px，右侧内容直接被裁掉），
+// 所以这里强制「外层可收缩 + 容器自己横向滚动」。
+.arco-table,
+.arco-table-container,
+.arco-table-scroll,
+.arco-scrollbar,
+.arco-scrollbar-container {
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+
+.arco-table-container {
+  overflow-x: auto;
+}
+
+@media (max-width: 992px) {
+  .arco-table-cell {
+    padding: 8px 8px !important;
+    font-size: 12px;
+  }
+
+  .arco-table-th {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .arco-table-cell {
+    padding: 6px !important;
+  }
+
+  // 分页控件换行展示，避免把页面撑宽
+  .arco-pagination {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 768px) {
+  // 标签页保持单行、不压缩，由导航条横向滚动（否则标签会挤成一堆或把页面顶宽）
+  .arco-tabs-nav {
+    overflow-x: auto !important;
+    overflow-y: hidden;
+  }
+
+  .arco-tabs-nav-tab-list,
+  .arco-tabs-header-nav {
+    flex-wrap: nowrap !important;
+  }
+
+  .arco-tabs-tab {
+    flex: 0 0 auto !important;
+  }
+
+  .arco-tabs-nav::-webkit-scrollbar {
+    height: 0;
+  }
+}
+
+@media (max-width: 576px) {
+  // 手机分页：隐藏「N 条/页」与跳页，保留页码；整行不换行、容器横向滚动
+  // （Arco 的 pagination-list 是 flex 子项，硬换行在窄屏仍会溢出，滚动最稳）
+  .arco-pagination [class*='option'],
+  .arco-pagination [class*='jumper'] {
+    display: none !important;
+  }
+
+  .arco-pagination {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .arco-pagination-list {
+    flex: 0 0 auto !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .arco-pagination-item {
+    min-width: 28px;
+    margin-right: 2px;
+  }
+}
+
+// ------------------------------------------------------------- 表单 / 筛选
+@media (max-width: 768px) {
+  .arco-form-item {
+    margin-right: 0;
+    margin-bottom: 12px;
+  }
+
+  // 行内表单（筛选栏）在手机上每项占满一行
+  .arco-form-layout-inline {
+    .arco-form-item {
+      display: flex;
+      width: 100%;
+    }
+
+    .arco-form-item-wrapper-col,
+    .arco-form-item-control-wrapper {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  .arco-input,
+  .arco-select,
+  .arco-picker,
+  .arco-input-number,
+  .arco-textarea {
+    max-width: 100%;
+  }
+}
+
+// ------------------------------------------------------------------ 弹层
+@media (max-width: 768px) {
+  // 弹窗接近全屏，内部可滚动
+  .arco-modal {
+    width: calc(100vw - 16px) !important;
+    max-width: none !important;
+    margin: 8px auto !important;
+  }
+
+  .arco-modal-body {
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
+  }
+
+  // 抽屉整屏（详情类抽屉在手机上才有足够宽度）
+  .arco-drawer {
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+
+  .arco-drawer-body {
+    padding: 12px;
+    overflow-x: hidden;
+  }
+
+  .arco-popover-content,
+  .arco-trigger-popup-content {
+    max-width: calc(100vw - 24px) !important;
+  }
+}
+
+// --------------------------------------------------------------- 其它细节
+@media (max-width: 768px) {
+  // 按钮不因文字过长换行错位；图标按钮保持圆形
+  .arco-btn {
+    max-width: 100%;
+  }
+
+  .arco-btn-shape-circle {
+    min-width: 32px;
+  }
+
+  // 图片、图表容器不撑破父级
+  img,
+  svg,
+  canvas {
+    max-width: 100%;
+  }
+
+  .arco-space {
+    flex-wrap: wrap;
+  }
+
+  // 顶部标签栏在手机上横向滚动
+  .arco-tabs-header-nav {
+    overflow-x: auto;
+  }
+}
+
+// 大屏（≥1600px）：内容不过度拉伸，但**不能超过可用宽度**
+// （父级已为侧边栏预留 padding-left，写成固定 max-width 会把内容推出视口）
+@media (min-width: 1600px) {
+  .layout-content > .arco-layout-content {
+    max-width: min(1760px, 100%);
+    margin: 0 auto;
+  }
+}
+
+// ------------------------------------------------------- 固定宽度强制收敛
+// 页面里常见的「写死 px 宽度」在窄屏会被撑破：这里统一降级为不超过视口宽度。
+// 例外：表格内部元素由 Arco 自己按 scroll.x 计算，不能改。
+@media (max-width: 768px) {
+  .arco-card,
+  .arco-modal-content,
+  .arco-drawer-content,
+  input,
+  textarea,
+  select {
+    max-width: 100%;
+  }
+}
