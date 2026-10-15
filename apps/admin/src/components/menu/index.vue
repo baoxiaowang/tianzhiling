@@ -1,5 +1,5 @@
 <script lang="tsx">
-  import { defineComponent, ref, h, compile, computed } from 'vue';
+  import { defineComponent, ref, h, compile, computed, inject } from 'vue';
   import { useI18n } from 'vue-i18n';
   import { useRoute, useRouter, RouteRecordRaw } from 'vue-router';
   import type { RouteMeta } from 'vue-router';
@@ -16,6 +16,10 @@
       const router = useRouter();
       const route = useRoute();
       const { menuTree } = useMenuTree();
+      // 手机端菜单在抽屉里：选中一页后必须收起抽屉，否则抽屉会一直盖住页面
+      const closeDrawerMenu = inject<(() => void) | undefined>(
+        'closeDrawerMenu'
+      );
       const collapsed = computed({
         get() {
           if (appStore.device === 'desktop') return appStore.menuCollapse;
@@ -35,18 +39,21 @@
         if (regexUrl.test(item.path)) {
           openWindow(item.path);
           selectedKey.value = [item.name as string];
+          closeDrawerMenu?.();
           return;
         }
         // Eliminate external link side effects
         const { hideInMenu, activeMenu } = item.meta as RouteMeta;
         if (route.name === item.name && !hideInMenu && !activeMenu) {
           selectedKey.value = [item.name as string];
+          closeDrawerMenu?.();
           return;
         }
         // Trigger router change
         router.push({
           name: item.name,
         });
+        closeDrawerMenu?.();
       };
       const findMenuOpenKeys = (target: string) => {
         const result: string[] = [];

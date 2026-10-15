@@ -268,10 +268,22 @@
     overflow-y: auto;
   }
 
-  // 抽屉整屏（详情类抽屉在手机上才有足够宽度）
+  // 抽屉在手机上接近全屏（详情类抽屉才有足够宽度）。
+  // 注意：**不能写成 100vw** —— 手机端左侧导航菜单就是一个 a-drawer，且
+  // `:closable="false"`（没有关闭按钮），唯一的关闭方式是点抽屉旁边的遮罩。
+  // 一旦抽屉占满整屏，遮罩面积归零 → 用户被永久困在导航里（线上实测 390/390）。
+  // 因此统一留出 ≥12vw 的遮罩条，保证任何抽屉都能点关闭。
   .arco-drawer {
-    width: 100vw !important;
-    max-width: 100vw !important;
+    width: min(88vw, 720px) !important;
+    max-width: 88vw !important;
+  }
+
+  // 左侧导航菜单抽屉：保持 Arco 默认的紧凑宽度，遮罩条更宽、更好点。
+  // 注意 a-drawer 上的 class 落在抽屉的父级容器（遮罩与抽屉的公共父级）上，
+  // 所以要往下选一层，不能直接给父级设宽度。
+  .layout-menu-drawer > .arco-drawer {
+    width: min(78vw, 260px) !important;
+    max-width: min(78vw, 260px) !important;
   }
 
   .arco-drawer-body {

@@ -23,6 +23,7 @@
         </a-layout-sider>
         <a-drawer
           v-if="hideMenu"
+          class="layout-menu-drawer"
           :visible="drawerVisible"
           placement="left"
           :footer="false"
@@ -99,6 +100,10 @@
   };
   provide('toggleDrawerMenu', () => {
     drawerVisible.value = !drawerVisible.value;
+  });
+  // 手机端选中菜单后由 Menu 组件调用，避免抽屉一直盖在页面上
+  provide('closeDrawerMenu', () => {
+    drawerVisible.value = false;
   });
   onMounted(() => {
     isInit.value = true;
