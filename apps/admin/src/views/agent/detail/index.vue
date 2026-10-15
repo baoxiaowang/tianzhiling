@@ -154,7 +154,13 @@
                         selectedConversation?.user?.account ||
                         selectedConversation?.userId
                       }}
-                      · {{ selectedConversation?.messageCount || 0 }} 条消息
+                      · 共
+                      {{
+                        messagePagination.total ||
+                        selectedConversation?.messageCount ||
+                        0
+                      }}
+                      条消息
                     </div>
                   </div>
                 </div>
@@ -197,9 +203,32 @@
                 </div>
               </header>
 
+              <div class="agent-detail-page__message-toolbar">
+                <span class="agent-detail-page__message-range">
+                  {{ messageRangeText }}
+                </span>
+                <a-space :size="8">
+                  <a-button
+                    size="small"
+                    :disabled="!hasOlderMessages"
+                    @click="loadOlderMessages"
+                  >
+                    加载更早
+                  </a-button>
+                  <a-button
+                    size="small"
+                    :disabled="!hasNewerMessages"
+                    @click="jumpToLatestMessages"
+                  >
+                    跳到最新
+                  </a-button>
+                </a-space>
+              </div>
+
               <a-spin :loading="messagesLoading">
                 <div
                   v-if="messageList.length > 0"
+                  ref="messageStreamRef"
                   class="agent-detail-page__message-stream"
                 >
                   <div
@@ -381,7 +410,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref, watch } from 'vue';
+  import { computed, reactive, ref, watch, nextTick } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
@@ -429,6 +458,22 @@
     pageSize: 50,
     total: 0,
   });
+  // 消息请求序号：切会话/翻页时丢弃旧响应
+  let messageRequestSeq = 0;
+  const messageStreamRef = ref<HTMLElement | null>(null);
+  const messageRangeText = computed(() => {
+    const { total, current, pageSize } = messagePagination;
+    if (!total) return '暂无消息';
+    const from = (current - 1) * pageSize + 1;
+    const to = Math.min(current * pageSize, total);
+    return `第 ${from}–${to} 条 / 共 ${total} 条`;
+  });
+  const hasOlderMessages = computed(() => messagePagination.current > 1);
+  const hasNewerMessages = computed(
+    () =>
+      messagePagination.current * messagePagination.pageSize <
+      messagePagination.total
+  );
 
   const agentId = computed(() => {
     const { id } = route.params;
@@ -497,7 +542,9 @@
         messagePagination.current = 1;
       }
 
-      fetchConversationMessages(id, selectedConversationId.value);
+      fetchConversationMessages(id, selectedConversationId.value, {
+        preferLatest: true,
+      });
     } catch (error) {
       conversationList.value = [];
       messageList.value = [];
@@ -533,9 +580,22 @@
     }
   };
 
+  /** 加载完成后把视图定位到本页的第一条（更早）或最后一条（更新） */
+  const scrollMessagesTo = async (edge: 'start' | 'end') => {
+    await nextTick();
+    const stream = messageStreamRef.value;
+    if (!stream) return;
+    const target =
+      edge === 'end' ? stream.lastElementChild : stream.firstElementChild;
+    if (target && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: edge === 'end' ? 'end' : 'start' });
+    }
+  };
+
   const fetchConversationMessages = async (
     id?: string,
-    conversationId?: string
+    conversationId?: string,
+    options: { page?: number; preferLatest?: boolean } = {}
   ) => {
     if (!id || !conversationId) {
       messageList.value = [];
@@ -543,27 +603,63 @@
       return;
     }
 
+    messageRequestSeq += 1;
+    const seq = messageRequestSeq;
     try {
       messagesLoading.value = true;
-      const { data } = await queryAgentConversationMessages(
-        id,
-        conversationId,
-        {
-          page: messagePagination.current,
-          pageSize: messagePagination.pageSize,
-        }
-      );
+      let { data } = await queryAgentConversationMessages(id, conversationId, {
+        page: options.page ?? messagePagination.current,
+        pageSize: messagePagination.pageSize,
+      });
+      // 打开会话时默认落在「最新一页」：先取回头看总数，再直接取最后一页
+      const lastPage = Math.max(1, Math.ceil(data.total / data.pageSize));
+      if (options.preferLatest && lastPage !== data.page) {
+        const newer = await queryAgentConversationMessages(id, conversationId, {
+          page: lastPage,
+          pageSize: data.pageSize,
+        });
+        data = newer.data;
+      }
+      if (seq !== messageRequestSeq) return; // 已有更新的请求，丢弃本次结果
       messageList.value = data.items;
       messagePagination.total = data.total;
       messagePagination.current = data.page;
       messagePagination.pageSize = data.pageSize;
+      await scrollMessagesTo(
+        data.page >= Math.max(1, Math.ceil(data.total / data.pageSize))
+          ? 'end'
+          : 'start'
+      );
     } catch (error) {
+      if (seq !== messageRequestSeq) return;
       messageList.value = [];
       messagePagination.total = 0;
       Message.error('消息记录加载失败');
     } finally {
-      messagesLoading.value = false;
+      if (seq === messageRequestSeq) messagesLoading.value = false;
     }
+  };
+
+  /** 翻页（顶部工具条与底部分页器共用） */
+  const changeMessagePage = (page: number) => {
+    if (!selectedConversationId.value) return;
+    messagePagination.current = page;
+    fetchConversationMessages(agentId.value, selectedConversationId.value, {
+      page,
+    });
+  };
+
+  const loadOlderMessages = () => {
+    if (hasOlderMessages.value)
+      changeMessagePage(messagePagination.current - 1);
+  };
+
+  const jumpToLatestMessages = () => {
+    const lastPage = Math.max(
+      1,
+      Math.ceil(messagePagination.total / messagePagination.pageSize)
+    );
+    if (lastPage !== messagePagination.current) changeMessagePage(lastPage);
   };
 
   const goBack = () => {
@@ -589,7 +685,9 @@
 
     selectedConversationId.value = conversation.id;
     messagePagination.current = 1;
-    fetchConversationMessages(agentId.value, conversation.id);
+    fetchConversationMessages(agentId.value, conversation.id, {
+      preferLatest: true,
+    });
   };
 
   const selectConversationById = (conversationId: unknown) => {
@@ -607,8 +705,7 @@
   };
 
   const onMessagePageChange = (page: number) => {
-    messagePagination.current = page;
-    fetchConversationMessages(agentId.value, selectedConversationId.value);
+    changeMessagePage(page);
   };
 
   const canArchiveMessage = (message: AgentConversationMessageRecord) => {
@@ -1156,6 +1253,28 @@
         color: var(--color-text-3);
         font-size: 12px;
       }
+    }
+
+    // 消息工具条：吸顶显示「第 x–y 条 / 共 N 条」+ 加载更早 / 跳到最新，
+    // 50 条一页时消息流很长，翻页入口不能只放在最底部（运营反馈过「翻不到更早的」）
+    &__message-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      margin-bottom: 8px;
+      background: var(--color-bg-2);
+      border-bottom: 1px solid var(--color-border-2);
+    }
+
+    &__message-range {
+      color: var(--color-text-3);
+      font-size: 12px;
     }
 
     &__message-pagination {
