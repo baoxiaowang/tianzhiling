@@ -17,7 +17,6 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
-import { primaryCallName } from '../common/call-name';
 import { QwenVoiceEnrollmentService } from './qwen-voice-enrollment.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { TencentCosService } from './tencent-cos.service';
@@ -28,8 +27,8 @@ export const DEFAULT_VOICE_PREVIEW_TEXT =
   '最近过得好吗？有没有好好吃饭，好好睡觉？';
 
 export function buildVoicePreviewText(salutation?: string): string {
-  // 多值称呼只念第一个：播报里连念两个称呼会像在点名。
-  const normalized = primaryCallName(salutation)
+  const normalized = String(salutation ?? '')
+    .trim()
     .replace(/[，,。！？!?；;：:\s]+$/g, '')
     .slice(0, 24);
 
