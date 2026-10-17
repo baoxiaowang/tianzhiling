@@ -68,6 +68,14 @@ export class ListAdminOrdersQueryDTO {
   @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
   includeRefunds?: boolean | string;
 
+  /**
+   * 是否包含已关闭（未支付超时/主动放弃）订单。
+   * 缺省 false：保持历史行为（只返回有效流水，避免 4k+ 关单记录淹没待处理订单）；
+   * true：把 `status=closed` 的订单一并返回（后台「包含已关闭」开关，默认打开）。
+   */
+  @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
+  includeClosed?: boolean | string;
+
   /** 行类型筛选（仅 includeRefunds 时生效）：order=只看购买订单，refund=只看退款 */
   @Rule(RuleType.string().valid('order', 'refund').allow('').optional())
   kind?: string;

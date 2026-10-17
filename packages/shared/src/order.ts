@@ -204,6 +204,8 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
 export interface AdminOrderListParamsDTO {
   keyword?: string;
   status?: OrderStatusDTO;
+  /** 是否包含已关闭（未支付超时/主动放弃）订单；缺省 false 保持历史行为 */
+  includeClosed?: boolean;
   orderType?: OrderTypeDTO;
   source?: OrderSourceDTO;
   paymentType?: AdminOrderPaymentTypeDTO;

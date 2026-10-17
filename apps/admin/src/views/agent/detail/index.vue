@@ -210,6 +210,7 @@
                 <a-space :size="8">
                   <a-button
                     size="small"
+                    :loading="messagesLoadingMore"
                     :disabled="!hasOlderMessages"
                     @click="loadOlderMessages"
                   >
@@ -231,6 +232,17 @@
                   ref="messageStreamRef"
                   class="agent-detail-page__message-stream"
                 >
+                  <div
+                    v-if="hasOlderMessages"
+                    ref="olderSentinelRef"
+                    class="agent-detail-page__load-sentinel"
+                  >
+                    {{
+                      messagesLoadingMore
+                        ? '正在加载更早消息…'
+                        : '继续上滑加载更早消息'
+                    }}
+                  </div>
                   <div
                     v-for="message in messageList"
                     :key="message.id"
@@ -323,18 +335,6 @@
 
                 <a-empty v-else description="暂无消息记录" />
               </a-spin>
-
-              <div
-                v-if="messagePagination.total > messagePagination.pageSize"
-                class="agent-detail-page__message-pagination"
-              >
-                <a-pagination
-                  :current="messagePagination.current"
-                  :page-size="messagePagination.pageSize"
-                  :total="messagePagination.total"
-                  @change="onMessagePageChange"
-                />
-              </div>
             </section>
           </div>
 
@@ -410,7 +410,14 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref, watch, nextTick } from 'vue';
+  import {
+    computed,
+    nextTick,
+    onBeforeUnmount,
+    reactive,
+    ref,
+    watch,
+  } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
@@ -461,19 +468,46 @@
   // 消息请求序号：切会话/翻页时丢弃旧响应
   let messageRequestSeq = 0;
   const messageStreamRef = ref<HTMLElement | null>(null);
-  const messageRangeText = computed(() => {
-    const { total, current, pageSize } = messagePagination;
-    if (!total) return '暂无消息';
-    const from = (current - 1) * pageSize + 1;
-    const to = Math.min(current * pageSize, total);
-    return `第 ${from}–${to} 条 / 共 ${total} 条`;
+  const olderSentinelRef = ref<HTMLElement | null>(null);
+  const messagesLoadingMore = ref(false);
+  // 当前列表「最上面一页」的页码：向上翻会把更早的页 prepend 进来
+  const messageLoadedFromPage = ref(1);
+  const loadedMessageCount = computed(() => messageList.value.length);
+  const messageLoadedFrom = computed(() => {
+    const { pageSize } = messagePagination;
+    return (messageLoadedFromPage.value - 1) * pageSize + 1;
   });
-  const hasOlderMessages = computed(() => messagePagination.current > 1);
-  const hasNewerMessages = computed(
-    () =>
-      messagePagination.current * messagePagination.pageSize <
-      messagePagination.total
+  const messageLoadedTo = computed(() =>
+    Math.min(
+      messageLoadedFrom.value + Math.max(loadedMessageCount.value, 1) - 1,
+      messagePagination.total || loadedMessageCount.value
+    )
   );
+  const messageRangeText = computed(() => {
+    const { total } = messagePagination;
+    if (!total) return '暂无消息';
+    return `已加载第 ${messageLoadedFrom.value}–${messageLoadedTo.value} 条 / 共 ${total} 条`;
+  });
+  const hasOlderMessages = computed(() => messageLoadedFromPage.value > 1);
+  const hasNewerMessages = computed(
+    () => messageLoadedTo.value < messagePagination.total
+  );
+  let olderObserver: IntersectionObserver | null = null;
+  const observeOlderSentinel = async () => {
+    await nextTick();
+    olderObserver?.disconnect();
+    const el = olderSentinelRef.value;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    olderObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadOlderMessages();
+        }
+      },
+      { rootMargin: '240px 0px 0px 0px' }
+    );
+    olderObserver.observe(el);
+  };
 
   const agentId = computed(() => {
     const { id } = route.params;
@@ -625,11 +659,13 @@
       messagePagination.total = data.total;
       messagePagination.current = data.page;
       messagePagination.pageSize = data.pageSize;
+      messageLoadedFromPage.value = data.page;
       await scrollMessagesTo(
         data.page >= Math.max(1, Math.ceil(data.total / data.pageSize))
           ? 'end'
           : 'start'
       );
+      observeOlderSentinel();
     } catch (error) {
       if (seq !== messageRequestSeq) return;
       messageList.value = [];
@@ -649,9 +685,37 @@
     });
   };
 
-  const loadOlderMessages = () => {
-    if (hasOlderMessages.value)
-      changeMessagePage(messagePagination.current - 1);
+  /** 向上加载更早的一页：prepend 进来并保持当前阅读位置（不跳屏） */
+  const loadOlderMessages = async () => {
+    const agent = agentId.value;
+    const conversationId = selectedConversationId.value;
+    if (!agent || !conversationId) return;
+    if (!hasOlderMessages.value || messagesLoadingMore.value) return;
+    const targetPage = messageLoadedFromPage.value - 1;
+    const seq = messageRequestSeq;
+    messagesLoadingMore.value = true;
+    try {
+      const beforeHeight = document.documentElement.scrollHeight;
+      const { data } = await queryAgentConversationMessages(
+        agent,
+        conversationId,
+        { page: targetPage, pageSize: messagePagination.pageSize }
+      );
+      if (seq !== messageRequestSeq) return;
+      const existing = new Set(messageList.value.map((item) => item.id));
+      const older = (data.items || []).filter((item) => !existing.has(item.id));
+      messageList.value = [...older, ...messageList.value];
+      messageLoadedFromPage.value = Math.max(1, data.page);
+      messagePagination.total = data.total;
+      await nextTick();
+      const grown = document.documentElement.scrollHeight - beforeHeight;
+      if (grown > 0) window.scrollBy(0, grown);
+      observeOlderSentinel();
+    } catch (error) {
+      Message.error('更早的消息加载失败');
+    } finally {
+      messagesLoadingMore.value = false;
+    }
   };
 
   const jumpToLatestMessages = () => {
@@ -702,10 +766,6 @@
     if (conversation) {
       selectConversation(conversation);
     }
-  };
-
-  const onMessagePageChange = (page: number) => {
-    changeMessagePage(page);
   };
 
   const canArchiveMessage = (message: AgentConversationMessageRecord) => {
@@ -902,6 +962,11 @@
     },
     { immediate: true }
   );
+
+  onBeforeUnmount(() => {
+    olderObserver?.disconnect();
+    olderObserver = null;
+  });
 </script>
 
 <script lang="ts">

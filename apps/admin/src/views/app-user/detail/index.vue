@@ -435,6 +435,7 @@
           <div
             ref="messengerListRef"
             class="app-user-detail-page__messenger-list"
+            @scroll.passive="onMessengerListScroll"
           >
             <a-spin :loading="messengerLoading" style="width: 100%">
               <div
@@ -737,6 +738,14 @@
     } finally {
       agentsLoading.value = false;
     }
+  };
+
+  /** 滚到顶部时自动加载更早消息（聊天软件的直觉：往上翻就是更早） */
+  const onMessengerListScroll = () => {
+    const el = messengerListRef.value;
+    if (!el || el.scrollTop > 48) return;
+    if (!messengerHasMore.value || messengerLoadingMore.value) return;
+    loadOlderMessengerMessages();
   };
 
   const scrollMessengerToBottom = async () => {

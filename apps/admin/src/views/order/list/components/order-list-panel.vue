@@ -130,6 +130,11 @@
             class="order-page__registered-month"
           />
         </a-form-item>
+        <a-form-item v-if="!refundMode" field="includeClosed">
+          <a-checkbox v-model="searchForm.includeClosed">
+            包含已关闭订单
+          </a-checkbox>
+        </a-form-item>
         <a-form-item>
           <a-space>
             <a-button type="primary" :loading="loading" @click="handleSearch">
@@ -163,7 +168,7 @@
           </a-empty>
         </template>
         <template #columns>
-          <a-table-column title="订单信息" data-index="orderNo" :width="260">
+          <a-table-column title="订单信息" data-index="orderNo" :width="215">
             <template #cell="{ record }">
               <div class="order-page__main">
                 <template v-if="record.kind === 'refund'">
@@ -180,24 +185,28 @@
                   </div>
                   <div class="order-page__muted">
                     原订单：
-                    <a-typography-text class="order-page__mono" copyable>
-                      {{ record.originalOrderNo || '-' }}
-                    </a-typography-text>
+                    <a-tooltip :content="record.originalOrderNo || '-'">
+                      <a-typography-text class="order-page__mono" copyable>
+                        {{ shortOrderNo(record.originalOrderNo) }}
+                      </a-typography-text>
+                    </a-tooltip>
                   </div>
                 </template>
                 <template v-else>
-                  <a-typography-text
-                    class="order-page__mono order-page__order-no"
-                    copyable
-                  >
-                    {{ record.orderNo }}
-                  </a-typography-text>
                   <div class="order-page__title">{{ record.title || '-' }}</div>
+                  <a-tooltip :content="record.orderNo">
+                    <a-typography-text
+                      class="order-page__mono order-page__order-no"
+                      copyable
+                    >
+                      {{ shortOrderNo(record.orderNo) }}
+                    </a-typography-text>
+                  </a-tooltip>
                 </template>
               </div>
             </template>
           </a-table-column>
-          <a-table-column title="用户" data-index="user" :width="220">
+          <a-table-column title="用户" data-index="user" :width="175">
             <template #cell="{ record }">
               <div class="order-page__user">
                 <div class="order-page__user-name">
@@ -212,15 +221,13 @@
                 <div class="order-page__muted">
                   {{ resolveOrderUserContact(record) }}
                 </div>
+                <div class="order-page__muted order-page__sub">
+                  注册 {{ formatRegisteredMonth(record.user?.registeredAt) }}
+                </div>
               </div>
             </template>
           </a-table-column>
-          <a-table-column title="注册月份" :width="120">
-            <template #cell="{ record }">
-              {{ formatRegisteredMonth(record.user?.registeredAt) }}
-            </template>
-          </a-table-column>
-          <a-table-column title="金额" data-index="payableAmount" :width="150">
+          <a-table-column title="金额" data-index="payableAmount" :width="125">
             <template #cell="{ record }">
               <template v-if="record.kind === 'refund'">
                 <div
@@ -257,7 +264,7 @@
               </template>
             </template>
           </a-table-column>
-          <a-table-column title="状态" data-index="status" :width="120">
+          <a-table-column title="状态" data-index="status" :width="100">
             <template #cell="{ record }">
               <a-tag :color="getRecordStatusColor(record)">
                 {{ getRecordStatusText(record) }}
@@ -265,64 +272,68 @@
             </template>
           </a-table-column>
           <a-table-column
-            v-if="!refundMode"
-            title="来源"
-            data-index="source"
-            :width="100"
-          >
-            <template #cell="{ record }">
-              {{ getSourceText(record.source) }}
-            </template>
-          </a-table-column>
-          <a-table-column
-            title="支付渠道"
+            title="渠道"
             data-index="paymentProvider"
             :width="130"
           >
             <template #cell="{ record }">
-              {{ getPaymentProviderText(record.paymentProvider) }}
-            </template>
-          </a-table-column>
-          <a-table-column title="平台" :width="110">
-            <template #cell="{ record }">
-              <a-tooltip
-                v-if="getVirtualPayPlatform(record) === 'ios'"
-                content="iOS 虚拟支付订单，微信侧不支持开发者发起退款"
-              >
-                <a-tag color="red">iOS</a-tag>
-              </a-tooltip>
-              <a-tag
-                v-else-if="getVirtualPayPlatform(record) === 'android'"
-                color="arcoblue"
-              >
-                安卓
-              </a-tag>
-              <span v-else>-</span>
+              <div class="order-page__channel">
+                <span>{{
+                  getPaymentProviderText(record.paymentProvider)
+                }}</span>
+                <a-tooltip
+                  v-if="getVirtualPayPlatform(record) === 'ios'"
+                  content="iOS 虚拟支付订单，微信侧不支持开发者发起退款"
+                >
+                  <a-tag color="red" size="small">iOS</a-tag>
+                </a-tooltip>
+                <a-tag
+                  v-else-if="getVirtualPayPlatform(record) === 'android'"
+                  color="arcoblue"
+                  size="small"
+                >
+                  安卓
+                </a-tag>
+                <span
+                  v-if="!refundMode"
+                  class="order-page__muted order-page__sub"
+                >
+                  {{ getSourceText(record.source) }}
+                </span>
+              </div>
             </template>
           </a-table-column>
           <a-table-column
-            title="微信交易号"
-            data-index="paymentTradeNo"
-            :width="220"
+            v-if="!refundMode"
+            title="时间"
+            data-index="paidAt"
+            :width="165"
           >
             <template #cell="{ record }">
-              <a-tooltip
-                v-if="record.paymentTradeNo"
-                :content="record.paymentTradeNo"
-              >
-                <span class="order-page__mono order-page__ellipsis">
-                  {{ record.paymentTradeNo }}
+              <div class="order-page__time">
+                <span class="order-page__muted order-page__sub">
+                  创建 {{ formatDate(record.createdAt) }}
                 </span>
-              </a-tooltip>
-              <span v-else>-</span>
+                <span>支付 {{ formatDate(record.paidAt) }}</span>
+              </div>
             </template>
           </a-table-column>
-          <a-table-column title="创建时间" data-index="createdAt" :width="170">
+          <a-table-column
+            v-if="refundMode"
+            title="创建时间"
+            data-index="createdAt"
+            :width="160"
+          >
             <template #cell="{ record }">
               {{ formatDate(record.createdAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="支付时间" data-index="paidAt" :width="170">
+          <a-table-column
+            v-if="refundMode"
+            title="支付时间"
+            data-index="paidAt"
+            :width="160"
+          >
             <template #cell="{ record }">
               {{ formatDate(record.paidAt) }}
             </template>
@@ -359,12 +370,12 @@
           </a-table-column>
           <a-table-column
             title="操作"
-            :width="refundMode ? 360 : 280"
-            fixed="right"
+            :width="refundMode ? 300 : 190"
+            :fixed="refundMode ? 'right' : undefined"
           >
             <template #cell="{ record }">
               <template v-if="record.kind !== 'refund'">
-                <a-space>
+                <a-space wrap>
                   <a-button
                     v-if="!refundMode"
                     type="text"
@@ -1063,6 +1074,8 @@
     paymentType?: AdminOrderPaymentTypeDTO | '';
     createdAtRange: string[];
     registeredMonth?: string;
+    /** 订单明细默认把已关闭（未支付超时/放弃支付）订单也列出来 */
+    includeClosed: boolean;
   }>({
     keyword: '',
     kind: undefined,
@@ -1071,6 +1084,7 @@
     paymentType: undefined,
     createdAtRange: [],
     registeredMonth: undefined,
+    includeClosed: true,
   });
   const createForm = reactive<{
     orderType: OrderTypeDTO;
@@ -1187,6 +1201,9 @@
     createdAtStart: normalizedCreatedAtRange.value.createdAtStart,
     createdAtEnd: normalizedCreatedAtRange.value.createdAtEnd,
     registeredMonth: searchForm.registeredMonth || undefined,
+    includeClosed: props.refundMode
+      ? undefined
+      : searchForm.includeClosed || undefined,
     userId: props.userId || undefined,
     // 订单明细页把退款并入同一份列表；退款处理页维持仅订单，避免其操作错配
     includeRefunds: props.refundMode ? undefined : 1,
@@ -1194,6 +1211,12 @@
     page: pagination.current,
     pageSize: pagination.pageSize,
   }));
+  /** 列表里只显示订单号后 8 位，完整号放在 tooltip 与详情抽屉 */
+  const shortOrderNo = (value?: string) => {
+    const text = (value || '').trim();
+    if (!text) return '-';
+    return text.length > 8 ? `…${text.slice(-8)}` : text;
+  };
   const hasSearchCondition = computed(
     () =>
       Boolean(searchForm.keyword.trim()) ||
@@ -1201,7 +1224,8 @@
       Boolean(searchForm.source) ||
       Boolean(searchForm.paymentType) ||
       searchForm.createdAtRange.length > 0 ||
-      Boolean(searchForm.registeredMonth)
+      Boolean(searchForm.registeredMonth) ||
+      Boolean(!searchForm.includeClosed)
   );
   const emptyDescription = computed(() => {
     if (hasSearchCondition.value) {
@@ -1211,11 +1235,12 @@
     return props.emptyDescription || '暂无订单数据';
   });
   const tableScrollX = computed(() => {
+    // 订单明细：紧凑列宽，1440 桌面可一屏放下，不再被右侧固定列挡住时间
     if (!props.refundMode) {
-      return 1780;
+      return 1080;
     }
 
-    return 2550;
+    return 1540;
   });
   const canCreateAdminOrder = computed(
     () => !props.status && !props.orderType && !props.embedded && !props.userId
@@ -1310,6 +1335,7 @@
     searchForm.paymentType = undefined;
     searchForm.createdAtRange = [];
     searchForm.registeredMonth = undefined;
+    searchForm.includeClosed = true;
     pagination.current = 1;
     fetchData();
   };
@@ -2639,7 +2665,42 @@
     }
 
     &__order-no {
-      max-width: 220px;
+      max-width: 200px;
+      margin-top: 2px;
+      color: var(--color-text-3);
+      font-size: 12px;
+    }
+
+    /* 产品名是主信息：排第一行且更醒目，订单号退成次级小字 */
+    &__main {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    &__main > .order-page__title {
+      margin-top: 0;
+    }
+
+    &__sub {
+      font-size: 12px;
+      line-height: 18px;
+    }
+
+    &__channel,
+    &__time {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 13px;
+      line-height: 20px;
+    }
+
+    &__channel {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
     }
 
     &__agent-id {

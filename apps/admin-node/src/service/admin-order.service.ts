@@ -440,10 +440,11 @@ export class AdminOrderService {
           ...(refundStatus ? [{ kind: 'refund', status: refundStatus }] : []),
         ],
       });
-    } else {
-      // 默认不展示已关闭订单：它们只是放弃支付/超时关单的流水（历史 4k+ 条），
-      // 会把真正需要处理的「待支付/已支付」淹没。需要时用 status=closed 显式筛选
-      // （前端筛选项里已有「已关闭」）。
+    } else if (!this.normalizeBoolean(query?.includeClosed)) {
+      // 缺省不展示已关闭订单：它们只是放弃支付/超时关单的流水（历史 4k+ 条），
+      // 会把真正需要处理的「待支付/已支付」淹没；订单明细页传 includeClosed=true
+      // 即可看到关单记录（页面上的「包含已关闭」开关，默认打开），
+      // 也仍可用 status=closed 单独筛选。
       and.push({ status: { $ne: OrderStatus.closed } });
     }
 

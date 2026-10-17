@@ -125,8 +125,12 @@
 // a-spin 的包裹层默认是 inline-block（收缩到内容宽度）：里面放一张带 scroll.x 的宽表格时，
 // 它会按表格的 min-width 撑开，顺带把卡片/整页顶宽，右侧内容被裁掉、且不出现滚动条。
 // 统一改成「块级 + 满宽」，让表格在自己的容器里滚动。
+// 只在没有页面级布局规则时兜底成块级。
+// 注意不能加 !important：智能体主页的对话卡片用 .arco-spin 当 flex 链的一环
+// （display:flex + flex:1），写死 block 会让消息流按内容高度撑开、被卡片裁掉，
+// 表现为「只能看到部分聊天、翻不到更早」。
 .arco-spin {
-  display: block !important;
+  display: block;
   width: 100%;
   max-width: 100%;
 }
