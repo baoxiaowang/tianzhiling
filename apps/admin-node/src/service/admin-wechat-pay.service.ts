@@ -37,6 +37,9 @@ interface WechatXPayResponse {
   errmsg?: string;
 }
 
+/** access_token 失效/过期类错误码：40001 无效、40014 不合法、42001 已过期 */
+const INVALID_ACCESS_TOKEN_ERRCODES = new Set([40001, 40014, 42001]);
+
 export interface AdminWechatTransactionPayload {
   appid?: string;
   mchid?: string;
@@ -128,6 +131,13 @@ export class AdminWechatPayService {
   wechatVirtualPayConfig: WechatVirtualPayConfig;
 
   private wxpayClient?: unknown;
+
+  /** appId -> access_token 缓存（避免撞 cgi-bin/token 每日 2000 次配额） */
+  private readonly accessTokenCache = new Map<
+    string,
+    { token: string; expiresAt: number }
+  >();
+  private accessTokenInFlight: Promise<string> | null = null;
 
   async queryTransactionByOrderNo(
     orderNo: string
@@ -519,6 +529,20 @@ export class AdminWechatPayService {
     );
 
     if (response.errcode) {
+      // 令牌失效/过期：清缓存后重试一次，避免缓存中的旧令牌导致一连串失败
+      if (INVALID_ACCESS_TOKEN_ERRCODES.has(response.errcode)) {
+        this.invalidateAccessToken();
+        const fresh = await this.getMiniProgramAccessToken(true);
+        const retried = await this.postJson<T>(
+          `https://api.weixin.qq.com${uri}?access_token=${encodeURIComponent(
+            fresh
+          )}&pay_sig=${encodeURIComponent(paySig)}`,
+          body
+        );
+        if (!retried.errcode) return retried;
+        response.errcode = retried.errcode;
+        response.errmsg = retried.errmsg;
+      }
       if (this.isIosVirtualRefundUnsupported(response)) {
         throw new AppError(
           'WECHAT_VIRTUAL_PAY_IOS_REFUND_UNSUPPORTED',
@@ -557,9 +581,85 @@ export class AdminWechatPayService {
     );
   }
 
-  private async getMiniProgramAccessToken(): Promise<string> {
+  /**
+   * 小程序 access_token：**必须缓存**。
+   *
+   * 以前每次支付/退款都直接调 `cgi-bin/token`，而该接口每天只有 2000 次配额；
+   * 退款对账任务每分钟扫几十笔，很快就把配额打满，之后所有虚拟支付退款都会以
+   * `errcode 45009 reach max api daily quota limit` 失败（2026-10-17 用户退款失败即此原因）。
+   *
+   * 现在：
+   *   1. 优先用微信推荐的 `cgi-bin/stable_token`（配额更大，短期内返回同一个 token）；
+   *   2. 令牌缓存在进程内，按 `expires_in` 提前 120 秒过期，并对并发请求做单飞合并；
+   *   3. 拿不到时回退旧的 `cgi-bin/token`，两者都失败才抛错。
+   */
+  private async getMiniProgramAccessToken(
+    forceRefresh = false
+  ): Promise<string> {
     const appId = this.requireMiniProgramConfig('appId');
+    const cached = this.accessTokenCache.get(appId);
+
+    if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
+      return cached.token;
+    }
+
+    if (!forceRefresh && this.accessTokenInFlight) {
+      return this.accessTokenInFlight;
+    }
+
+    const task = this.fetchMiniProgramAccessToken(appId)
+      .then(token => {
+        this.cacheAccessToken(appId, token.token, token.expiresIn);
+        return token.token;
+      })
+      .finally(() => {
+        this.accessTokenInFlight = null;
+      });
+
+    this.accessTokenInFlight = task;
+    return task;
+  }
+
+  /** 令牌失效（40001/40014/42001）时清缓存，下次重新拉取 */
+  private invalidateAccessToken() {
+    this.accessTokenCache.clear();
+  }
+
+  private cacheAccessToken(appId: string, token: string, expiresIn?: number) {
+    // 提前 120 秒过期，避免用到临界过期的令牌
+    const ttlMs = Math.max(60, (expiresIn ?? 7200) - 120) * 1000;
+    this.accessTokenCache.set(appId, {
+      token,
+      expiresAt: Date.now() + ttlMs,
+    });
+  }
+
+  private async fetchMiniProgramAccessToken(
+    appId: string
+  ): Promise<{ token: string; expiresIn?: number }> {
     const appSecret = this.requireMiniProgramConfig('appSecret');
+    let lastError: WechatAccessTokenResponse | null = null;
+
+    // 1) stable_token：官方推荐，配额远大于 cgi-bin/token
+    try {
+      const response = await this.postJson<WechatAccessTokenResponse>(
+        'https://api.weixin.qq.com/cgi-bin/stable_token',
+        JSON.stringify({
+          grant_type: 'client_credential',
+          appid: appId,
+          secret: appSecret,
+          force_refresh: false,
+        })
+      );
+      if (!response.errcode && response.access_token) {
+        return { token: response.access_token, expiresIn: response.expires_in };
+      }
+      lastError = response;
+    } catch (error) {
+      // 网络异常时继续走兜底接口
+    }
+
+    // 2) 兜底：cgi-bin/token（每日配额有限）
     const params = new URLSearchParams({
       grant_type: 'client_credential',
       appid: appId,
@@ -569,15 +669,16 @@ export class AdminWechatPayService {
       `https://api.weixin.qq.com/cgi-bin/token?${params.toString()}`
     );
 
-    if (response.errcode || !response.access_token) {
-      throw new AppError(
-        'WECHAT_ACCESS_TOKEN_FAILED',
-        response.errmsg || 'failed to get wechat access token',
-        502
-      );
+    if (!response.errcode && response.access_token) {
+      return { token: response.access_token, expiresIn: response.expires_in };
     }
 
-    return response.access_token;
+    const failure = response.errcode ? response : lastError || response;
+    throw new AppError(
+      'WECHAT_ACCESS_TOKEN_FAILED',
+      failure.errmsg || 'failed to get wechat access token',
+      502
+    );
   }
 
   private getJson<T>(url: string): Promise<T> {
