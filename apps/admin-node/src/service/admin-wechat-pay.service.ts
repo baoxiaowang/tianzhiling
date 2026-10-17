@@ -138,6 +138,8 @@ export class AdminWechatPayService {
     { token: string; expiresAt: number }
   >();
   private accessTokenInFlight: Promise<string> | null = null;
+  /** 取 token 失败的告警节流（同一次故障 10 分钟内只报一次，避免日志被刷爆） */
+  private readonly accessTokenAlertedAt = new Map<string, number>();
 
   async queryTransactionByOrderNo(
     orderNo: string
@@ -620,6 +622,30 @@ export class AdminWechatPayService {
     return task;
   }
 
+  /**
+   * 取 token 失败告警：走 console.error（本服务的 logger 不落 stdout，运维看不見）。
+   * 45009 = 每日配额打满，属于「所有虚拟支付退款都会失败」的级联故障，必须能被检索到。
+   */
+  private alertAccessTokenFailure(
+    appId: string,
+    errcode?: number,
+    errmsg?: string
+  ) {
+    const now = Date.now();
+    const last = this.accessTokenAlertedAt.get(appId) ?? 0;
+    if (now - last < 10 * 60 * 1000) return;
+    this.accessTokenAlertedAt.set(appId, now);
+
+    const maskedAppId = appId.length > 6 ? `${appId.slice(0, 6)}***` : '***';
+    // eslint-disable-next-line no-console
+    console.error(
+      '[wechat-token-alert] 获取小程序 access_token 失败：appId=%s errcode=%s errmsg=%s（虚拟支付退款/查单会失败；45009 表示每日配额已打满，stable_token 也失败时需人工介入）',
+      maskedAppId,
+      errcode ?? '-',
+      errmsg ?? '-'
+    );
+  }
+
   /** 令牌失效（40001/40014/42001）时清缓存，下次重新拉取 */
   private invalidateAccessToken() {
     this.accessTokenCache.clear();
@@ -674,10 +700,13 @@ export class AdminWechatPayService {
     }
 
     const failure = response.errcode ? response : lastError || response;
+    this.alertAccessTokenFailure(appId, failure.errcode, failure.errmsg);
+
     throw new AppError(
       'WECHAT_ACCESS_TOKEN_FAILED',
       failure.errmsg || 'failed to get wechat access token',
-      502
+      502,
+      failure
     );
   }
 

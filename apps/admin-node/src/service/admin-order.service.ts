@@ -3544,12 +3544,13 @@ export class AdminOrderService {
     failed: number;
     errors: string[];
   }> {
+    // 只对账「处理中」的记录：已完成退款的结果不会变，重复回查只会白烧微信配额
+    // （2026-10-17 事故：把 completed 也每 60 秒回查一次，40 条/分钟直接把
+    //  cgi-bin/token 每天 2000 次的配额打满，导致所有虚拟支付退款失败）。
     const records = await this.orderRefundModel.find({
       where: {
         paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
-        status: {
-          $in: [OrderRefundStatus.completed, OrderRefundStatus.processing],
-        },
+        status: OrderRefundStatus.processing,
       } as never,
       take: limit,
     } as never);
