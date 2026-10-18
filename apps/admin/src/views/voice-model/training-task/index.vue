@@ -51,7 +51,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1950 }"
+        :scroll="{ x: 1700 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -61,7 +61,7 @@
           </a-empty>
         </template>
         <template #columns>
-          <a-table-column title="订单" data-index="orderNo" :width="220">
+          <a-table-column title="订单" data-index="orderNo" :width="200">
             <template #cell="{ record }">
               <a-typography-text v-if="record.orderNo" copyable>
                 {{ record.orderNo }}
@@ -71,7 +71,7 @@
               </a-typography-text>
             </template>
           </a-table-column>
-          <a-table-column title="用户" data-index="user" :width="210">
+          <a-table-column title="用户" data-index="user" :width="190">
             <template #cell="{ record }">
               <div>
                 <a-link @click="goUserDetail(record.userId)">
@@ -85,7 +85,7 @@
               </div>
             </template>
           </a-table-column>
-          <a-table-column title="Agent" data-index="agent" :width="220">
+          <a-table-column title="Agent" data-index="agent" :width="190">
             <template #cell="{ record }">
               <div>
                 <a-link @click="goAgentDetail(record.agentId)">
@@ -98,14 +98,25 @@
             </template>
           </a-table-column>
           <a-table-column
-            title="套餐"
+            title="套餐 / 训练方式"
             data-index="voicePackageName"
-            :width="180"
+            :width="190"
           >
             <template #cell="{ record }">
               <div>{{ record.voicePackageName || '-' }}</div>
               <div class="voice-task-page__muted">
                 {{ record.voicePackageCode }}
+              </div>
+              <div class="voice-task-page__strategy">
+                <a-tag
+                  size="small"
+                  :color="getTrainingStrategyColor(record.trainingStrategy)"
+                >
+                  {{ getTrainingStrategyText(record.trainingStrategy) }}
+                </a-tag>
+                <span class="voice-task-page__muted">
+                  {{ formatMaterialDuration(record.materialDurationSeconds) }}
+                </span>
               </div>
             </template>
           </a-table-column>
@@ -114,26 +125,6 @@
               <a-tag :color="getStatusColor(record.status)">
                 {{ getStatusText(record.status) }}
               </a-tag>
-            </template>
-          </a-table-column>
-          <a-table-column
-            title="内部推荐"
-            data-index="trainingStrategy"
-            :width="190"
-          >
-            <template #cell="{ record }">
-              <a-tag :color="getTrainingStrategyColor(record.trainingStrategy)">
-                {{ getTrainingStrategyText(record.trainingStrategy) }}
-              </a-tag>
-              <div class="voice-task-page__muted">
-                {{ formatMaterialDuration(record.materialDurationSeconds) }}
-              </div>
-              <div
-                v-if="record.trainingStrategy === 'long_sample'"
-                class="voice-task-page__muted"
-              >
-                结果差时剪至1分钟优质片段
-              </div>
             </template>
           </a-table-column>
           <a-table-column title="处理人" data-index="assigneeName" :width="120">
@@ -153,7 +144,7 @@
               <span v-else>-</span>
             </template>
           </a-table-column>
-          <a-table-column title="备注" data-index="remark" :width="220">
+          <a-table-column title="备注" data-index="remark" :width="180">
             <template #cell="{ record }">
               <a-tooltip v-if="record.remark" :content="record.remark">
                 <span class="voice-task-page__ellipsis">
@@ -173,7 +164,7 @@
               {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="170" fixed="right">
+          <a-table-column title="操作" :width="150" fixed="right">
             <template #cell="{ record }">
               <a-space>
                 <a-button type="text" size="small" @click="openEdit(record)">
