@@ -34,6 +34,18 @@
         :cols="24"
         :col-gap="16"
         :row-gap="16"
+        class="data-dashboard__hourly"
+        style="margin-bottom: 16px"
+      >
+        <a-grid-item :span="24">
+          <hourly-breakdown />
+        </a-grid-item>
+      </a-grid>
+
+      <a-grid
+        :cols="24"
+        :col-gap="16"
+        :row-gap="16"
         class="data-dashboard__analysis"
       >
         <a-grid-item :span="16">
@@ -124,6 +136,9 @@
   // 异步加载 Chart 组件，减小首屏 bundle
   const Chart = defineAsyncComponent(
     () => import('@/components/chart/index.vue')
+  );
+  const HourlyBreakdown = defineAsyncComponent(
+    () => import('./components/hourly-breakdown.vue')
   );
 
   const loading = ref(false);

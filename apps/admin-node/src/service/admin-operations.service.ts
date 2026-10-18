@@ -232,6 +232,86 @@ export class AdminOperationsService {
   @InjectEntityModel(OrderAnalyticsSnapshotEntity)
   orderAnalyticsSnapshotModel?: MongoRepository<OrderAnalyticsSnapshotEntity>;
 
+  /**
+   * 今日分时段（按小时）数据：新增用户 / 活跃用户 / 消息数。
+   * 时区固定 Asia/Shanghai，避免服务器 UTC 把 0–8 点算到前一天。
+   * 口径与每日明细一致：用户按 createdAt，消息按 createdAt，排除系统消息与已归档消息。
+   */
+  async getHourlyBreakdown(date?: string) {
+    const day = (date || '').trim() || this.getShanghaiDateString(new Date());
+    const start = new Date(`${day}T00:00:00+08:00`);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    const hourExpr = {
+      $dateToString: { format: '%H', date: '$createdAt', timezone: 'Asia/Shanghai' },
+    };
+
+    const [userRows, messageRows] = await Promise.all([
+      this.userModel
+        .aggregate([
+          { $match: { createdAt: { $gte: start, $lt: end } } },
+          { $group: { _id: hourExpr, count: { $sum: 1 } } },
+        ])
+        .toArray(),
+      this.messageModel
+        .aggregate([
+          {
+            $match: {
+              createdAt: { $gte: start, $lt: end },
+              role: { $in: ['user', 'assistant'] },
+              isArchived: { $ne: true },
+            },
+          },
+          {
+            $group: {
+              _id: hourExpr,
+              messages: { $sum: 1 },
+              users: { $addToSet: '$userId' },
+            },
+          },
+          { $project: { messages: 1, activeUsers: { $size: '$users' } } },
+        ])
+        .toArray(),
+    ]);
+
+    const usersByHour = new Map<string, number>();
+    userRows.forEach((row: { _id: string; count: number }) => {
+      usersByHour.set(String(row._id), Number(row.count) || 0);
+    });
+    const msgByHour = new Map<string, { messages: number; activeUsers: number }>();
+    messageRows.forEach((row: { _id: string; messages: number; activeUsers: number }) => {
+      msgByHour.set(String(row._id), {
+        messages: Number(row.messages) || 0,
+        activeUsers: Number(row.activeUsers) || 0,
+      });
+    });
+
+    const buckets = Array.from({ length: 24 }, (_, hour) => {
+      const key = String(hour).padStart(2, '0');
+      const msg = msgByHour.get(key);
+      return {
+        hour,
+        newUsers: usersByHour.get(key) ?? 0,
+        activeUsers: msg?.activeUsers ?? 0,
+        messages: msg?.messages ?? 0,
+      };
+    });
+
+    return {
+      date: day,
+      timezone: 'Asia/Shanghai',
+      buckets,
+    };
+  }
+
+  private getShanghaiDateString(date: Date): string {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
+
   @InjectEntityModel(PostEntity)
   postModel: MongoRepository<PostEntity>;
 

@@ -32,6 +32,11 @@ export class AdminOperationsController {
     return this.adminOperationsService.getOverview();
   }
 
+  @Get('/hourly')
+  async hourly(@Query('date') date?: string) {
+    return this.adminOperationsService.getHourlyBreakdown(date);
+  }
+
   @Get('/chat-quality')
   async chatQuality() {
     return this.adminOperationsService.getChatQuality();

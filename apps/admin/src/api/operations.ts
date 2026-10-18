@@ -156,3 +156,23 @@ export function querySystemRuntime() {
     '/admin_api/operations/system-runtime'
   );
 }
+
+export interface HourlyBreakdownBucket {
+  hour: number;
+  newUsers: number;
+  activeUsers: number;
+  messages: number;
+}
+
+export interface HourlyBreakdownRes {
+  date: string;
+  timezone: string;
+  buckets: HourlyBreakdownBucket[];
+}
+
+/** 今日分时段（1 小时粒度）：新增用户 / 活跃用户 / 消息数 */
+export function queryHourlyBreakdown(date?: string) {
+  return axios.get<HourlyBreakdownRes>('/admin_api/operations/hourly', {
+    params: date ? { date } : undefined,
+  });
+}
