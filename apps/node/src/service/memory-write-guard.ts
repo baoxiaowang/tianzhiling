@@ -53,3 +53,15 @@ export function isStructuredMemoryOnly(
   return readTruthy(env.MEMORY_STRUCTURED_ONLY);
 }
 
+/**
+ * 原话 Milvus 索引的独立开关。
+ *
+ * 需要“保留检索但暂停其他自动写入”时，`CHAT_SKIP_MEMORY_WRITE` 会把
+ * semanticIndex 一起拦住。设 `MILVUS_INDEX_ENABLED=true` 可以单独放行
+ * 原话索引入队（仍需 `MEMORY_WRITE_DISABLED=false`，否则任务消费会被延后）。
+ */
+export function isMilvusIndexEnabled(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return readTruthy(env.MILVUS_INDEX_ENABLED);
+}

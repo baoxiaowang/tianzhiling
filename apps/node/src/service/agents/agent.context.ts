@@ -402,14 +402,26 @@ export interface RetrievedContextSnippet {
 
 // 连续亲人聊天需要覆盖约八轮；各模式仍可在这个总上限内主动收缩。
 // 自动检索先取一小批候选，随后仍按会话模式的限额筛选注入。
-const AUTO_MEMORY_RETRIEVAL_CANDIDATES = 10;
-// 实际注入上限：实测 8 条里多数是重复碎片，3 条足够且省 token。
-// 自动注入只给 1 条：实测 3 条里通常只有 1 条有信息量，其余是问题碎片。
-const AUTO_MEMORY_INJECT_LIMIT = 1;
+// 候选从 40 收到 12：40 个候选对每次自动检索明显过量，12 个足够覆盖 top 结果，
+// 同时减少 Milvus 响应与序列化开销。
+const AUTO_MEMORY_RETRIEVAL_CANDIDATES = 12;
+// 实际注入上限：检索已经付过费，命中且分数可信时给 2–3 条，
+// 比“每次只给 1 条”更能体现检索价值；弱相关仍只留 1 条（见 injectMemoryEvidence）。
+const AUTO_MEMORY_INJECT_LIMIT = 3;
 // 与最近对话（本来就注入上下文）重合到这个程度，就不再重复注入。
 const MEMORY_EVIDENCE_RECENT_DUPLICATE_THRESHOLD = 0.5;
 // 注入的每条至少要有 6 个实义字符，否则只是占位碎片。
 const AUTO_MEMORY_MIN_EVIDENCE_CHARACTERS = 6;
+// 只有“记忆型问句/回忆线索”才值得主动检索；纯寒暄、情绪、日常应答不搜。
+// 人物/时间/事件/习惯等结构化键由 buildMemoryRetrievalQuery 负责，这里补
+// 显式回忆词和问句词，避免“核桃是谁”这类不含亲属称谓的人名问句漏检。
+const MEMORY_QUERY_SIGNAL_PATTERN =
+  /还记得|记不记得|记得|以前|之前|上次|当年|那时候|小时候|谁|哪年|哪天|生日|忌日|祭日|去世|过世|离世|走了|走后|住院|手术|生病|结婚|离婚|怀孕|出生|上学|幼儿园|工作|上班|搬家|买房|纪念日|老家|籍贯|属相|几岁/;
+// 太短的句子不检索（“好/嗯/在吗”），至少 4 个实义字符。
+const MEMORY_QUERY_MIN_CORE_CHARACTERS = 4;
+// 多条候选的 top1/top2 分数差小于该值时，只保留 top1：说明它们多是同质碎片，
+// 多注入只会重复占 token。真正有区分度的多条证据才一起注入。
+const MEMORY_INJECT_MIN_SCORE_GAP = 0.02;
 // 纯应答类原话（"我会好好的""我知道了"）字数够但没有信息量，不注入。
 const MEMORY_EVIDENCE_ACK_PATTERN =
   /^(?:好(?:的|吧|啊)?|嗯+|哦+|是(?:的|啊)?|对(?:的)?|行|可以|知道了|我知道了|我明白了|我会的|我会好好的|好好的|没事|不要紧|谢谢你?)$/u;
@@ -706,22 +718,32 @@ export function isInjectableMemoryEvidence(
   return true;
 }
 /**
- * 候选：查询保留完整表达。抽到关键词也不丢掉句中的具体事情（"爸爸我明天坐高铁回去读书"
- * 不能再只拿"爸 爸爸"去查）；抽不出关键词时也保留原话做语义检索。
+ * 候选：查询由“结构化检索键 + 原话里命中的已知人物名 + 短核心”组成。
+ * 不再把整句情绪原话直接拿去撞相似度；抽不出键时仍保留原句作为兜底。
  */
 export function resolveSemanticRetrievalQuery(
   extractedKeys: string,
-  currentUserText: string
+  currentUserText: string,
+  entityNames: string[] = []
 ): string {
   const text = (currentUserText || '').trim();
-  return text || (extractedKeys || '').trim();
+  const matchedNames = entityNames
+    .map(name => (name || '').trim())
+    .filter(name => name.length >= 2 && text.includes(name));
+  const keyTokens = (extractedKeys || '')
+    .split(/\s+/)
+    .map(key => key.trim())
+    .filter(Boolean);
+  const core = memoryEvidenceCore(text).slice(0, 80);
+  const parts = [...keyTokens, ...matchedNames, core || text].filter(Boolean);
+  return Array.from(new Set(parts)).join(' ').trim().slice(0, 200);
 }
 
 /**
  * 候选：是否值得发起一次自动检索。
  * - 规划器已要求记忆 → 检索；
- * - 有关键词 → 检索；
- * - 否则只要不是纯应答/空白就检索（不再用"至少六个字"判事实，短表达如"嗓子好多了"也检索）。
+ * - 抽到人物/时间/事件/习惯键 → 检索；
+ * - 否则只有显式“回忆/问句”信号才检索（不再对每句寒暄、情绪都发 embedding）。
  */
 export function shouldTriggerMemoryRetrieval(
   extractedKeys: string,
@@ -730,10 +752,11 @@ export function shouldTriggerMemoryRetrieval(
 ): boolean {
   if (plannerMemoryRequested) return true;
   if ((extractedKeys || '').trim()) return true;
-  const core = memoryEvidenceCore(currentUserText || '');
-  if (core.length < 2) return false;
+  const text = currentUserText || '';
+  const core = memoryEvidenceCore(text);
+  if (core.length < MEMORY_QUERY_MIN_CORE_CHARACTERS) return false;
   if (MEMORY_EVIDENCE_ACK_PATTERN.test(core)) return false;
-  return true;
+  return MEMORY_QUERY_SIGNAL_PATTERN.test(text);
 }
 
 /** 候选：只做最少的内容层守卫，不因缺少字面检索键、人物不一致、问句或情绪而整条删除；
@@ -1093,9 +1116,30 @@ export class AgentContextService {
     const plannerMemoryRequested = this.isPlannerMemoryRequested(
       replyIntent?.memoryPlan
     );
+    // 已知人物名参与查询：用户问“核桃是谁”时，把“核桃”显式带进检索，
+    // 不再只靠整句相似度。名字来源是当前账户已建的熟人与亲属档案。
+    const memoryEntityNamePool: Array<string | undefined> = [];
+    for (const person of knownPeople || []) {
+      memoryEntityNamePool.push(
+        person.preferredName,
+        person.realName,
+        ...(person.aliases || [])
+      );
+    }
+    for (const relative of relatives || []) {
+      memoryEntityNamePool.push(
+        relative.preferredName,
+        relative.realName,
+        ...(relative.aliases || [])
+      );
+    }
+    const memoryEntityNames = memoryEntityNamePool.filter(
+      (name): name is string => Boolean(name && name.trim().length >= 2)
+    );
     const semanticRetrievalQuery = resolveSemanticRetrievalQuery(
       memoryRetrievalQuery,
-      memoryGateText
+      memoryGateText,
+      memoryEntityNames
     );
     const memoryRetrievalReady =
       shouldTriggerMemoryRetrieval(
@@ -1130,6 +1174,38 @@ export class AgentContextService {
               memoryValueSimilarity(text, item.content || '') >=
               MEMORY_EVIDENCE_RECENT_DUPLICATE_THRESHOLD
           );
+        // 检索已经付过费：分数有区分度时给 2–3 条，top1/top2 太接近时只留 1 条，
+        // 避免把同质碎片重复注入。没有 score 的路径保持原来的保守 1 条。
+        // 旧原话按时间轻微降权（最低 0.7），让近期事实优先，但不直接丢掉老记忆。
+        const recencyFactor = (createdAt?: string) => {
+          const ts = createdAt ? Date.parse(createdAt) : NaN;
+          if (!Number.isFinite(ts)) return 1;
+          const ageDays = (Date.now() - ts) / 86400000;
+          if (ageDays <= 180) return 1;
+          return Math.max(0.7, 1 - ((ageDays - 180) / 730) * 0.3);
+        };
+        const selectInjectable = (items: RetrievedContextSnippet[]) => {
+          const ranked = items
+            .filter(keepInjectable)
+            .map(item => ({
+              item,
+              effectiveScore: (item.score || 0) * recencyFactor(item.createdAt),
+            }))
+            .sort((left, right) => right.effectiveScore - left.effectiveScore)
+            .map(entry => entry.item);
+          if (!ranked.length) return [];
+          const topScore = ranked[0].score || 0;
+          const secondScore = ranked[1]?.score || 0;
+          const hasDistinctSecond =
+            ranked.length > 1 &&
+            topScore > 0 &&
+            secondScore > 0 &&
+            topScore - secondScore >= MEMORY_INJECT_MIN_SCORE_GAP;
+          return ranked.slice(
+            0,
+            hasDistinctSecond ? AUTO_MEMORY_INJECT_LIMIT : 1
+          );
+        };
 
         if (useMemoryModule) {
           const recalled = await this.memoryModuleService!.recall({
@@ -1168,11 +1244,7 @@ export class AgentContextService {
               personId: item.personRef,
               memoryKind: item.kind,
             }));
-          retrievedMemories.push(
-            ...snippets
-              .filter(keepInjectable)
-              .slice(0, AUTO_MEMORY_INJECT_LIMIT)
-          );
+          retrievedMemories.push(...selectInjectable(snippets));
           retrievalDiagnostics = {
             memoryEngine: recalled.diagnostics.engine,
             memoryModuleMode: recalled.diagnostics.mode,
@@ -1218,11 +1290,7 @@ export class AgentContextService {
               excludeMessageIds: options.currentTurnMessageIds || [],
               limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
             });
-          retrievedMemories.push(
-            ...(retrieved.items || [])
-              .filter(keepInjectable)
-              .slice(0, AUTO_MEMORY_INJECT_LIMIT)
-          );
+          retrievedMemories.push(...selectInjectable(retrieved.items || []));
           // 把检索内部诊断带进轨迹：之前只记条数，线上"调用成功但 0 条"无法区分
           // 是没候选、候选被过滤，还是内部失败被吞掉。
           const diag = (retrieved as { diagnostics?: Record<string, unknown> })
@@ -1244,6 +1312,31 @@ export class AgentContextService {
           '[context] long-term memory retrieval failed, conversationId=%s reason=%s',
           this.stringifyObjectId(options.conversation.id),
           error instanceof Error ? error.message : String(error)
+        );
+      }
+      // 轻量采样观测：不需要重开全量 chat_trace，只按比例记录触发/候选/分数/注入，
+      // 用于校准 minRawScore 和判断门控是否误伤。默认 0（关闭）。
+      const sampleRate = Number(
+        process.env.MEMORY_RETRIEVAL_SAMPLE_RATE || '0'
+      );
+      if (
+        effectiveMemoryRetrievalMode === 'active' &&
+        Number.isFinite(sampleRate) &&
+        sampleRate > 0 &&
+        Math.random() < sampleRate
+      ) {
+        this.logger?.info?.(
+          '[memory-retrieval] %s',
+          JSON.stringify({
+            conversationId: this.stringifyObjectId(options.conversation.id),
+            gate: memoryGateText.slice(0, 40),
+            query: semanticRetrievalQuery.slice(0, 80),
+            candidateCount: retrievalDiagnostics.candidateCount,
+            selectedCount: retrievalDiagnostics.selectedCount,
+            injected: retrievedMemories.length,
+            maxScore: retrievalDiagnostics.maxScore,
+            failure: retrievalFailureCount,
+          })
         );
       }
     }

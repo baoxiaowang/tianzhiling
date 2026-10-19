@@ -209,6 +209,7 @@ import { RecognitionJourneyObserverService } from './agents/recognition-journey-
 import {
   isMemoryWriteDisabled,
   isMemoryWritePaused,
+  isMilvusIndexEnabled,
   isStructuredMemoryOnly,
 } from './memory-write-guard';
 import {
@@ -12538,8 +12539,12 @@ export class ConversationService {
     userId: string;
     searchableText: string;
   }): Promise<void> {
-    // 结构化只读模式只保留统一抽取器，原话 Milvus 索引继续关闭。
-    if (isMemoryWritePaused() || isStructuredMemoryOnly()) {
+    // 结构化只读模式默认不写原话索引；需要保留检索新鲜度时用
+    // MILVUS_INDEX_ENABLED=true 单独放行（仍要求 MEMORY_WRITE_DISABLED=false）。
+    if (
+      (isMemoryWritePaused() || isStructuredMemoryOnly()) &&
+      !isMilvusIndexEnabled()
+    ) {
       return;
     }
     const searchableText = options.searchableText?.trim();

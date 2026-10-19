@@ -13,6 +13,7 @@ import {
 import {
   isMemoryWriteDisabled,
   isMemoryWritePaused,
+  isMilvusIndexEnabled,
   isStructuredMemoryOnly,
 } from '../../src/service/memory-write-guard';
 import { ConversationService } from '../../src/service/conversation.service';
@@ -107,7 +108,9 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
       });
 
       expect(start.task).toBeNull();
-      expect(start.deferredReason as MemoryTaskDeferReason).toBe('write_paused');
+      expect(start.deferredReason as MemoryTaskDeferReason).toBe(
+        'write_paused'
+      );
       expect(updateOne).toHaveBeenCalledTimes(1);
       const update = updateOne.mock.calls[0][1] as {
         $set: Record<string, unknown>;
@@ -184,10 +187,7 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
 
       (
         service as unknown as {
-          scheduleVisualAppearanceMemory: (
-            m: unknown,
-            o: unknown[]
-          ) => void;
+          scheduleVisualAppearanceMemory: (m: unknown, o: unknown[]) => void;
         }
       ).scheduleVisualAppearanceMemory({ id: 'm1' }, [{ kind: 'hair' }]);
 
@@ -258,10 +258,7 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
       } as never;
       (
         conversation as unknown as {
-          scheduleVisualAppearanceMemory: (
-            m: unknown,
-            o: unknown[]
-          ) => void;
+          scheduleVisualAppearanceMemory: (m: unknown, o: unknown[]) => void;
         }
       ).scheduleVisualAppearanceMemory({ id: 'm1' }, [{ kind: 'hair' }]);
       expect(upsertVisualAppearanceObservations).not.toHaveBeenCalled();
@@ -284,6 +281,20 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
     });
   });
 
+  describe('isMilvusIndexEnabled（只放行原话索引）', () => {
+    it('识别 true/1/yes，未设置时关闭', () => {
+      for (const value of ['true', 'TRUE', '1', 'yes']) {
+        expect(
+          isMilvusIndexEnabled({ MILVUS_INDEX_ENABLED: value } as never)
+        ).toBe(true);
+      }
+      expect(isMilvusIndexEnabled({} as never)).toBe(false);
+      expect(
+        isMilvusIndexEnabled({ MILVUS_INDEX_ENABLED: 'false' } as never)
+      ).toBe(false);
+    });
+  });
+
   describe('导入路径：自动写入暂停，用户确认写入保留', () => {
     it('updateAgentLanguageProfile 在开关打开时不写风格事实与画像', async () => {
       process.env[FLAG] = 'true';
@@ -300,7 +311,10 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
             i: unknown[]
           ) => Promise<void>;
         }
-      ).updateAgentLanguageProfile({ id: 'b1', userId: 'u1', agentId: 'a1' }, []);
+      ).updateAgentLanguageProfile(
+        { id: 'b1', userId: 'u1', agentId: 'a1' },
+        []
+      );
 
       expect(upsertFromHistoricalImport).not.toHaveBeenCalled();
     });

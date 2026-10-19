@@ -91,7 +91,9 @@ export interface RetrieveConversationMemoriesResult {
   };
 }
 
-const DEFAULT_CANDIDATE_LIMIT = 40;
+// 自动检索每次只取一小批候选：40 对单轮对话明显过量，12 足够覆盖 top 结果，
+// 同时减少 Milvus 响应与序列化开销。需要更多时由调用方显式传 limit。
+const DEFAULT_CANDIDATE_LIMIT = 12;
 // 记忆方案 v3：第二层（原文检索）的目标是"宁多勿漏"——记忆的职责是把用户说过的
 // 原话递到模型面前，漏掉比多给几条严重得多。因此候选与最终条数都放宽。
 const DEFAULT_RESULT_LIMIT = 10;
