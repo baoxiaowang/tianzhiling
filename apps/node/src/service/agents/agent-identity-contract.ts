@@ -78,6 +78,11 @@ export interface AgentIdentityContract {
   };
   knownPeople?: UserKnownPersonPromptProfile[];
   relatives?: UserRelativePromptProfile[];
+  /**
+   * 用户本人近况的有界投影（最多 3 条），只用于“上次提到”的近况理解，
+   * 不当作长期不变的事实。为空时提示词不渲染。
+   */
+  userSelfFacts?: Array<{ domain: string; key: string; value: string }>;
 }
 
 export function buildAgentIdentityContract(options: {
@@ -86,6 +91,7 @@ export function buildAgentIdentityContract(options: {
   userIdentity?: UserIdentityPromptProfile | null;
   knownPeople?: UserKnownPersonPromptProfile[];
   relatives?: UserRelativePromptProfile[];
+  userSelfFacts?: Array<{ domain: string; key: string; value: string }>;
 }): AgentIdentityContract {
   const agent = options.agent;
   const nameMemory = resolveAgentNameMemory(options.profileFacts);
@@ -193,6 +199,9 @@ export function buildAgentIdentityContract(options: {
       : {}),
     ...(options.relatives?.length
       ? { relatives: options.relatives.slice(0, 8) }
+      : {}),
+    ...(options.userSelfFacts?.length
+      ? { userSelfFacts: options.userSelfFacts.slice(0, 3) }
       : {}),
   };
 }
@@ -427,6 +436,14 @@ export function buildAgentIdentityPrompt(
         )}。这是该家人自己的叫法，只归属该人物，既不是当前角色对用户的称呼，也不是用户的正式姓名或别名。`
       : '',
     relatives.length ? `本轮相关亲人档案：${JSON.stringify(relatives)}` : '',
+    (identity.userSelfFacts || []).length
+      ? `用户本人近况（上次提到，可能已变化，最多 3 条）：${JSON.stringify(
+          (identity.userSelfFacts || []).slice(0, 3).map(fact => ({
+            domain: fact.domain,
+            value: clean(fact.value, 120),
+          }))
+        )}`
+      : '',
     'agent 始终是正在回复的当前角色，user 始终是聊天用户；其他人物、地点和物品必须另建对象，不得互换说话者、经历或关系。',
     '称呼只用于确定关系位置，不证明用户现实、其他家人或共同过去。',
     relatives.length

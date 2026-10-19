@@ -162,6 +162,7 @@ import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extrac
 import { listRaisedOpenItems } from './memory/memory-return-turn';
 import { RelativeMemoryExtractorService } from './agents/relative-memory-extractor.service';
 import { UserSelfMemoryService } from './agents/user-self-memory.service';
+import { UnifiedUserMemoryService } from './agents/unified-user-memory.service';
 import { UserRelativeProfileService } from './agents/user-relative-profile.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
@@ -833,6 +834,10 @@ export class ConversationService {
 
   @Inject()
   userSelfMemoryService: UserSelfMemoryService;
+
+  /** 合并后的用户侧抽取器：一次调用同时处理亲友与用户本人近况。 */
+  @Inject()
+  unifiedUserMemoryService?: UnifiedUserMemoryService;
 
   @Inject()
   userRelativeProfileService: UserRelativeProfileService;
@@ -3464,30 +3469,48 @@ export class ConversationService {
           }
         ),
       ]);
-    // The strict parser may establish the person first. Let the semantic
-    // extractor enrich that stable person instead of racing to create another.
-    const relativeFactCount =
-      (await this.relativeMemoryExtractorService
-        ?.captureFromUserMessage(message, searchableText, { contextMessages })
-        .catch(error => {
-          this.logger.warn(
-            '[conversation] relative memory extraction skipped, messageId=%s, reason=%s',
-            this.stringifyObjectId(message.id),
-            this.describeReplyError(error)
-          );
-          return 0;
-        })) || 0;
-    // 用户本人近况独立主体：与亲属入口分开，亲属相关消息交给亲属入口。
-    await this.userSelfMemoryService
-      ?.extractFromUserMessage(message, searchableText, { contextMessages })
-      .catch(error => {
-        this.logger.warn(
-          '[conversation] user self memory extraction skipped, messageId=%s, reason=%s',
-          this.stringifyObjectId(message.id),
-          this.describeReplyError(error)
-        );
-        return 0;
-      });
+    // 用户侧两条抽取已合并为一次模型调用：亲友 + 本人近况。未注入新服务时
+    // 回退旧的两条独立调用，保证部署/单测环境仍可运行。
+    const relativeFactCount = this.unifiedUserMemoryService
+      ? (await this.unifiedUserMemoryService
+          .captureFromUserMessage(message, searchableText, { contextMessages })
+          .catch(error => {
+            this.logger.warn(
+              '[conversation] unified user memory extraction skipped, messageId=%s, reason=%s',
+              this.stringifyObjectId(message.id),
+              this.describeReplyError(error)
+            );
+            return 0;
+          })) || 0
+      : await (async () => {
+          const relativeCount =
+            (await this.relativeMemoryExtractorService
+              ?.captureFromUserMessage(message, searchableText, {
+                contextMessages,
+              })
+              .catch(error => {
+                this.logger.warn(
+                  '[conversation] relative memory extraction skipped, messageId=%s, reason=%s',
+                  this.stringifyObjectId(message.id),
+                  this.describeReplyError(error)
+                );
+                return 0;
+              })) || 0;
+          // 用户本人近况独立主体：与亲属入口分开，亲属相关消息交给亲属入口。
+          await this.userSelfMemoryService
+            ?.extractFromUserMessage(message, searchableText, {
+              contextMessages,
+            })
+            .catch(error => {
+              this.logger.warn(
+                '[conversation] user self memory extraction skipped, messageId=%s, reason=%s',
+                this.stringifyObjectId(message.id),
+                this.describeReplyError(error)
+              );
+              return 0;
+            });
+          return relativeCount;
+        })();
     if (openLoopAudit) {
       this.chatTraceService?.recordCompletedSpan({
         stage: ChatTraceStage.asyncWrite,

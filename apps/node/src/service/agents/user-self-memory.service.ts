@@ -30,7 +30,7 @@ export interface RecordUserSelfFactOptions {
   resolvedAt?: Date;
 }
 
-interface ExtractedUserSelfFact {
+export interface ExtractedUserSelfFact {
   domain?: UserSelfFactDomain;
   key?: string;
   value?: string;
@@ -92,6 +92,19 @@ export class UserSelfMemoryService {
     if (!this.openAIService?.isEnabled?.()) return 0;
 
     const extracted = await this.extract(text, message.createdAt, context);
+    return this.recordPreExtracted(message, text, extracted);
+  }
+
+  /**
+   * 统一抽取器入口：事实已由一次模型调用返回，这里只做既有校验与写入。
+   */
+  async recordPreExtracted(
+    message: MessageEntity,
+    sourceText: string,
+    extracted: ExtractedUserSelfFact[]
+  ): Promise<number> {
+    const text = sourceText?.trim();
+    if (!text || !extracted?.length) return 0;
     let written = 0;
     for (const item of extracted.slice(0, 5)) {
       if (!Object.values(UserSelfFactDomain).includes(item.domain as never)) {
@@ -207,6 +220,28 @@ export class UserSelfMemoryService {
       order: { updatedAt: 'DESC' },
       take: 64,
     });
+  }
+
+  /**
+   * 聊天注入用的有界读取：只取当前有效、且不是不确定/历史状态的近况，
+   * 上限由调用方给（生产固定 3 条），避免把本人抽取变成新的注入膨胀。
+   */
+  async listActiveFacts(
+    userId: MongoObjectId,
+    limit = 3
+  ): Promise<UserSelfFactEntity[]> {
+    if (!this.selfFactModel?.find) return [];
+    const facts = await this.selfFactModel.find({
+      where: {
+        userId,
+        status: {
+          $in: [UserSelfFactStatus.current, UserSelfFactStatus.resolved],
+        },
+      } as never,
+      order: { updatedAt: 'DESC' },
+      take: Math.max(1, Math.min(limit, 5)),
+    });
+    return facts.filter(fact => Boolean(fact.value?.trim()));
   }
 
   private async extract(

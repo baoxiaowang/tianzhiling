@@ -63,6 +63,7 @@ import {
 } from './agent-profile-fact.service';
 import { UserIdentityMemoryService } from './user-identity-memory.service';
 import { UserRelativeProfileService } from './user-relative-profile.service';
+import { UserSelfMemoryService } from './user-self-memory.service';
 import {
   PersonTemporalMemoryService,
   PersonTemporalPromptFact,
@@ -796,6 +797,9 @@ export class AgentContextService {
   userRelativeProfileService: UserRelativeProfileService;
 
   @Inject()
+  userSelfMemoryService?: UserSelfMemoryService;
+
+  @Inject()
   personTemporalMemoryService: PersonTemporalMemoryService;
 
   @Inject()
@@ -861,8 +865,13 @@ export class AgentContextService {
       stringifyId: message => this.stringifyObjectId(message.id),
       pinnedMessageIds: options.pinnedHistoryMessageIds,
     }).messages;
-    const [profileFacts, userIdentity, knownPeople, relatives] =
-      await Promise.all([
+    const [
+      profileFacts,
+      userIdentity,
+      knownPeople,
+      relatives,
+      userSelfFacts,
+    ] = await Promise.all([
         this.withTraceSpan(
           ChatTraceStage.contextLoad,
           'context.profile_facts',
@@ -901,6 +910,15 @@ export class AgentContextService {
                 .map(message => this.buildUserEvidenceText(message)),
             }) || Promise.resolve([])
         ),
+        this.withTraceSpan(
+          ChatTraceStage.contextLoad,
+          'context.user_self_facts',
+          () =>
+            this.userSelfMemoryService?.listActiveFacts?.(
+              options.conversation.userId,
+              3
+            ) || Promise.resolve([])
+        ),
       ]);
     const temporalProfiles =
       (await this.personTemporalMemoryService?.listProfilesForPrompt({
@@ -917,6 +935,11 @@ export class AgentContextService {
       userIdentity,
       knownPeople,
       relatives,
+      userSelfFacts: (userSelfFacts || []).map(fact => ({
+        domain: fact.domain,
+        key: fact.key,
+        value: fact.value,
+      })),
     });
     const knownObjects = buildKnownConversationObjects({
       identity,

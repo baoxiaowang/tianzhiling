@@ -432,6 +432,33 @@ export class AgentProfileFactService {
   }
 
   /**
+   * 统一抽取器的落库入口：模型已经一次性返回了三类事实（agent/user/relative），
+   * 这里只负责把 agent 段还原成既有校验/信任级别/写入流程，不再调用模型。
+   * 与单条、批量路径共用 finalizeExtractedFacts + persistExtractedFacts，
+   * 保证统一入口不会降低质量门槛。
+   */
+  async persistUnifiedExtractedFacts(params: {
+    message: MessageEntity;
+    sourceText: string;
+    rawFacts: unknown[];
+    explicitlyConfirmed?: boolean;
+  }): Promise<AgentProfileFactSummary[]> {
+    const sourceText = this.normalizeSourceText(params.sourceText);
+    if (!sourceText || isForgetMemoryRequest(sourceText)) return [];
+    const llmFacts = (params.rawFacts || [])
+      .map(item => this.normalizeLLMFact(item))
+      .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
+    if (!llmFacts.length) return [];
+    const extractedFacts = this.finalizeExtractedFacts([], llmFacts, sourceText);
+    return this.persistExtractedFacts({
+      message: params.message,
+      sourceText,
+      extractedFacts,
+      explicitlyConfirmed: params.explicitlyConfirmed,
+    });
+  }
+
+  /**
    * 单条写入路径，抽出来给批量路径复用，保证两条路径的校验、信任级别与
    * user identity 联动完全一致（批量为的是少发固定提示，不是为了降低门槛）。
    */

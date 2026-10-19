@@ -43,7 +43,7 @@ const USER_BIRTH_ASSERTION =
   /我(?:的)?生日(?:是|在|为)?\s*(?:(\d{4})\s*年)?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)|我(?:是|于)?\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)?\s*出生/u;
 const QUESTION_OR_NEGATION = /[？?]|吗|是不是|不是|没(?:有)?|不记得|忘了/u;
 
-interface ExtractedRelativeMemory {
+export interface ExtractedRelativeMemory {
   referenceName?: string;
   realName?: string;
   aliases?: string[];
@@ -71,7 +71,7 @@ interface ExtractedRelativeMemory {
   }>;
 }
 
-interface RelativeMemoryCaptureContext {
+export interface RelativeMemoryCaptureContext {
   messengerParent?: AgentEntity;
   /** 普通对话里与用户对话的当前 AI 亲人本身；它不算用户的“其他亲友”，需排除。 */
   boundAgent?: AgentEntity;
@@ -101,6 +101,33 @@ export class RelativeMemoryExtractorService {
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
+  /**
+   * 只判断“这条消息是否值得交给模型”，不写任何数据。统一抽取器用它决定
+   * 要不要发起那一次模型调用，避免对纯寒暄也调用。
+   */
+  shouldExtractRelative(
+    sourceText: string,
+    context: RelativeMemoryCaptureContext = {}
+  ): boolean {
+    const text = sourceText?.trim();
+    if (!text) return false;
+    const namedDetail = NAMED_RELATIVE_DETAIL_SIGNAL.exec(text)?.[1];
+    const hasNamedRelativeDetail = Boolean(
+      namedDetail &&
+        !/^(?:我|我的|本人|自己|你|你的|他|她|他们|她们)/u.test(namedDetail)
+    );
+    const messengerInterview = Boolean(context.messengerParent);
+    const hasKinshipSubject =
+      kinshipTermsIn(text).length > 0 && isSearchableDialogueEvidence(text);
+    return Boolean(
+      (RELATIVE_SUBJECT_SIGNAL.test(text) &&
+        RELATIVE_DETAIL_SIGNAL.test(text)) ||
+        hasNamedRelativeDetail ||
+        hasKinshipSubject ||
+        (messengerInterview && MESSENGER_FAMILY_SIGNAL.test(text))
+    );
+  }
+
   async captureFromUserMessage(
     message: MessageEntity,
     sourceText: string,
@@ -109,41 +136,48 @@ export class RelativeMemoryExtractorService {
     const text = sourceText?.trim();
     if (!text) return 0;
     let written = await this.captureExplicitUserBirthday(message, text);
-    const namedDetail = NAMED_RELATIVE_DETAIL_SIGNAL.exec(text)?.[1];
-    const hasNamedRelativeDetail = Boolean(
-      namedDetail &&
-        !/^(?:我|我的|本人|自己|你|你的|他|她|他们|她们)/u.test(namedDetail)
-    );
-    const messengerInterview = Boolean(context.messengerParent);
-    // 召回优先的最小入口：只要原话出现已知亲属称谓且该句本身是对话证据，
-    // 就把这条消息交给模型判断（是否亲友、什么关系、哪些事实）。这里只决定
-    // “要不要调模型”，不用关键词决定事实内容；是否成立仍由模型判断。
-    // 这一条补齐了“妈妈…打工”“回家看妈”这类不含“我+亲属+细节”的漏召回。
-    const hasKinshipSubject =
-      kinshipTermsIn(text).length > 0 && isSearchableDialogueEvidence(text);
-    if (
-      !(
-        RELATIVE_SUBJECT_SIGNAL.test(text) && RELATIVE_DETAIL_SIGNAL.test(text)
-      ) &&
-      !hasNamedRelativeDetail &&
-      !hasKinshipSubject &&
-      !(messengerInterview && MESSENGER_FAMILY_SIGNAL.test(text))
-    ) {
-      return written;
-    }
+    if (!this.shouldExtractRelative(text, context)) return written;
     if (!this.openAIService?.isEnabled?.()) return written;
 
     // 只有走到这里（已确认值得调模型）才解析当前对话对象，用于排除它自己。
     const boundAgent = context.messengerParent
       ? undefined
       : context.boundAgent || (await this.resolveBoundAgent(message));
+    return this.writeExtracted(
+      message,
+      text,
+      await this.extract(text, { ...context, boundAgent }, message.createdAt),
+      { ...context, boundAgent }
+    );
+  }
+
+  /**
+   * 统一抽取器入口：人物与事实已由一次模型调用返回，这里只做既有的人物解析、
+   * 当前角色排除、称谓归属和档案写入，不再调用模型。
+   */
+  async capturePreExtracted(
+    message: MessageEntity,
+    sourceText: string,
+    extracted: ExtractedRelativeMemory[],
+    context: RelativeMemoryCaptureContext = {}
+  ): Promise<number> {
+    const text = sourceText?.trim();
+    if (!text || !extracted?.length) return 0;
+    return this.writeExtracted(message, text, extracted, context);
+  }
+
+  private async writeExtracted(
+    message: MessageEntity,
+    text: string,
+    extracted: ExtractedRelativeMemory[],
+    context: RelativeMemoryCaptureContext = {}
+  ): Promise<number> {
+    let written = 0;
+    const boundAgent = context.messengerParent
+      ? undefined
+      : context.boundAgent || (await this.resolveBoundAgent(message));
     const excludedParentReferences = this.parentReferences(
       context.messengerParent || boundAgent
-    );
-    const extracted = await this.extract(
-      text,
-      { ...context, boundAgent },
-      message.createdAt
     );
     for (const item of extracted.slice(0, 4)) {
       const relation = item.relationToUser?.trim();
