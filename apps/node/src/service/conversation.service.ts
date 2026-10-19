@@ -2528,9 +2528,9 @@ export class ConversationService {
   }
 
   /**
-   * legacy（memoryValue=off）结构化记忆的批量入口：角色事实抽取一次模型调用
-   * 覆盖整批，其余逐条增强（亲属/用户本人/时间/情绪/未了结）保持原样。
-   * 批量失败时 agent-profile-fact 内部会自行回退逐条，这里不再重复回退。
+   * legacy（memoryValue=off）结构化记忆的批量入口：统一抽取器一次模型调用
+   * 覆盖整批的 agent/user/relative 三类事实；解析失败/截断时回退到原来的
+   * “角色批量 + 逐条用户侧”路径。其余逐条增强（时间/情绪/未了结）保持原样。
    */
   private async executeBatchLegacyStructuredMemory(
     messages: MessageEntity[]
@@ -2543,16 +2543,36 @@ export class ConversationService {
       .filter(entry => Boolean(entry.text));
     if (!entries.length) return 'skipped';
 
-    const batchResults =
-      (await this.agentProfileFactService?.extractAndUpsertBatchFromUserMessages?.(
+    const unified = await this.unifiedUserMemoryService
+      ?.captureBatch?.(
         entries.map(entry => ({
           message: entry.message,
           searchableText: entry.text,
         }))
-      )) || [];
-    const auditByMessageId = new Map(
-      batchResults.map(result => [result.messageId, result.total])
-    );
+      )
+      .catch(error => {
+        this.logger.warn(
+          '[memory-pipeline] unified batch extraction failed, fallback to legacy: %s',
+          this.describeReplyError(error)
+        );
+        return null;
+      });
+
+    let auditByMessageId: Map<string, number>;
+    if (unified) {
+      auditByMessageId = unified.agentCountByMessageId;
+    } else {
+      const batchResults =
+        (await this.agentProfileFactService?.extractAndUpsertBatchFromUserMessages?.(
+          entries.map(entry => ({
+            message: entry.message,
+            searchableText: entry.text,
+          }))
+        )) || [];
+      auditByMessageId = new Map(
+        batchResults.map(result => [result.messageId, result.total])
+      );
+    }
 
     let anyCompleted = false;
     for (const entry of entries) {
@@ -2561,6 +2581,8 @@ export class ConversationService {
       try {
         await this.enrichUserMessageForReply(entry.message, entry.text, {
           profileFactAudit: { succeeded: true, count: profileFactCount },
+          // 统一批量已经写过 user/relative；失败回退时仍走逐条用户侧入口。
+          skipUserSideExtraction: Boolean(unified),
         });
         anyCompleted = true;
       } catch (error) {
@@ -2659,7 +2681,31 @@ export class ConversationService {
           parentAgent
         );
       } else {
-        await this.enrichUserMessageForReply(message, searchableText);
+        // 单条也走统一入口（一批只有一条），与批量路径同一条调用口径；
+        // 失败时回退到原来的逐条角色抽取 + 用户侧合并调用。
+        const unified = await this.unifiedUserMemoryService
+          ?.captureBatch?.([{ message, searchableText }])
+          .catch(error => {
+            this.logger.warn(
+              '[memory-pipeline] unified single extraction failed, fallback to legacy: %s',
+              this.describeReplyError(error)
+            );
+            return null;
+          });
+        if (unified) {
+          await this.enrichUserMessageForReply(message, searchableText, {
+            profileFactAudit: {
+              succeeded: true,
+              count:
+                unified.agentCountByMessageId.get(
+                  this.stringifyObjectId(message.id)
+                ) ?? 0,
+            },
+            skipUserSideExtraction: true,
+          });
+        } else {
+          await this.enrichUserMessageForReply(message, searchableText);
+        }
       }
       if (message.traceId) {
         await this.chatTraceService?.markBackgroundCompleted(
@@ -3423,6 +3469,11 @@ export class ConversationService {
        * 固定系统提示；其余逐条增强（亲属/用户本人/时间/情绪/未了结）不变。
        */
       profileFactAudit?: MemoryFactExtractionAudit;
+      /**
+       * 统一批量抽取器已经写过 user/relative 时置 true，避免再逐条调用一次
+       * 用户侧模型；失败回退路径保持 false，仍走逐条入口。
+       */
+      skipUserSideExtraction?: boolean;
     } = {}
   ): Promise<void> {
     if (message.type === MessageType.image) {
@@ -3471,7 +3522,9 @@ export class ConversationService {
       ]);
     // 用户侧两条抽取已合并为一次模型调用：亲友 + 本人近况。未注入新服务时
     // 回退旧的两条独立调用，保证部署/单测环境仍可运行。
-    const relativeFactCount = this.unifiedUserMemoryService
+    const relativeFactCount = options.skipUserSideExtraction
+      ? 0
+      : this.unifiedUserMemoryService
       ? (await this.unifiedUserMemoryService
           .captureFromUserMessage(message, searchableText, { contextMessages })
           .catch(error => {

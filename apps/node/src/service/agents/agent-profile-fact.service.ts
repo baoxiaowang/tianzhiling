@@ -432,30 +432,68 @@ export class AgentProfileFactService {
   }
 
   /**
-   * 统一抽取器的落库入口：模型已经一次性返回了三类事实（agent/user/relative），
-   * 这里只负责把 agent 段还原成既有校验/信任级别/写入流程，不再调用模型。
-   * 与单条、批量路径共用 finalizeExtractedFacts + persistExtractedFacts，
-   * 保证统一入口不会降低质量门槛。
+   * 统一批量抽取器用来决定“这批还要不要发模型”：与批量路径的 skipLLM 同口径。
+   * 纯问句、无事实信号的消息不需要模型，但规则事实仍由持久化入口写入。
    */
-  async persistUnifiedExtractedFacts(params: {
-    message: MessageEntity;
-    sourceText: string;
-    rawFacts: unknown[];
-    explicitlyConfirmed?: boolean;
-  }): Promise<AgentProfileFactSummary[]> {
-    const sourceText = this.normalizeSourceText(params.sourceText);
-    if (!sourceText || isForgetMemoryRequest(sourceText)) return [];
-    const llmFacts = (params.rawFacts || [])
-      .map(item => this.normalizeLLMFact(item))
-      .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
-    if (!llmFacts.length) return [];
-    const extractedFacts = this.finalizeExtractedFacts([], llmFacts, sourceText);
-    return this.persistExtractedFacts({
-      message: params.message,
-      sourceText,
-      extractedFacts,
-      explicitlyConfirmed: params.explicitlyConfirmed,
-    });
+  hasUnifiedExtractionSignal(sourceText: string): boolean {
+    const text = this.normalizeSourceText(sourceText);
+    if (!text || isForgetMemoryRequest(text)) return false;
+    if (this.isQuestionOnly(text)) return false;
+    return isExplicitRememberRequest(text) || this.hasFactualSignal(text);
+  }
+
+  /**
+   * 统一抽取器的落库入口：模型已经一次性返回了 agent/user/relative 三类，
+   * 这里只负责把 agent 段还原成既有校验/信任级别/写入流程，不再调用模型。
+   *
+   * 与 extractAndUpsertBatchFromUserMessages 共用 prepareBatchEntry、
+   * shouldRejectBroadFamilyQuestionFact、finalizeExtractedFacts 与
+   * persistExtractedFacts，保留规则兜底（称呼、姓名、纯问句）与去重，
+   * 不因为换了提示词就降低写入门槛。
+   */
+  async persistUnifiedBatchFacts(params: {
+    entries: ExtractProfileFactsBatchEntry[];
+    factsByMessageId: Map<string, unknown[]>;
+  }): Promise<ExtractProfileFactsBatchResult[]> {
+    const results: ExtractProfileFactsBatchResult[] = [];
+    for (const entry of params.entries) {
+      const item = this.prepareBatchEntry(entry);
+      const messageId = this.stringifyObjectId(entry.message.id);
+      if (item.skipped) {
+        results.push({ messageId, total: 0, facts: [] });
+        continue;
+      }
+      const rawFacts = params.factsByMessageId.get(messageId) || [];
+      const llmFacts = item.skipLLM
+        ? []
+        : rawFacts
+            .map(raw => this.normalizeLLMFact(raw))
+            .filter((fact): fact is AgentProfileFactSummary => Boolean(fact))
+            .filter(
+              fact =>
+                !this.shouldRejectBroadFamilyQuestionFact(
+                  fact,
+                  item.sourceText
+                )
+            );
+      const extractedFacts = item.questionOnly
+        ? item.fallbackFacts
+            .filter(fact => isNameMemoryFactKey(fact.key))
+            .map(fact => ({ fact, trustedSource: true }))
+        : this.finalizeExtractedFacts(
+            item.fallbackFacts,
+            llmFacts,
+            item.sourceText
+          );
+      const facts = await this.persistExtractedFacts({
+        message: entry.message,
+        sourceText: item.sourceText,
+        extractedFacts,
+        explicitlyConfirmed: entry.explicitlyConfirmed,
+      });
+      results.push({ messageId, total: facts.length, facts });
+    }
+    return results;
   }
 
   /**
