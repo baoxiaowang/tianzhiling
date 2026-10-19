@@ -13,7 +13,8 @@ const USER_ID = new MongoObjectId('665000000000000000000001');
 const AGENT_ID = new MongoObjectId('665000000000000000000010');
 
 function createMessage(index: number, forceRole?: MessageRole): MessageEntity {
-  const role = forceRole ?? (index % 2 === 1 ? MessageRole.user : MessageRole.assistant);
+  const role =
+    forceRole ?? (index % 2 === 1 ? MessageRole.user : MessageRole.assistant);
   const message = new MessageEntity();
   Object.assign(message, {
     id: new MongoObjectId(
@@ -24,7 +25,8 @@ function createMessage(index: number, forceRole?: MessageRole): MessageEntity {
     agentId: AGENT_ID,
     role,
     type: MessageType.text,
-    content: role === MessageRole.user ? `用户消息${index}` : `助手回复${index}`,
+    content:
+      role === MessageRole.user ? `用户消息${index}` : `助手回复${index}`,
     status: MessageStatus.sent,
     createdAt: new Date(1_700_000_000_000 + index * 1000),
     updatedAt: new Date(1_700_000_000_000 + index * 1000),
@@ -89,9 +91,8 @@ describe('AgentConversationSummaryService', () => {
     // 20 个完整轮次：摘要只覆盖最近 8 轮之前的部分（前 24 条），
     // 其中用户消息 12 条；最近 8 轮留给原始历史。
     expect(conversation.continuitySummaryEvidenceMessageIds?.length).toBe(12);
-    const generatedPrompt = (
-      service.openAIService.generateText as jest.Mock
-    ).mock.calls[0][0].prompt as string;
+    const generatedPrompt = (service.openAIService.generateText as jest.Mock)
+      .mock.calls[0][0].prompt as string;
     expect(generatedPrompt).not.toContain('用户消息39');
     expect(generatedPrompt).not.toContain('助手回复40');
     expect(service.conversationModel.save).toHaveBeenCalledWith(conversation);
@@ -105,7 +106,7 @@ describe('AgentConversationSummaryService', () => {
       userId: USER_ID,
       agentId: AGENT_ID,
     });
-    const messages = Array.from({ length: 20 }, (_, index) =>
+    const messages = Array.from({ length: 40 }, (_, index) =>
       createMessage(index + 1)
     );
     let completeGeneration: (value: { content: string }) => void;
@@ -136,5 +137,57 @@ describe('AgentConversationSummaryService', () => {
 
     await service.refresh(conversation);
     expect(service.messageModel.find).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a small deduplicated set of stable facts in the rolling summary', async () => {
+    const service = new AgentConversationSummaryService();
+    const conversation = new ConversationEntity();
+    Object.assign(conversation, {
+      id: CONVERSATION_ID,
+      userId: USER_ID,
+      agentId: AGENT_ID,
+    });
+    const messages = Array.from({ length: 40 }, (_, index) =>
+      createMessage(index + 1)
+    );
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue(messages),
+    } as never;
+    service.conversationModel = {
+      save: jest.fn(async value => value),
+    } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify({
+          topic: '接核桃',
+          stableFacts: [
+            '核桃是用户儿子、爸的外孙子',
+            '核桃是用户儿子、爸的外孙子',
+            '用户是爸的闺女',
+            '何筱伟是爸的女婿',
+            '核桃快十岁了',
+            '第六条应该被截掉',
+            '这条特别特别特别特别特别特别特别特别长的稳定事实应该被截断到三十个字以内',
+          ],
+        }),
+      }),
+    } as never;
+
+    await service.refresh(conversation);
+
+    const summary = String(conversation.continuitySummary || '');
+    expect(summary).toContain('稳定事实：');
+    expect(summary).toContain('核桃是用户儿子、爸的外孙子');
+    expect(summary).toContain('用户是爸的闺女');
+    expect(summary).not.toContain('这条特别特别特别特别');
+
+    const factLine =
+      summary.split('\n').find(line => line.startsWith('稳定事实：')) || '';
+    const facts = factLine.replace('稳定事实：', '').split('；');
+    expect(facts).toHaveLength(5);
+    for (const fact of facts) {
+      expect(fact.length).toBeLessThanOrEqual(30);
+    }
   });
 });

@@ -21,7 +21,9 @@ import { OpenAIService } from './openai';
 const SUMMARY_VERSION = 'continuity_summary_v2';
 const MIN_NEW_MESSAGES_TO_SUMMARIZE = 8;
 const MAX_SUMMARY_SOURCE_MESSAGES = 40;
-const MAX_SUMMARY_LENGTH = 500;
+// 摘要现在同时承载少量稳定事实（廉价长期记忆），放宽长度避免事实被截掉。
+const MAX_SUMMARY_LENGTH = 700;
+const MAX_SUMMARY_STABLE_FACTS = 5;
 /**
  * 摘要与历史层共用同一套“完整轮次”边界：最近 RECENT_HISTORY_TURNS 轮由原始历史承载，
  * 摘要只压缩更早的消息，消除“摘要覆盖一段、原始历史又只留几条”的独立参数冲突。
@@ -139,13 +141,16 @@ export class AgentConversationSummaryService {
       temperature: 0,
       topP: 0.1,
       reasoningSplit: false,
-      maxTokens: 500,
+      maxTokens: 700,
       systemPrompt: [
         '你是对话状态压缩器，只维护继续聊天所需的最小状态。',
         '只概括用户明确说过的话、当前话题和尚未结束的线索，不能补充事实。',
         '历史助手内容只能帮助理解对话顺序，不能成为用户经历、人物关系或共同记忆的来源。',
         '不要写散文，不保留无价值寒暄。每个字段不超过80字，没有则用空字符串。',
-        '输出严格 JSON：{"topic":"","userState":"","responded":"","unresolved":""}。不要输出其他字段。',
+        // 摘要同时承担“廉价长期记忆”：只保留用户明确说过的稳定事实，
+        // 让它们不随最近历史窗口滚出而丢失；这是旧结构化记忆流水线的轻量替代。
+        '用户明确说过的稳定家人关系、身份、称呼，写入 stableFacts（最多5条，每条不超过30字）；已有 stableFacts 除非用户明确更正，否则原样保留。',
+        '输出严格 JSON：{"topic":"","userState":"","responded":"","unresolved":"","stableFacts":[]}。不要输出其他字段。',
       ].join('\n'),
       prompt: [
         conversation.continuitySummary?.trim()
@@ -205,11 +210,21 @@ export class AgentConversationSummaryService {
         return legacySummary.slice(0, MAX_SUMMARY_LENGTH);
       }
 
+      const stableFacts = Array.isArray(parsed.stableFacts)
+        ? Array.from(
+            new Set(
+              parsed.stableFacts
+                .map(value => this.normalizeSummaryFact(value))
+                .filter(Boolean)
+            )
+          ).slice(0, MAX_SUMMARY_STABLE_FACTS)
+        : [];
       const fields = [
         ['当前话题', this.normalizeSummaryField(parsed.topic)],
         ['用户状态', this.normalizeSummaryField(parsed.userState)],
         ['已经回应', this.normalizeSummaryField(parsed.responded)],
         ['未解决', this.normalizeSummaryField(parsed.unresolved)],
+        ['稳定事实', stableFacts.join('；')],
       ]
         .filter((item): item is [string, string] => Boolean(item[1]))
         .map(([label, text]) => `${label}：${text}`);
@@ -223,6 +238,13 @@ export class AgentConversationSummaryService {
   private normalizeSummaryField(value: unknown): string {
     return typeof value === 'string'
       ? value.replace(/\s+/g, ' ').trim().slice(0, 120)
+      : '';
+  }
+
+  /** 稳定事实必须短、去重；它们是随摘要长期保留的最小事实集。 */
+  private normalizeSummaryFact(value: unknown): string {
+    return typeof value === 'string'
+      ? value.replace(/\s+/g, ' ').trim().slice(0, 30)
       : '';
   }
 
