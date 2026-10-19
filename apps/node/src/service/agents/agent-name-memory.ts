@@ -467,10 +467,12 @@ function deriveChineseNameAliases(name: string): string[] {
 function normalizeName(value?: string): string | undefined {
   const name = (value || '').replace(TRAILING_PARTICLE, '').trim();
   if (
-    name.length < 2 ||
-    name.length > 16 ||
-    !/^[\u4e00-\u9fa5A-Za-z·]+$/.test(name) ||
-    (/^[\u4e00-\u9fa5]+$/.test(name) && name.length > 4) ||
+    // 昵称可以很短（“宝”“妹”），也可以带数字（“小6子”）；只保留明显不是
+    // 人名的黑名单和句式约束，避免把合法昵称误杀。
+    name.length < 1 ||
+    name.length > 20 ||
+    !/^[\u4e00-\u9fa5A-Za-z0-9·]+$/.test(name) ||
+    (/^[\u4e00-\u9fa5]+$/.test(name) && name.length > 8) ||
     NON_NAME_EXACT.has(name) ||
     NON_NAME_TIME_PLACE_EXACT.has(name) ||
     /^(?:我|你|他|她|它|的|了|要|想|听|看|来|去|叫|上|下)/.test(name) ||

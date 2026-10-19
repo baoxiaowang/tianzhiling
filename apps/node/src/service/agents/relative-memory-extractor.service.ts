@@ -405,7 +405,8 @@ export class RelativeMemoryExtractorService {
         temperature: 0,
         topP: 0.1,
         reasoningSplit: false,
-        maxTokens: 420,
+        // 一次可能带回多个亲友和多条事实，420 容易截断 JSON；放宽到 600。
+        maxTokens: 600,
         systemPrompt: [
           '你是独立的账户人物记忆抽取器，不生成聊天回复。只输出JSON。',
           '只抽取用户明确陈述或纠正的现实亲友信息；疑问、否定、猜测、角色虚构不写入。',

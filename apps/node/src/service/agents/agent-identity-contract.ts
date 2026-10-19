@@ -578,8 +578,9 @@ function readPreferredNameFact(
       .trim();
     if (
       candidate &&
-      candidate.length <= 16 &&
-      /^[\u4e00-\u9fa5A-Za-z·]+$/.test(candidate)
+      // 与 normalizeName 对齐：允许单字昵称、数字和稍长的称呼。
+      candidate.length <= 20 &&
+      /^[\u4e00-\u9fa5A-Za-z0-9·]+$/.test(candidate)
     ) {
       preferred = candidate;
     }
