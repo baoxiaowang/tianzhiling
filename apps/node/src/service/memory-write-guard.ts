@@ -39,3 +39,17 @@ export function isMemoryWritePaused(
   return isMemoryWriteDisabled(env) || readTruthy(env.CHAT_SKIP_MEMORY_WRITE);
 }
 
+/**
+ * 只保留“结构化记忆抽取”（统一抽取器：agent/user/relative），继续关闭
+ * 原话语义索引（Milvus）、检索懒回填、外观直写等更重的写入。
+ *
+ * 使用方式：`MEMORY_WRITE_DISABLED=false`、`CHAT_SKIP_MEMORY_WRITE=true`、
+ * `MEMORY_STRUCTURED_ONLY=true`。这样旧的角色单条/时间记忆仍按窄开关暂停，
+ * 统一抽取器负责结构化事实；批量入口也只在“结构化只读模式”下允许按批执行。
+ */
+export function isStructuredMemoryOnly(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return readTruthy(env.MEMORY_STRUCTURED_ONLY);
+}
+

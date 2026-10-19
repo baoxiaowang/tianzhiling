@@ -13,6 +13,7 @@ import {
 import {
   isMemoryWriteDisabled,
   isMemoryWritePaused,
+  isStructuredMemoryOnly,
 } from '../../src/service/memory-write-guard';
 import { ConversationService } from '../../src/service/conversation.service';
 import { ConversationChatImportService } from '../../src/service/conversation-chat-import.service';
@@ -210,6 +211,74 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
         }
       ).queueLazyBackfill({ userId: 'u1' }, [{ id: 'x' }], [{ items: [] }]);
 
+      expect(queued).toBe(0);
+      expect(enqueueForMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('isStructuredMemoryOnly（只开统一抽取器）', () => {
+    const originalOnly = process.env.MEMORY_STRUCTURED_ONLY;
+
+    beforeEach(() => {
+      delete process.env.MEMORY_STRUCTURED_ONLY;
+    });
+
+    afterEach(() => {
+      if (originalOnly === undefined) {
+        delete process.env.MEMORY_STRUCTURED_ONLY;
+      } else {
+        process.env.MEMORY_STRUCTURED_ONLY = originalOnly;
+      }
+    });
+
+    it('识别 true/1/yes，未设置时关闭', () => {
+      for (const value of ['true', 'TRUE', '  true  ', '1', 'yes']) {
+        expect(
+          isStructuredMemoryOnly({
+            MEMORY_STRUCTURED_ONLY: value,
+          } as never)
+        ).toBe(true);
+      }
+      expect(isStructuredMemoryOnly({} as never)).toBe(false);
+      expect(
+        isStructuredMemoryOnly({
+          MEMORY_STRUCTURED_ONLY: 'false',
+        } as never)
+      ).toBe(false);
+    });
+
+    it('总闸关闭但结构化只读时，外观直写与懒回填仍被拦住', async () => {
+      process.env[FLAG] = 'false';
+      process.env.MEMORY_STRUCTURED_ONLY = 'true';
+
+      const conversation = new ConversationService();
+      const upsertVisualAppearanceObservations = jest.fn();
+      conversation.agentProfileFactService = {
+        upsertVisualAppearanceObservations,
+      } as never;
+      (
+        conversation as unknown as {
+          scheduleVisualAppearanceMemory: (
+            m: unknown,
+            o: unknown[]
+          ) => void;
+        }
+      ).scheduleVisualAppearanceMemory({ id: 'm1' }, [{ kind: 'hair' }]);
+      expect(upsertVisualAppearanceObservations).not.toHaveBeenCalled();
+
+      const chatTool = new AgentChatToolService();
+      const enqueueForMessage = jest.fn();
+      chatTool.messageModel = { findOne: jest.fn() } as never;
+      chatTool.memoryPipelineTaskService = { enqueueForMessage } as never;
+      const queued = await (
+        chatTool as unknown as {
+          queueLazyBackfill: (
+            c: unknown,
+            r: unknown[],
+            res: unknown[]
+          ) => Promise<number>;
+        }
+      ).queueLazyBackfill({ userId: 'u1' }, [{ id: 'x' }], [{ items: [] }]);
       expect(queued).toBe(0);
       expect(enqueueForMessage).not.toHaveBeenCalled();
     });

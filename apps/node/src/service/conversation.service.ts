@@ -206,7 +206,11 @@ import {
   SUBSEQUENT_RELATIVE_GREETING_TASK_ID,
 } from './agents/recognition-journey';
 import { RecognitionJourneyObserverService } from './agents/recognition-journey-observer.service';
-import { isMemoryWriteDisabled, isMemoryWritePaused } from './memory-write-guard';
+import {
+  isMemoryWriteDisabled,
+  isMemoryWritePaused,
+  isStructuredMemoryOnly,
+} from './memory-write-guard';
 import {
   PersonTemporalMemoryService,
   PersonTemporalQaContextItem,
@@ -2387,13 +2391,19 @@ export class ConversationService {
       // 合并为一次调用（结果按 messageId 归属），失败回退到下面的逐条循环。
       // 仅在完全 off（无影子写入、未开启跳过写入）时启用批量，避免改变
       // shadow 审计与 CHAT_SKIP_MEMORY_WRITE 的既有语义。
+      const canUseUnifiedBatch = Boolean(
+        this.unifiedUserMemoryService?.captureBatch
+      );
+      const canUseLegacyBatch = Boolean(
+        this.agentProfileFactService &&
+          typeof this.agentProfileFactService
+            .extractAndUpsertBatchFromUserMessages === 'function'
+      );
       if (
         task.kind === MemoryPipelineTaskKind.structuredMemory &&
         this.memoryValueService?.enabled(validMessages[0].userId) !== true &&
-        !isMemoryWritePaused() &&
-        this.agentProfileFactService &&
-        typeof this.agentProfileFactService
-          .extractAndUpsertBatchFromUserMessages === 'function'
+        (!isMemoryWritePaused() || isStructuredMemoryOnly()) &&
+        (canUseUnifiedBatch || canUseLegacyBatch)
       ) {
         const anchorAgent = await this.findAgentById(
           validMessages[validMessages.length - 1].agentId
@@ -2561,6 +2571,10 @@ export class ConversationService {
     let auditByMessageId: Map<string, number>;
     if (unified) {
       auditByMessageId = unified.agentCountByMessageId;
+    } else if (isMemoryWritePaused()) {
+      // 结构化只读模式下不执行旧的角色批量回退：旧入口会绕过窄开关。
+      // 统一抽取失败时宁可本批跳过，也不把 Milvus/时间记忆一起恢复。
+      return 'skipped';
     } else {
       const batchResults =
         (await this.agentProfileFactService?.extractAndUpsertBatchFromUserMessages?.(
@@ -3748,7 +3762,8 @@ export class ConversationService {
     observations?: AgentVisualAppearanceObservation[]
   ): void {
     // 记忆写入总闸：外观事实是直写（不经任务队列），必须在入口拦住。
-    if (isMemoryWriteDisabled()) {
+    // 结构化只读模式只保留统一抽取器，不恢复外观直写。
+    if (isMemoryWriteDisabled() || isStructuredMemoryOnly()) {
       return;
     }
     if (
@@ -12523,7 +12538,8 @@ export class ConversationService {
     userId: string;
     searchableText: string;
   }): Promise<void> {
-    if (isMemoryWritePaused()) {
+    // 结构化只读模式只保留统一抽取器，原话 Milvus 索引继续关闭。
+    if (isMemoryWritePaused() || isStructuredMemoryOnly()) {
       return;
     }
     const searchableText = options.searchableText?.trim();

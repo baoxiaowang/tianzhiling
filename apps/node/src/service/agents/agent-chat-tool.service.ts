@@ -12,7 +12,10 @@ import {
 import { MongoRepository } from 'typeorm';
 import { RetrieveService } from '../rag/retrieve.service';
 import { MemoryPipelineTaskService } from '../memory-pipeline-task.service';
-import { isMemoryWriteDisabled } from '../memory-write-guard';
+import {
+  isMemoryWriteDisabled,
+  isStructuredMemoryOnly,
+} from '../memory-write-guard';
 import {
   AgentProfileFactService,
   AgentProfileFactSummary,
@@ -383,7 +386,8 @@ export class AgentChatToolService {
     > | null>
   ): Promise<number> {
     // 记忆写入总闸：暂停期间不再产生懒回填索引任务。
-    if (isMemoryWriteDisabled()) {
+    // 结构化只读模式只保留统一抽取器，懒回填（Milvus）继续关闭。
+    if (isMemoryWriteDisabled() || isStructuredMemoryOnly()) {
       return 0;
     }
     if (!this.messageModel?.findOne || !this.memoryPipelineTaskService) {
