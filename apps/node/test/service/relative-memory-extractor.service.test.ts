@@ -387,6 +387,55 @@ describe('RelativeMemoryExtractorService', () => {
     expect(upsertKnownPerson).not.toHaveBeenCalled();
   });
 
+  it('uses a non-kinship referenceName as the person name', async () => {
+    const service = new RelativeMemoryExtractorService();
+    service.logger = { warn: jest.fn() } as never;
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000801'),
+      relationToUser: '儿子',
+      realName: '核桃',
+    });
+    const upsertKnownPersonDeclaration = jest
+      .fn()
+      .mockResolvedValue(person);
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue(null),
+      countKnownPeopleByRelation: jest.fn().mockResolvedValue(0),
+      resolveKnownPersonByRelation: jest.fn().mockResolvedValue(null),
+      claimReferenceNameForUnnamedPerson: jest.fn(),
+      upsertKnownPersonDeclaration,
+      setPersonCallsUser: jest.fn(),
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn(),
+      recordFact: jest.fn(),
+    } as never;
+    service.personTemporalMemoryService = {
+      recordExplicitPersonDate: jest.fn(),
+    } as never;
+    (service as any).resolveBoundAgent = jest.fn().mockResolvedValue(null);
+
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000802'),
+      userId: new MongoObjectId('665000000000000000000803'),
+      agentId: new MongoObjectId('665000000000000000000804'),
+      createdAt: new Date('2026-10-07T12:29:17.940Z'),
+    });
+
+    await service.capturePreExtracted(message, '我是你闺女 核桃是我儿子', [
+      { referenceName: '核桃', relationToUser: '儿子', facts: [] },
+    ]);
+
+    expect(upsertKnownPersonDeclaration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        declaration: expect.objectContaining({
+          realName: '核桃',
+          relationToUser: '儿子',
+        }),
+      })
+    );
+  });
+
   it('excludes the bound AI relative through kinship synonyms, not exact names', () => {
     const service = new RelativeMemoryExtractorService();
     const isParent = (item: {

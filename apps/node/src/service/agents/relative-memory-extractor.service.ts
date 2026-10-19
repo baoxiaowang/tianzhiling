@@ -190,6 +190,16 @@ export class RelativeMemoryExtractorService {
         )
         .slice(0, 8);
       const referenceName = this.cleanName(item.referenceName);
+      // 模型把“核桃”这类名字放在 referenceName、把“儿子”这类称谓放在
+      // relationToUser。此前只用 realName/aliases 建人物，导致“核桃是我儿子”
+      // 被写成“一个没名字的儿子”，名字丢了。这里在 referenceName 不是亲属
+      // 称谓时把它作为姓名兜底；纯称谓（“儿子/妈”）仍不当作姓名。
+      const referenceIsName = Boolean(
+        referenceName &&
+          !isRelativeRelation(referenceName) &&
+          kinshipTermsIn(referenceName).length === 0
+      );
+      const displayName = realName || (referenceIsName ? referenceName : '');
       const personCallsUser = item.personCallsUser?.trim();
       if (
         excludedParentReferences.length > 0 &&
@@ -218,12 +228,60 @@ export class RelativeMemoryExtractorService {
           relationToUser: relation,
         });
       const relationCount =
-        !person && !realName && !aliases.length
+        !person && !displayName && !aliases.length
           ? await this.userIdentityMemoryService.countKnownPeopleByRelation(
               message.userId,
               relation
             )
           : 0;
+      // 已有“同关系但没名字”的人物（例如旧逻辑把“核桃是我儿子”写成
+      // 一个无名儿子）时，用本次原话里的名字认领它，避免再建一个重复人物。
+      if (!person && referenceIsName) {
+        const unnamed =
+          await this.userIdentityMemoryService.resolveKnownPersonByRelation?.({
+            userId: message.userId,
+            relationToUser: relation,
+          });
+        if (
+          unnamed &&
+          !unnamed.realName &&
+          !unnamed.preferredName &&
+          !(unnamed.aliases || []).length
+        ) {
+          person =
+            (await this.userIdentityMemoryService.claimReferenceNameForUnnamedPerson?.(
+              {
+                userId: message.userId,
+                personId: unnamed.id,
+                referenceName,
+                relationToUser: relation,
+                agentId: message.agentId,
+                messageId: message.id,
+                sourceText: text,
+              }
+            )) || unnamed;
+        }
+      }
+      if (
+        person &&
+        referenceIsName &&
+        !person.realName &&
+        !person.preferredName &&
+        !(person.aliases || []).length
+      ) {
+        person =
+          (await this.userIdentityMemoryService.claimReferenceNameForUnnamedPerson?.(
+            {
+              userId: message.userId,
+              personId: person.id,
+              referenceName,
+              relationToUser: relation,
+              agentId: message.agentId,
+              messageId: message.id,
+              sourceText: text,
+            }
+          )) || person;
+      }
       // “爸爸叫我湾呐”只有一个称谓、没有姓名时，上面的引用解析会落空；
       // 若该关系在本账户下唯一，就挂到这个人名下，不主张合并任何未证实称谓。
       if (!person && personCallsUser && relationCount === 1) {
@@ -251,11 +309,14 @@ export class RelativeMemoryExtractorService {
       }
       if (
         !person &&
-        (realName || aliases.length || relationCount === 0 || linkedAgentId)
+        (displayName ||
+          aliases.length ||
+          relationCount === 0 ||
+          linkedAgentId)
       ) {
         const declaration: KnownPersonDeclaration = {
           identityKey: '',
-          realName,
+          realName: displayName,
           aliases,
           relationToUser: relation,
           linkedAgentId,

@@ -950,6 +950,53 @@ export class UserIdentityMemoryService {
   }
 
   /**
+   * 给“同关系但还没名字”的人物补上名字。
+   *
+   * 旧写入路径只把模型返回的 realName/aliases 当作姓名，而模型常把“核桃”
+   * 放在 referenceName，结果建出一个“无名儿子”。这里只在人物确实没有任何
+   * 姓名时补写，且由调用方保证 referenceName 不是“儿子/妈”这类亲属称谓，
+   * 不会覆盖已有姓名或制造重复人物。
+   */
+  async claimReferenceNameForUnnamedPerson(options: {
+    userId: MongoObjectId;
+    personId: MongoObjectId;
+    referenceName: string;
+    relationToUser?: string;
+    agentId: MongoObjectId;
+    messageId: MongoObjectId;
+    sourceText: string;
+  }): Promise<UserKnownPersonEntity | null> {
+    if (!this.knownPersonModel?.findOne) return null;
+    const person = await this.knownPersonModel.findOne({
+      where: {
+        _id: options.personId,
+        userId: options.userId,
+      } as never,
+    });
+    if (!person) return null;
+    if (
+      person.realName ||
+      person.preferredName ||
+      (person.aliases || []).length
+    ) {
+      return person;
+    }
+    const name = options.referenceName?.trim().slice(0, 24);
+    if (!name) return person;
+
+    person.realName = name;
+    if (!person.relationToUser && options.relationToUser) {
+      person.relationToUser = options.relationToUser;
+    }
+    person.sourceAgentId = options.agentId;
+    person.sourceMessageId = options.messageId;
+    person.sourceText = options.sourceText.slice(0, 500);
+    person.updatedAt = new Date();
+    await this.knownPersonModel.save(person);
+    return person;
+  }
+
+  /**
    * Records the name another family member uses for the user. This is a fact
    * about that other person's usage only: it never writes the current role's
    * own address (agentCallMe / relationship.preferred_*). The program only
