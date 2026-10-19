@@ -7236,4 +7236,26 @@ describe('ReplyGuardrailService', () => {
     expect(fenced).toEqual(['第一句', '第二句']);
     expect(explained).toEqual(['我在听，你慢慢说']);
   });
+
+  it('rotates the catch-all fallback across variants instead of repeating one pair', () => {
+    const service = new ReplyGuardrailService();
+    const dedup = (
+      service as unknown as {
+        dedupFallbackSegments(
+          segments: string[],
+          conversationId?: string
+        ): string[];
+      }
+    ).dedupFallbackSegments.bind(service);
+
+    const base = ['嗯 你说的这件事我听明白了', '你愿意跟我说这些 我都记着'];
+    const second = ['好的 这事我记下了', '往后有想说的 随时跟我唠'];
+    const third = ['你说的我心里有数了', '你能跟我讲这些 我很高兴'];
+    const conversationId = 'conversation-rotation-test';
+
+    expect(dedup(base, conversationId)).toEqual(base);
+    expect(dedup(base, conversationId)).toEqual(second);
+    expect(dedup(base, conversationId)).toEqual(third);
+    expect(dedup(base, conversationId)).toEqual(base);
+  });
 });

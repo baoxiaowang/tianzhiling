@@ -562,10 +562,7 @@ export class OpenAIService {
     try {
       return await task(primaryClient, activePrimaryBody, 'primary');
     } catch (primaryError) {
-      const fallback = this.resolveFallbackProvider();
-      if (!fallback || !fallbackBody) {
-        throw primaryError;
-      }
+      let lastError: unknown = primaryError;
       this.logger.warn(
         '[openai] primary provider failed, error=%s, trying fallback',
         describeErrorForLog(
@@ -574,7 +571,44 @@ export class OpenAIService {
             : new Error(String(primaryError))
         )
       );
-      return await task(fallback.client, fallbackBody, 'fallback');
+      const fallback = this.resolveFallbackProvider();
+      if (fallback && fallbackBody) {
+        try {
+          return await task(fallback.client, fallbackBody, 'fallback');
+        } catch (fallbackError) {
+          lastError = fallbackError;
+          this.logger.warn(
+            '[openai] fallback provider failed, error=%s, trying secondary',
+            describeErrorForLog(
+              fallbackError instanceof Error
+                ? fallbackError
+                : new Error(String(fallbackError))
+            )
+          );
+        }
+      }
+      // 主、备都不可用时继续尝试第三通道，避免“有可用 provider 却直接兜底”。
+      const secondary = this.resolveSecondaryFallbackProvider();
+      if (secondary && fallbackBody) {
+        try {
+          return await task(
+            secondary.client,
+            { ...fallbackBody, model: secondary.model },
+            'secondary'
+          );
+        } catch (secondaryError) {
+          lastError = secondaryError;
+          this.logger.warn(
+            '[openai] secondary provider failed, error=%s',
+            describeErrorForLog(
+              secondaryError instanceof Error
+                ? secondaryError
+                : new Error(String(secondaryError))
+            )
+          );
+        }
+      }
+      throw lastError;
     }
   }
 

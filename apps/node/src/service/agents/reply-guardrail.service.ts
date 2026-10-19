@@ -528,8 +528,11 @@ export class ReplyGuardrailService {
   @Inject()
   openAIService: OpenAIService;
 
-  /** 会话级兜底句去重：conversationId → 已使用的兜底键集合 */
-  private readonly fallbackUsageCache = new Map<string, Set<string>>();
+  /**
+   * 会话级万能兜底轮换：conversationId → 当前使用的变体序号。
+   * 每次兜底都从这里往后推一格，避免同一对句子连续重复。
+   */
+  private readonly catchAllRotationIndex = new Map<string, number>();
 
   /** 会话深度追踪：conversationId → 守卫调用次数（近似轮次） */
   private readonly conversationDepthMap = new Map<string, number>();
@@ -581,7 +584,7 @@ export class ReplyGuardrailService {
     Array.from(new Set(expiredIds.concat(oldestIds))).forEach(id => {
       this.conversationLastSeenAt.delete(id);
       this.conversationDepthMap.delete(id);
-      this.fallbackUsageCache.delete(id);
+      this.catchAllRotationIndex.delete(id);
     });
   }
 
@@ -5348,8 +5351,8 @@ export class ReplyGuardrailService {
   }
 
   /**
-   * 会话级兜底去重：如果当前 pair 已在本会话中使用过，轮换到变体。
-   * 仅对三个万能兜底 pair（catch-all）做去重，专用兜底（梦境/危机等）不受影响。
+   * 会话级兜底轮换：命中万能兜底 pair 时，按会话记录推进到下一个变体。
+   * 专用兜底（梦境/危机等）不受影响。
    */
   private dedupFallbackSegments(
     segments: string[],
@@ -5358,26 +5361,40 @@ export class ReplyGuardrailService {
     if (!conversationId || segments.length < 2) return segments;
     this.touchConversationCache(conversationId);
 
-    const key = segments.map(s => s.slice(0, 30)).join('||');
-    const cache = this.fallbackUsageCache.get(conversationId);
+    const match = this.findCatchAllVariant(segments);
+    if (!match) return segments;
 
-    if (cache?.has(key)) {
-      const rotated = this.rotateCatchAllFallback(segments);
-      if (rotated) {
-        const newKey = rotated.map(s => s.slice(0, 30)).join('||');
-        cache.add(newKey);
-        return rotated;
+    const previous = this.catchAllRotationIndex.get(conversationId);
+    const nextIndex =
+      previous === undefined
+        ? match.index
+        : (previous + 1) % match.variants.length;
+    this.catchAllRotationIndex.set(conversationId, nextIndex);
+
+    return match.variants[nextIndex];
+  }
+
+  private findCatchAllVariant(
+    segments: string[]
+  ): { variants: string[][]; index: number } | null {
+    const normalized = segments.map(segment =>
+      segment.trim().replace(/\s+/g, ' ')
+    );
+
+    for (const variants of Object.values(
+      ReplyGuardrailService.CATCH_ALL_VARIANTS
+    )) {
+      const index = variants.findIndex(
+        variant =>
+          variant[0].trim().replace(/\s+/g, ' ') === normalized[0] &&
+          variant[1].trim().replace(/\s+/g, ' ') === normalized[1]
+      );
+      if (index >= 0) {
+        return { variants, index };
       }
     }
 
-    // 首次使用：记录
-    if (!cache) {
-      this.fallbackUsageCache.set(conversationId, new Set([key]));
-    } else {
-      cache.add(key);
-    }
-
-    return segments;
+    return null;
   }
 
   /** 三个万能兜底 pair 的变体池 */
@@ -5401,30 +5418,6 @@ export class ReplyGuardrailService {
       ['你说的我心里有数了', '你能跟我讲这些 我很高兴'],
     ],
   };
-
-  /** 如果 segments 匹配某个万能兜底 pair，轮换到下一个未使用的变体 */
-  private rotateCatchAllFallback(segments: string[]): string[] | null {
-    const normalized = segments.map(s => s.trim().replace(/\s+/g, ' '));
-
-    for (const variants of Object.values(
-      ReplyGuardrailService.CATCH_ALL_VARIANTS
-    )) {
-      for (let i = 0; i < variants.length; i++) {
-        const variant = variants[i];
-        const variantNorm = variant.map(s => s.trim().replace(/\s+/g, ' '));
-        if (
-          normalized[0] === variantNorm[0] &&
-          normalized[1] === variantNorm[1]
-        ) {
-          // 轮换到下一个变体
-          const nextIdx = (i + 1) % variants.length;
-          return variants[nextIdx];
-        }
-      }
-    }
-
-    return null; // 不是万能兜底 pair，不处理
-  }
 
   private legacyFallbackSafeSegments(
     userQuery = '',
