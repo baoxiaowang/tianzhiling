@@ -214,6 +214,12 @@ import {
   isStructuredMemoryOnly,
 } from './memory-write-guard';
 import {
+  buildRuleGateShadowRecord,
+  formatRuleGateShadowLine,
+  isPureSocialTurn,
+  shouldSampleRuleGateShadow,
+} from './agents/rule-gate-shadow';
+import {
   PersonTemporalMemoryService,
   PersonTemporalQaContextItem,
 } from './agents/person-temporal-memory.service';
@@ -3752,6 +3758,20 @@ export class ConversationService {
     // 记忆写入总闸：暂停期间不再为聊天/异步/小使者消息派生结构化记忆任务。
     if (isMemoryWriteDisabled()) {
       return;
+    }
+    if (
+      isPureSocialTurn(searchableText) &&
+      shouldSampleRuleGateShadow()
+    ) {
+      this.logger.info(
+        formatRuleGateShadowLine(
+          buildRuleGateShadowRecord({
+            gate: 'structured_memory_enqueue',
+            reason: 'pure_social',
+            textLength: searchableText.length,
+          })
+        )
+      );
     }
     await this.memoryPipelineTaskService.enqueueForMessage(
       message,
