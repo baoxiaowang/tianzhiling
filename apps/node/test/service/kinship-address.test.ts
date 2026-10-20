@@ -12,6 +12,8 @@ describe('kinship address canonicalization', () => {
     expect(canonicalKinshipRelation('外祖父')).toBe('外祖父');
     expect(canonicalKinshipRelation('家家')).toBe('外祖母');
     expect(canonicalKinshipRelation('外婆')).toBe('外祖母');
+    expect(canonicalKinshipRelation('婆婆')).toBeUndefined();
+    expect(canonicalKinshipRelation('公公')).toBeUndefined();
     expect(normalizeRelationKey('家家')).toBe('外祖母');
   });
 
@@ -56,6 +58,27 @@ describe('kinship address canonicalization', () => {
         referenceName: '家家',
       })
     ).resolves.toBe(grandmother);
+  });
+
+  it('does not merge 婆婆 into 外祖母 automatically', async () => {
+    const grandmother = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000a07'),
+      relationToUser: '外祖母',
+      realName: null,
+      preferredName: null,
+      aliases: [],
+    });
+    const service = new UserIdentityMemoryService();
+    service.knownPersonModel = {
+      find: jest.fn().mockResolvedValue([grandmother]),
+    } as never;
+
+    await expect(
+      service.resolveKnownPersonReference({
+        userId: new MongoObjectId('665000000000000000000a08'),
+        referenceName: '婆婆',
+      })
+    ).resolves.toBeNull();
   });
 
   it('does not merge a different relation group', async () => {

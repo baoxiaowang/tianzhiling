@@ -24,6 +24,24 @@ describe('ritual trigger', () => {
     expect(buildRitualTriggerPrompt(trigger)).toContain('第 7 天（头七）');
   });
 
+  it('does not turn a future ritual mention into “today”', () => {
+    const trigger = resolveRitualTrigger({
+      query: '等你五七时候给你送面条',
+      now: NOW,
+      disableDedupe: true,
+    });
+    const prompt = buildRitualTriggerPrompt(trigger);
+    expect(prompt).toContain('五七是离开后的第 35 天');
+    expect(prompt).not.toContain('今天是');
+
+    const todayTrigger = resolveRitualTrigger({
+      query: '今天是他头七',
+      now: NOW,
+      disableDedupe: true,
+    });
+    expect(buildRitualTriggerPrompt(todayTrigger)).toContain('今天是');
+  });
+
   it('computes the inclusive departure day from the profile date', () => {
     expect(resolveDepartureDay('2026-10-02', NOW)).toBe(7);
     expect(resolveDepartureDay('2026-09-18', NOW)).toBe(21);

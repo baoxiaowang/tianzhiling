@@ -162,6 +162,22 @@ function buildPrompt(
   return `今天是离开后的第 ${milestone.day} 天（${milestone.label}）${suffix}${certainty}。`;
 }
 
+function buildExplicitPrompt(
+  milestone: RitualMilestone,
+  query: string
+): string {
+  const saysToday = /(今天|今日|现在|正好|当天|就是今天)/.test(query);
+  const future = /(等|到|那天|时候|到时候|过几天|下周|明天|以后|将来)/.test(
+    query
+  );
+  if (saysToday && !future) {
+    return `今天是离开后的第 ${milestone.day} 天（${milestone.label}）（按用户原话）。`;
+  }
+  // 只是提到“五七时候/三七吃饺子”，不等于今天就是五七/三七；
+  // 先给定义，避免把未来安排说成今天。
+  return `${milestone.label}是离开后的第 ${milestone.day} 天。`;
+}
+
 export function resolveRitualTrigger(
   options: ResolveRitualTriggerOptions
 ): RitualTrigger | undefined {
@@ -185,7 +201,7 @@ export function resolveRitualTrigger(
         day: milestone.day,
         reason: 'explicit',
         confidence: 'confirmed',
-        prompt: buildPrompt(milestone, 'explicit', 'confirmed'),
+        prompt: buildExplicitPrompt(milestone, query),
       };
     }
   }
