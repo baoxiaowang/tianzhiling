@@ -20,6 +20,7 @@ import { isMemoryCurrent, isCanonicalUserNameEvidence } from './memory-value';
 import { MemoryValueService } from './memory-value.service';
 import { memoryValueModeForUser } from './memory-value-rollout';
 import { detectUserRequest } from './user-request-router';
+import { detectRegionalExpressionPreference } from './regional-expression-preference';
 import { getUserRequestWriteMode } from '../memory-write-guard';
 import {
   buildSharedFamilyMemberFactKey,
@@ -1178,33 +1179,62 @@ export class AgentProfileFactService {
   }): Promise<AgentProfileFactSummary[]> {
     const mode = getUserRequestWriteMode();
     if (mode === 'off') return [];
-    const signal = detectUserRequest(options.searchableText);
-    if (!signal) return [];
 
-    // “记住，以后叫我X”这类前缀会干扰称呼规则；去掉记忆前缀再跑同一套规则。
-    const requestText = options.searchableText
-      .replace(/^\s*(?:记住|记一下|别忘了|帮我记)[，,：:\s]*/, '')
-      .trim();
-    const facts = this.extractFactsWithRules(
-      requestText || options.searchableText,
-      {}
+    const signal = detectUserRequest(options.searchableText);
+    const regional = detectRegionalExpressionPreference(
+      options.searchableText
     );
-    const requestFacts = facts
-      .filter(fact => this.isDirectPreferenceFactKey(fact.key))
-      .slice(0, 3);
-    if (!requestFacts.length) return [];
+    if (!signal && !regional) return [];
+
+    const requestFacts: AgentProfileFactSummary[] = [];
+    if (signal) {
+      // “记住，以后叫我X”这类前缀会干扰称呼规则；去掉记忆前缀再跑同一套规则。
+      const requestText = options.searchableText
+        .replace(/^\s*(?:记住|记一下|别忘了|帮我记)[，,：:\s]*/, '')
+        .trim();
+      const facts = this.extractFactsWithRules(
+        requestText || options.searchableText,
+        {}
+      );
+      requestFacts.push(
+        ...facts.filter(fact => this.isDirectPreferenceFactKey(fact.key))
+      );
+    }
+
+    const regionalFact: AgentProfileFactSummary | undefined = regional
+      ? {
+          type: AgentProfileFactType.style,
+          key: 'style.preference.region_dialect',
+          value: regional.value,
+          polarity: AgentProfileFactPolarity.positive,
+          confidence: AgentProfileFactConfidence.confirmed,
+          priority: 3,
+          status: AgentProfileFactStatus.active,
+        }
+      : undefined;
+
+    const seen = new Set<string>();
+    const requestFactsToWrite = [
+      ...(regionalFact ? [regionalFact] : []),
+      ...requestFacts,
+    ].filter(fact => {
+      if (seen.has(fact.key)) return false;
+      seen.add(fact.key);
+      return true;
+    }).slice(0, 3);
+    if (!requestFactsToWrite.length) return [];
 
     if (mode === 'shadow') {
       this.logger?.info?.(
         '[user-request] shadow kind=%s keys=%s',
-        signal.kind,
-        requestFacts.map(fact => fact.key).join(',')
+        signal?.kind || 'region',
+        requestFactsToWrite.map(fact => fact.key).join(',')
       );
-      return requestFacts;
+      return requestFactsToWrite;
     }
 
     const written: AgentProfileFactSummary[] = [];
-    for (const fact of requestFacts) {
+    for (const fact of requestFactsToWrite) {
       await this.upsertFact({
         ...fact,
         userId: options.message.userId,
@@ -1220,7 +1250,7 @@ export class AgentProfileFactService {
     }
     this.logger?.info?.(
       '[user-request] wrote kind=%s keys=%s',
-      signal.kind,
+      signal?.kind || 'region',
       written.map(fact => fact.key).join(',')
     );
     return written;

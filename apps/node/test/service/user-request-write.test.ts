@@ -142,6 +142,55 @@ describe('explicit user request write', () => {
     expect(taboo.some(item => item.key.startsWith('taboo.'))).toBe(true);
   });
 
+  it('writes a regional expression preference from shared origin', async () => {
+    process.env.USER_REQUEST_WRITE_MODE = 'active';
+    const service = new AgentProfileFactService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    const upsertFact = jest.fn().mockResolvedValue({});
+    (service as any).upsertFact = upsertFact;
+
+    const written = await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '你是四川人，我们是四川人',
+    });
+
+    expect(written).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'style.preference.region_dialect',
+          value: '用户希望沿用四川地区的表达习惯交流',
+        }),
+      ])
+    );
+    expect(upsertFact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'style.preference.region_dialect',
+        confidence: AgentProfileFactConfidence.confirmed,
+      })
+    );
+  });
+
+  it('can write a region preference and an address preference together', async () => {
+    process.env.USER_REQUEST_WRITE_MODE = 'active';
+    const service = new AgentProfileFactService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    const upsertFact = jest.fn().mockResolvedValue({});
+    (service as any).upsertFact = upsertFact;
+
+    const written = await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '你是四川人，我们是四川人，以后叫我瑶瑶',
+    });
+
+    expect(written.map(item => item.key)).toEqual(
+      expect.arrayContaining([
+        'style.preference.region_dialect',
+        'relationship.preferred_user_name',
+      ])
+    );
+    expect(upsertFact).toHaveBeenCalledTimes(2);
+  });
+
   it('does not write memory/task/one-off requests', async () => {
     process.env.USER_REQUEST_WRITE_MODE = 'active';
     const service = new AgentProfileFactService();
