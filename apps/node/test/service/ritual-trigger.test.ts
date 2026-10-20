@@ -151,6 +151,123 @@ describe('ritual trigger', () => {
     expect(explicit?.key).toBe('ritual.touqi');
   });
 
+  it('computes an exact anniversary from the profile date', () => {
+    const trigger = resolveRitualTrigger({
+      query: '今天是他忌日',
+      agentDeathDate: '2023-10-08',
+      now: NOW,
+      disableDedupe: true,
+    });
+    expect(trigger).toMatchObject({
+      key: 'ritual.anniversary_3',
+      label: '3周年',
+      reason: 'anniversary',
+      confidence: 'confirmed',
+    });
+    const prompt = buildRitualTriggerPrompt(trigger);
+    expect(prompt).toContain('今天是离开后的第 3 个周年');
+    expect(prompt).toContain('2026-10-08');
+  });
+
+  it('understands “离开我们已经三年了”', () => {
+    const trigger = resolveRitualTrigger({
+      query: '他离开我们已经三年了',
+      now: NOW,
+      disableDedupe: true,
+    });
+    expect(trigger).toMatchObject({
+      key: 'ritual.anniversary_3',
+      reason: 'anniversary',
+    });
+    expect(buildRitualTriggerPrompt(trigger)).toContain('第 3 个周年');
+  });
+
+  it('turns an explicit year duration into an anniversary', () => {
+    const trigger = resolveRitualTrigger({
+      query: '他走了三年了',
+      now: NOW,
+      disableDedupe: true,
+    });
+    expect(trigger).toMatchObject({
+      key: 'ritual.anniversary_3',
+      reason: 'anniversary',
+      confidence: 'estimated',
+    });
+    const prompt = buildRitualTriggerPrompt(trigger);
+    expect(prompt).toContain('按你说的“走了三年”估算');
+    expect(prompt).toContain('大概是离开后的第 3 个周年');
+    expect(prompt).toContain('以家里算法为准');
+  });
+
+  it('shows the date of an upcoming explicit anniversary', () => {
+    const trigger = resolveRitualTrigger({
+      query: '快到他的三周年了',
+      agentDeathDate: '2023-10-20',
+      now: NOW,
+      disableDedupe: true,
+    });
+    const prompt = buildRitualTriggerPrompt(trigger);
+    expect(trigger).toMatchObject({
+      key: 'ritual.anniversary_3',
+      confidence: 'confirmed',
+    });
+    expect(prompt).toContain('2026-10-20');
+    expect(prompt).toContain('还有 12 天');
+    expect(prompt).toContain('第 3 个周年');
+  });
+
+  it('uses an estimated profile range for an explicit anniversary', () => {
+    const trigger = resolveRitualTrigger({
+      query: '今年是三周年了',
+      agentDeathStart: '2023-10-01',
+      agentDeathEnd: '2023-10-03',
+      now: NOW,
+      disableDedupe: true,
+    });
+    expect(trigger).toMatchObject({
+      key: 'ritual.anniversary_3',
+      confidence: 'estimated',
+    });
+    expect(buildRitualTriggerPrompt(trigger)).toContain(
+      '按你之前说的时长估算'
+    );
+  });
+
+  it('keeps “今年” on this year even after the anniversary passed', () => {
+    const now = new Date('2026-10-08T00:00:00.000Z');
+    const trigger = resolveRitualTrigger({
+      query: '今年忌日是哪天',
+      agentDeathDate: '2023-01-05',
+      now,
+      disableDedupe: true,
+    });
+    expect(trigger).toMatchObject({
+      key: 'ritual.anniversary_3',
+      confidence: 'confirmed',
+    });
+    const prompt = buildRitualTriggerPrompt(trigger);
+    expect(prompt).toContain('2026-01-05');
+    expect(prompt).toContain('已经过去');
+  });
+
+  it('does not turn non-departure or unrelated years into an anniversary', () => {
+    expect(
+      resolveRitualTrigger({
+        query: '我们结婚三周年了',
+        agentDeathDate: '2023-10-08',
+        now: NOW,
+        disableDedupe: true,
+      })
+    ).toBeUndefined();
+    expect(
+      resolveRitualTrigger({
+        query: '我住院三年了',
+        now: NOW,
+        disableDedupe: true,
+      })
+    ).toBeUndefined();
+  });
+
   it('does not contain response instructions', () => {
     const prompt = buildRitualTriggerPrompt(
       resolveRitualTrigger({

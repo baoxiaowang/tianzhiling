@@ -515,6 +515,14 @@ export function normalizeRelationKey(relation: string): string {
   // “母亲的兄弟”“爷爷的姐姐”描述的是**别人的**亲属，不能因为字面含“母亲/爷爷”
   // 就归到母亲/爷爷身份上——否则会把舅舅并进妈妈，出现“妈妈是妈妈的兄弟”。
   if (value.includes('的')) return value;
+  // 继/后/养/干/前 修饰的是另一段关系，不能并进“儿子/女儿/父亲/母亲”等。
+  if (
+    /^(?:继|后|养|干|前)(?:父|母|爸|妈|爹|娘|夫|妻|子|女|儿子|女儿)/.test(
+      value
+    )
+  ) {
+    return value;
+  }
   const groups: Array<[RegExp, string]> = [
     [/孙(子|儿)|外孙(子)?/, '孙辈'],
     [/孙女|外孙女/, '孙女辈'],

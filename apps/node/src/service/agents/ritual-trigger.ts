@@ -175,7 +175,8 @@ export function resolveDepartureDayRange(
 export type RitualTriggerReason =
   | 'explicit'
   | 'profile_day'
-  | 'duration';
+  | 'duration'
+  | 'anniversary';
 
 export interface RitualTrigger {
   key: string;
@@ -237,6 +238,225 @@ function buildEstimatedProfilePrompt(milestone: RitualMilestone): string {
   return `按你之前说的时长估算，今天可能是离开后的第 ${milestone.day} 天（${milestone.label}），具体以家里算法为准。`;
 }
 
+const ANNIVERSARY_TOPIC_PATTERN = /(?:周年|忌日|祭日)/;
+
+const NON_DEPARTURE_ANNIVERSARY_PATTERN =
+  /(?:结婚|生日|开业|公司|入职|在一起|恋爱|分手|毕业|周年庆|工作|创业|项目|开店)/;
+
+const ANNIVERSARY_YEARS_PATTERN =
+  /(?:(?:走了|离开|去世|过世|离世|不在)(?:我们|我|大家|家里)?(?:已经|都|快|马上|就|整整|正好|差不多|大概|有)?\s*(\d{1,3}|[一二两三四五六七八九十百]+)\s*(?:个)?\s*(?:周年|年))|(?:(\d{1,3}|[一二两三四五六七八九十百]+)\s*(?:个)?\s*周年)|(?:(\d{1,3}|[一二两三四五六七八九十百]+)\s*(?:个)?\s*年(?:了|整|多)?[^。！？\n]{0,4}(?:忌日|祭日|周年))/;
+
+interface AnniversaryYears {
+  years: number;
+  phrase: string;
+}
+
+function extractAnniversaryYears(query: string): AnniversaryYears | undefined {
+  const match = ANNIVERSARY_YEARS_PATTERN.exec(query);
+  if (!match) return undefined;
+  const raw = match[1] || match[2] || match[3];
+  if (!raw) return undefined;
+  const years = parseChineseNumber(raw);
+  if (!Number.isFinite(years) || years < 1 || years > 100) return undefined;
+  return { years, phrase: match[0].trim() };
+}
+
+function parseDateParts(
+  value?: string
+): { year: number; month: number; day: number } | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec((value || '').trim());
+  if (!match) return undefined;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+  };
+}
+
+/** 取某年的忌日；2 月 29 日在平年落到 2 月 28 日。 */
+function anniversaryDateKey(
+  deathDate: string,
+  year: number
+): string | undefined {
+  const parts = parseDateParts(deathDate);
+  if (!parts) return undefined;
+  let month = parts.month;
+  let day = parts.day;
+  if (month === 2 && day === 29) {
+    const leap = new Date(Date.UTC(year, 1, 29)).getUTCDate() === 29;
+    if (!leap) day = 28;
+  }
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(
+    2,
+    '0'
+  )}`;
+}
+
+function daysFromToday(dateKey: string, now: Date): number | undefined {
+  const target = dayNumber(dateKey);
+  const today = dayNumber(beijingDayKey(now));
+  if (target === undefined || today === undefined) return undefined;
+  return Math.round((target - today) / 86_400_000);
+}
+
+interface ExactAnniversary {
+  years: number;
+  date: string;
+  daysUntil: number;
+}
+
+function resolveExactAnniversary(
+  deathDate: string | undefined,
+  now: Date,
+  keepCurrentYear = false
+): ExactAnniversary | undefined {
+  const value = (deathDate || '').trim();
+  const parts = parseDateParts(value);
+  if (!parts) return undefined;
+  const todayKey = beijingDayKey(now);
+  const currentYear = Number(todayKey.slice(0, 4));
+  if (!Number.isFinite(currentYear)) return undefined;
+  let years = currentYear - parts.year;
+  if (years < 1) return undefined;
+  let year = currentYear;
+  let date = anniversaryDateKey(value, year);
+  if (!date) return undefined;
+  let daysUntil = daysFromToday(date, now);
+  if (daysUntil === undefined) return undefined;
+  // 今年忌日已经过去较久时，用户说的“快到了”通常指下一次；
+  // 但用户明确问“今年”时，仍按今年回答。
+  if (daysUntil < -30 && !keepCurrentYear) {
+    year += 1;
+    years += 1;
+    date = anniversaryDateKey(value, year);
+    if (!date) return undefined;
+    daysUntil = daysFromToday(date, now);
+    if (daysUntil === undefined) return undefined;
+  }
+  return { years, date, daysUntil };
+}
+
+function estimateAnniversaryYears(options: {
+  start?: string;
+  end?: string;
+  now: Date;
+}): { min: number; max: number } | undefined {
+  const days = [options.start, options.end]
+    .map(value => resolveDepartureDay(value, options.now))
+    .filter((value): value is number => value !== undefined);
+  if (!days.length) return undefined;
+  const years = days.map(day => Math.floor((day - 1) / 365));
+  const min = Math.min(...years);
+  const max = Math.max(...years);
+  if (max < 1) return undefined;
+  return { min, max };
+}
+
+function buildAnniversaryPrompt(info: {
+  years: number;
+  exact: boolean;
+  date?: string;
+  daysUntil?: number;
+  sourcePhrase?: string;
+}): string {
+  if (info.exact && info.date !== undefined && info.daysUntil !== undefined) {
+    if (info.daysUntil === 0) {
+      return `今天是离开后的第 ${info.years} 个周年（忌日，${info.date}）。`;
+    }
+    if (info.daysUntil > 0) {
+      return `今年忌日是 ${info.date}（还有 ${info.daysUntil} 天），是离开后的第 ${info.years} 个周年。`;
+    }
+    return `今年忌日已经过去（${info.date}），是离开后的第 ${info.years} 个周年。`;
+  }
+  if (!info.sourcePhrase) {
+    return `按你之前说的时长估算，今年大概是离开后的第 ${info.years} 个周年（忌日），具体以家里算法为准。`;
+  }
+  return `按你说的“${info.sourcePhrase}”估算，大概是离开后的第 ${info.years} 个周年（忌日），具体以家里算法为准。`;
+}
+
+function buildAnniversaryTrigger(info: {
+  years: number;
+  confidence: 'confirmed' | 'estimated';
+  exact: boolean;
+  day: number;
+  date?: string;
+  daysUntil?: number;
+  sourcePhrase?: string;
+}): RitualTrigger {
+  const years = Math.max(1, Math.floor(info.years));
+  return {
+    key: years === 1 ? 'ritual.anniversary' : `ritual.anniversary_${years}`,
+    label: years === 1 ? '周年' : `${years}周年`,
+    day: Math.max(1, Math.floor(info.day)),
+    reason: 'anniversary',
+    confidence: info.confidence,
+    prompt: buildAnniversaryPrompt({ ...info, years }),
+  };
+}
+
+function resolveAnniversaryTrigger(
+  options: ResolveRitualTriggerOptions,
+  now: Date
+): RitualTrigger | undefined {
+  const query = (options.query || '').trim();
+  if (!query) return undefined;
+  const explicit = extractAnniversaryYears(query);
+  // “结婚三周年/生日三周年”不是离世周年，除非同一句里明确提到离开。
+  if (
+    NON_DEPARTURE_ANNIVERSARY_PATTERN.test(query) &&
+    !/(?:走了|离开|去世|过世|离世|忌日|祭日)/.test(query)
+  ) {
+    return undefined;
+  }
+  const topicRelevant = ANNIVERSARY_TOPIC_PATTERN.test(query);
+  if (!topicRelevant && !explicit) return undefined;
+
+  const exact = resolveExactAnniversary(
+    options.agentDeathDate,
+    now,
+    /今年/.test(query)
+  );
+  if (exact) {
+    const deathDay = resolveDepartureDay(options.agentDeathDate, now);
+    return buildAnniversaryTrigger({
+      years: exact.years,
+      confidence: 'confirmed',
+      exact: true,
+      day: deathDay || exact.years * 365,
+      date: exact.date,
+      daysUntil: exact.daysUntil,
+    });
+  }
+
+  const range = estimateAnniversaryYears({
+    start: options.agentDeathStart,
+    end: options.agentDeathEnd,
+    now,
+  });
+  if (explicit) {
+    const inRange =
+      range &&
+      explicit.years >= range.min &&
+      explicit.years <= range.max;
+    return buildAnniversaryTrigger({
+      years: explicit.years,
+      confidence: 'estimated',
+      exact: false,
+      day: explicit.years * 365,
+      sourcePhrase: inRange ? undefined : explicit.phrase,
+    });
+  }
+  if (range && range.min === range.max) {
+    return buildAnniversaryTrigger({
+      years: range.min,
+      confidence: 'estimated',
+      exact: false,
+      day: range.min * 365,
+    });
+  }
+  return undefined;
+}
+
 export function resolveRitualTrigger(
   options: ResolveRitualTriggerOptions
 ): RitualTrigger | undefined {
@@ -265,7 +485,11 @@ export function resolveRitualTrigger(
     }
   }
 
-  // 2. 档案离开日期/估计范围：算“含当天”的第几天。
+  // 2. 周年/忌日：把“走了 N 年 / N 周年 / 忌日”归一化成第几个周年。
+  const anniversary = resolveAnniversaryTrigger(options, now);
+  if (anniversary) return anniversary;
+
+  // 3. 档案离开日期/估计范围：算“含当天”的第几天。
   const dayRange = resolveDepartureDayRange(
     {
       exactDate: options.agentDeathDate,
@@ -309,7 +533,7 @@ export function resolveRitualTrigger(
     return undefined;
   }
 
-  // 3. 原话时长：只在没有档案日期时兜底。
+  // 4. 原话时长：只在没有档案日期时兜底。
   const duration = DEPARTURE_DURATION_PATTERN.exec(query)?.[1];
   if (duration) {
     const days = parseChineseNumber(duration);
