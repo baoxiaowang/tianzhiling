@@ -171,6 +171,10 @@ import {
   formatBeijingDateTime,
 } from './conversation-return-context';
 import type { ConversationReturnContext } from './conversation-return-context';
+import {
+  buildRitualKnowledgePrompt,
+  resolveRitualKnowledge,
+} from './knowledge/knowledge-catalog';
 import type { ReturnTurnPlan } from '../memory/memory-return-turn';
 
 /** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
@@ -1982,11 +1986,20 @@ export class AgentContextService {
       recognitionJourneyPrompt: options.recognitionJourneyPrompt,
       continuityInformationCardPrompt: options.continuityInformationCardPrompt,
     });
+    // 条件知识：只在客户这句话命中祭祀/节日时注入一条短文本；
+    // 命中后写入会话粘性，后续追问复用，不重复匹配。
+    const ritualKnowledgePrompt = buildRitualKnowledgePrompt(
+      resolveRitualKnowledge({
+        conversationId: this.stringifyObjectId(options.conversation.id),
+        query: options.currentUserText?.trim() || options.currentQuery || '',
+      })
+    );
     const taskParts = [
       '# 本轮任务层',
       // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
       // 证据与本地候选、本轮简要），统一后置，保证稳定段逐字不变。
       conversationReturnContextPrompt,
+      ritualKnowledgePrompt,
       returnTurnMaterialPrompt,
       conversationReadingPrompt,
       initiativeResource.prompt,

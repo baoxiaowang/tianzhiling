@@ -3,6 +3,7 @@ import {
   isDreamAbsenceIntent,
   isDreamVisitRequestIntent,
 } from './reply-intent';
+import { getDreamKnowledge } from './knowledge/knowledge-catalog';
 
 export const DREAM_COMPANION_STAGES = [
   'request',
@@ -112,19 +113,11 @@ export function resolveDreamCompanionPlan(
 export function buildDreamCompanionPlanPrompt(
   plan: DreamCompanionPlan
 ): string {
-  const actionGuidance: Record<DreamCompanionAction, string> = {
-    promise: '可直接答应梦里相见；给期待，不保证醒后一定记得。',
-    invite: '用一个梦境锚点邀请相认，不罗列多个设定。',
-    reconstruct: '只顺着用户讲出的梦境片段回应，不补现实共同往事。',
-    repair: '先接住没梦见的失落，换一种梦内陪伴，不把忘梦说成事实。',
-    leave_space: '保留梦的含混；少重复保证，可给睡前陪伴或自然留白。',
-  };
-
+  const knowledge = getDreamKnowledge(plan);
+  const guidance = knowledge?.short || '顺着用户说出的梦境内容自然承接。';
   return `梦境：${plan.dreamStage}/${plan.dreamAction}/${
     plan.expectationLevel
-  }/${plan.dreamAnchor}/${plan.realityBoundary}。${
-    actionGuidance[plan.dreamAction]
-  }梦中情节可自然想象，但不作现实证明、预言或醒时到场。`;
+  }/${plan.dreamAnchor}/${plan.realityBoundary}。${guidance}`;
 }
 
 function resolveDreamStage(options: {
