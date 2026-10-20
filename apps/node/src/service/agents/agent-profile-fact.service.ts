@@ -24,6 +24,10 @@ import { detectRegionalExpressionPreference } from './regional-expression-prefer
 import { detectComfortPreference } from './comfort-preference';
 import { detectKinshipDisplayPreference } from './kinship-display-preference';
 import { detectContextualTaboo } from './contextual-taboo';
+import {
+  buildPreferenceAuditRecord,
+  formatPreferenceAuditLine,
+} from './preference-audit';
 import { getUserRequestWriteMode } from '../memory-write-guard';
 import {
   buildSharedFamilyMemberFactKey,
@@ -1286,13 +1290,47 @@ export class AgentProfileFactService {
       seen.add(fact.key);
       return true;
     }).slice(0, 5);
-    if (!requestFactsToWrite.length) return [];
+
+    const auditKind = signal?.kind
+      ? signal.kind
+      : comfort.comfortAvoid.length || comfort.deathWording
+      ? 'comfort'
+      : contextual
+      ? 'context'
+      : kinship.facts.length
+      ? 'kinship'
+      : regional
+      ? 'region'
+      : 'unknown';
+    const auditBase = {
+      kind: auditKind,
+      messageId: this.stringifyObjectId(options.message.id),
+      userId: this.stringifyObjectId(options.message.userId),
+      agentId: this.stringifyObjectId(options.message.agentId),
+    };
+
+    if (!requestFactsToWrite.length) {
+      this.logger?.info?.(
+        formatPreferenceAuditLine(
+          buildPreferenceAuditRecord({
+            ...auditBase,
+            decision: 'skip',
+            reason: 'no_fact',
+          })
+        )
+      );
+      return [];
+    }
 
     if (mode === 'shadow') {
       this.logger?.info?.(
-        '[user-request] shadow kind=%s keys=%s',
-        signal?.kind || 'region',
-        requestFactsToWrite.map(fact => fact.key).join(',')
+        formatPreferenceAuditLine(
+          buildPreferenceAuditRecord({
+            ...auditBase,
+            decision: 'shadow',
+            keys: requestFactsToWrite.map(fact => fact.key),
+          })
+        )
       );
       return requestFactsToWrite;
     }
@@ -1329,9 +1367,13 @@ export class AgentProfileFactService {
       written.push(factToWrite);
     }
     this.logger?.info?.(
-      '[user-request] wrote kind=%s keys=%s',
-      signal?.kind || 'region',
-      written.map(fact => fact.key).join(',')
+      formatPreferenceAuditLine(
+        buildPreferenceAuditRecord({
+          ...auditBase,
+          decision: 'write',
+          keys: written.map(fact => fact.key),
+        })
+      )
     );
     return written;
   }

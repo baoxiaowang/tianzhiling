@@ -104,6 +104,11 @@ describe('explicit user request write', () => {
     expect(written).toHaveLength(1);
     expect(upsertFact).not.toHaveBeenCalled();
     expect(service.logger.info).toHaveBeenCalled();
+    const auditLine = (service.logger.info as jest.Mock).mock.calls
+      .map(call => call[0])
+      .find(line => String(line).includes('[preference-audit]'));
+    expect(auditLine).toContain('"decision":"shadow"');
+    expect(auditLine).not.toContain('以后说话短一点');
   });
 
   it('reuses the existing rule extractors for real request text', async () => {
