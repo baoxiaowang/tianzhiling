@@ -60,6 +60,27 @@ describe('kinship address canonicalization', () => {
     ).resolves.toBe(grandmother);
   });
 
+  it('resolves an ambiguous term per user when that user built the person', async () => {
+    const motherInLaw = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000a09'),
+      relationToUser: '婆婆',
+      realName: null,
+      preferredName: null,
+      aliases: [],
+    });
+    const service = new UserIdentityMemoryService();
+    service.knownPersonModel = {
+      find: jest.fn().mockResolvedValue([motherInLaw]),
+    } as never;
+
+    await expect(
+      service.resolveKnownPersonReference({
+        userId: new MongoObjectId('665000000000000000000a0a'),
+        referenceName: '婆婆',
+      })
+    ).resolves.toBe(motherInLaw);
+  });
+
   it('does not merge 婆婆 into 外祖母 automatically', async () => {
     const grandmother = Object.assign(new UserKnownPersonEntity(), {
       id: new MongoObjectId('665000000000000000000a07'),

@@ -436,6 +436,54 @@ describe('RelativeMemoryExtractorService', () => {
     );
   });
 
+  it('stores an ambiguous kinship term as a user-level alias, not a global merge', async () => {
+    const service = new RelativeMemoryExtractorService();
+    service.logger = { warn: jest.fn() } as never;
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000a0b'),
+      relationToUser: '婆婆',
+    });
+    const upsertKnownPersonDeclaration = jest
+      .fn()
+      .mockResolvedValue(person);
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue(null),
+      countKnownPeopleByRelation: jest.fn().mockResolvedValue(0),
+      resolveKnownPersonByRelation: jest.fn().mockResolvedValue(null),
+      claimReferenceNameForUnnamedPerson: jest.fn(),
+      upsertKnownPersonDeclaration,
+      setPersonCallsUser: jest.fn(),
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn(),
+      recordFact: jest.fn(),
+    } as never;
+    service.personTemporalMemoryService = {
+      recordExplicitPersonDate: jest.fn(),
+    } as never;
+    (service as any).resolveBoundAgent = jest.fn().mockResolvedValue(null);
+
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000a0c'),
+      userId: new MongoObjectId('665000000000000000000a0d'),
+      agentId: new MongoObjectId('665000000000000000000a0e'),
+      createdAt: new Date('2026-10-20T00:00:00.000Z'),
+    });
+
+    await service.capturePreExtracted(message, '我婆婆看着核桃呢', [
+      { referenceName: '婆婆', relationToUser: '婆婆', facts: [] },
+    ]);
+
+    expect(upsertKnownPersonDeclaration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        declaration: expect.objectContaining({
+          aliases: expect.arrayContaining(['婆婆']),
+          relationToUser: '婆婆',
+        }),
+      })
+    );
+  });
+
   it('excludes the bound AI relative through kinship synonyms, not exact names', () => {
     const service = new RelativeMemoryExtractorService();
     const isParent = (item: {

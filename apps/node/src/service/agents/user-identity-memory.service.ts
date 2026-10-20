@@ -16,7 +16,10 @@ import {
   extractUserNameMemory,
   isExplicitCanonicalNameReplacement,
 } from './agent-name-memory';
-import { UserRelativeProfileService } from './user-relative-profile.service';
+import {
+  isRelativeRelation,
+  UserRelativeProfileService,
+} from './user-relative-profile.service';
 import { canonicalKinshipRelation } from './memory-value';
 import { OpenAIService } from './openai';
 
@@ -909,21 +912,27 @@ export class UserIdentityMemoryService {
     });
     const reference = options.referenceName?.trim().toLowerCase();
     // 如果用户说的本身是称谓（“姥爷/外公/家家”），把它当关系而不是姓名；
-    // 这样同一关系组的叫法都会归到同一个人。
+    // 无歧义组用规范关系，歧义称谓（“婆婆/公公”）用这个用户原话里的称谓，
+    // 只和该用户已建人物的关系/别名匹配，不做全局合并。
     const referenceRelation = canonicalKinshipRelation(options.referenceName);
+    const referenceIsKinship =
+      Boolean(reference) && isRelativeRelation(options.referenceName);
     const relation = referenceRelation
       ? referenceRelation
+      : referenceIsKinship
+      ? normalizeRelation((options.referenceName || '').trim())
       : normalizeRelation(options.relationToUser || '');
     const matches = people.filter(person => {
-      const nameMatched = referenceRelation
-        ? true
-        : reference
-        ? this.unique([
-            person.realName,
-            person.preferredName,
-            ...(person.aliases || []),
-          ]).some(name => name.toLowerCase() === reference)
-        : true;
+      const nameMatched =
+        referenceRelation || referenceIsKinship
+          ? true
+          : reference
+          ? this.unique([
+              person.realName,
+              person.preferredName,
+              ...(person.aliases || []),
+            ]).some(name => name.toLowerCase() === reference)
+          : true;
       const relationMatched = relation
         ? normalizeRelation(person.relationToUser || '') === relation
         : true;

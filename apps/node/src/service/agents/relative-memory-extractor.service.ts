@@ -200,6 +200,18 @@ export class RelativeMemoryExtractorService {
           kinshipTermsIn(referenceName).length === 0
       );
       const displayName = realName || (referenceIsName ? referenceName : '');
+      // 用户级称谓别名：把用户原话里的称谓（如“婆婆/大姑妈”）写进该人物的
+      // aliases，后续同名引用只在这个用户范围内解析，不做全局合并。
+      const referenceIsKinship =
+        Boolean(referenceName) && isRelativeRelation(referenceName);
+      const personAliases = Array.from(
+        new Set([
+          ...aliases,
+          ...(referenceIsKinship && referenceName !== displayName
+            ? [referenceName]
+            : []),
+        ])
+      ).slice(0, 8);
       const personCallsUser = item.personCallsUser?.trim();
       if (
         excludedParentReferences.length > 0 &&
@@ -301,7 +313,7 @@ export class RelativeMemoryExtractorService {
             declaration: {
               identityKey: '',
               realName: realName || person.realName,
-              aliases,
+              aliases: personAliases,
               relationToUser: relation,
               linkedAgentId,
             },
@@ -310,14 +322,14 @@ export class RelativeMemoryExtractorService {
       if (
         !person &&
         (displayName ||
-          aliases.length ||
+          personAliases.length ||
           relationCount === 0 ||
           linkedAgentId)
       ) {
         const declaration: KnownPersonDeclaration = {
           identityKey: '',
           realName: displayName,
-          aliases,
+          aliases: personAliases,
           relationToUser: relation,
           linkedAgentId,
         };
