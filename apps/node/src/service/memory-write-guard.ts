@@ -78,3 +78,27 @@ export function isDepartureDateWriteEnabled(
 ): boolean {
   return readTruthy(env.DEPARTURE_DATE_WRITE_ENABLED);
 }
+
+export type UserRequestWriteMode = 'off' | 'shadow' | 'active';
+
+/**
+ * 用户直接提要求（称呼/表达偏好/话题禁忌）的窄写入模式。
+ *
+ * - off：完全不处理；
+ * - shadow：只判断和记录，不写库；
+ * - active：只把 address/style/taboo 三类高置信偏好直写 agent_profile_fact，
+ *   不重新打开整条记忆流水线。
+ */
+export function getUserRequestWriteMode(
+  env: NodeJS.ProcessEnv = process.env
+): UserRequestWriteMode {
+  const raw = (
+    env.USER_REQUEST_WRITE_MODE ||
+    env.NODE_USER_REQUEST_WRITE_MODE ||
+    'active'
+  )
+    .trim()
+    .toLowerCase();
+  if (raw === 'off' || raw === 'active') return raw;
+  return 'shadow';
+}

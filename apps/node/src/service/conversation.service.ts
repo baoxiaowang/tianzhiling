@@ -3535,6 +3535,7 @@ export class ConversationService {
             return undefined;
           }
         ),
+        this.extractExplicitUserRequest(message, searchableText),
       ]);
     // 用户侧两条抽取已合并为一次模型调用：亲友 + 本人近况。未注入新服务时
     // 回退旧的两条独立调用，保证部署/单测环境仍可运行。
@@ -3898,6 +3899,40 @@ export class ConversationService {
         this.describeReplyError(error)
       );
       return [];
+    }
+  }
+
+  /**
+   * 用户直接提要求：称呼/表达偏好/话题禁忌的窄写入。
+   * 只走规则，不调模型；即使记忆总闸暂停也允许，因为写的是用户明确要求。
+   */
+  private async extractExplicitUserRequest(
+    message: MessageEntity,
+    searchableText: string
+  ): Promise<number> {
+    if (!this.agentProfileFactService) return 0;
+    if (
+      typeof this.agentProfileFactService.recordExplicitUserRequest !==
+      'function'
+    ) {
+      return 0;
+    }
+    try {
+      const facts =
+        await this.agentProfileFactService.recordExplicitUserRequest({
+          message,
+          searchableText,
+        });
+      return facts.length;
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] explicit user request write skipped, conversationId=%s, messageId=%s, userId=%s, reason=%s',
+        this.stringifyObjectId(message.conversationId),
+        this.stringifyObjectId(message.id),
+        this.stringifyObjectId(message.userId),
+        this.describeReplyError(error)
+      );
+      return 0;
     }
   }
 

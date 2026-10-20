@@ -20,6 +20,11 @@ import { isMemoryCurrent, isCanonicalUserNameEvidence } from './memory-value';
 import { MemoryValueService } from './memory-value.service';
 import { memoryValueModeForUser } from './memory-value-rollout';
 import {
+  detectUserRequest,
+  isDirectPreferenceRequest,
+} from './user-request-router';
+import { getUserRequestWriteMode } from '../memory-write-guard';
+import {
   buildSharedFamilyMemberFactKey,
   extractSharedFamilyMemberDeclarations,
   getSharedFamilyMemberNameFromFactKey,
@@ -1160,6 +1165,72 @@ export class AgentProfileFactService {
           .map(fact => getSharedFamilyMemberNameFromFactKey(fact.key))
           .filter((name): name is string => Boolean(name))
       )
+    );
+  }
+
+  /**
+   * 用户直接提要求（称呼/表达偏好/话题禁忌）的窄写入。
+   *
+   * 不调用模型：只用规则路由判断“是不是持久、明确、可执行的要求”，
+   * 再复用 extractFactsWithRules 的称呼/表达偏好/忌讳规则，只保留白名单 key。
+   * shadow 模式只记录不写库；active 模式才 upsert。
+   */
+  async recordExplicitUserRequest(options: {
+    message: MessageEntity;
+    searchableText: string;
+  }): Promise<AgentProfileFactSummary[]> {
+    const mode = getUserRequestWriteMode();
+    if (mode === 'off') return [];
+    const signal = detectUserRequest(options.searchableText);
+    if (!signal) return [];
+    if (!isDirectPreferenceRequest(signal.kind)) {
+      return [];
+    }
+
+    const facts = this.extractFactsWithRules(options.searchableText, {});
+    const requestFacts = facts
+      .filter(fact => this.isDirectPreferenceFactKey(fact.key))
+      .slice(0, 3);
+    if (!requestFacts.length) return [];
+
+    if (mode === 'shadow') {
+      this.logger?.info?.(
+        '[user-request] shadow kind=%s keys=%s',
+        signal.kind,
+        requestFacts.map(fact => fact.key).join(',')
+      );
+      return requestFacts;
+    }
+
+    const written: AgentProfileFactSummary[] = [];
+    for (const fact of requestFacts) {
+      await this.upsertFact({
+        ...fact,
+        userId: options.message.userId,
+        agentId: options.message.agentId,
+        sourceMessageId: options.message.id,
+        sourceOccurredAt: options.message.createdAt,
+        sourceText: options.searchableText,
+        trustedSource: true,
+        confidence: AgentProfileFactConfidence.confirmed,
+        status: AgentProfileFactStatus.active,
+      });
+      written.push(fact);
+    }
+    this.logger?.info?.(
+      '[user-request] wrote kind=%s keys=%s',
+      signal.kind,
+      written.map(fact => fact.key).join(',')
+    );
+    return written;
+  }
+
+  private isDirectPreferenceFactKey(key: string): boolean {
+    return (
+      key === USER_PREFERRED_NAME_FACT_KEY ||
+      key === AGENT_PREFERRED_NAME_FACT_KEY ||
+      key.startsWith('style.preference.') ||
+      key.startsWith('taboo.')
     );
   }
 
