@@ -37,10 +37,13 @@ describe('buildDepartedSystemPrompt', () => {
 
     expect(prompt.length).toBeLessThan(1600);
     expect(prompt).toContain('# 最小核心原则');
-    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(10);
+    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(9);
     DEPARTED_MINIMAL_CORE_PRINCIPLES.forEach(principle => {
       expect(prompt).toContain(principle);
     });
+    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES.join('')).not.toContain(
+      '不要根据当前时间推断'
+    );
     expect(prompt).toContain('# 当前角色与关系');
     expect(prompt).toContain('"agent":{"id":"agent","name":"爸爸"');
     expect(prompt).toContain('"relationToUser":"爸爸"');
@@ -113,6 +116,5 @@ describe('buildDepartedSystemPrompt', () => {
 
     expect(prompt).toContain('# 当前时间参考');
     expect(prompt).toContain('北京时间：2026年8月2日 11:30');
-    expect(prompt).toContain('不据此推断用户作息');
   });
 });

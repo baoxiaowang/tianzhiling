@@ -1,4 +1,5 @@
 import {
+  AgentContextService,
   resolveSemanticRetrievalQuery,
   shouldTriggerMemoryRetrieval,
 } from '../../src/service/agents/agent.context';
@@ -64,5 +65,28 @@ describe('resolveSemanticRetrievalQuery', () => {
     expect(query.split(' ').filter(Boolean)).toEqual(
       Array.from(new Set(query.split(' ').filter(Boolean)))
     );
+  });
+});
+
+describe('current time prompt', () => {
+  it('marks the day period and explains morning dream language', () => {
+    const service = new AgentContextService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    const prompt = (
+      service as unknown as {
+        buildConversationReturnContextPrompt: (context: unknown) => string;
+      }
+    ).buildConversationReturnContextPrompt({
+      currentTurnAt: '2026-10-07T23:06:00.000Z',
+      previousContactAt: '2026-10-07T14:00:00.000Z',
+      previousUserContactAt: '2026-10-07T14:00:00.000Z',
+      elapsedHours: 9.1,
+      elapsedDays: 0.38,
+      isReunion: false,
+      version: 'conversation_return_context_v2',
+    });
+
+    expect(prompt).toContain('07:06（早上）');
+    expect(prompt).toContain('早上或上午通常是在说昨夜的梦');
   });
 });
