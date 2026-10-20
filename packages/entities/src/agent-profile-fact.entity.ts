@@ -125,18 +125,6 @@ export class AgentProfileFactEntity extends BaseEntity {
   @Column()
   lastUsedAt?: Date;
 
-  /** 用户偏好的作用域：global 常驻，topic/time/person 按条件注入。 */
-  @Column()
-  preferenceScope?: 'global' | 'topic' | 'time' | 'person';
-
-  /** 条件偏好的触发词；global 为空。 */
-  @Column()
-  preferenceTriggers?: string[];
-
-  /** 被哪条新偏好取代；仅归档时写入，保留历史。 */
-  @Column()
-  supersededBy?: MongoObjectId;
-
   @Column()
   governance?: MemoryGovernance;
 

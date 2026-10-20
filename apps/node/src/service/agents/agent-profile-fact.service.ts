@@ -67,7 +67,6 @@ export interface AgentProfileFactSummary {
   conflictingValues?: string[];
   preferenceScope?: 'global' | 'topic' | 'time' | 'person';
   preferenceTriggers?: string[];
-  supersededBy?: string;
   updatedAt?: Date;
 }
 
@@ -1333,6 +1332,19 @@ export class AgentProfileFactService {
     return merged.length ? `不要对用户说“${merged.join('、')}”` : nextValue;
   }
 
+  private inferPreferenceScope(
+    key: string
+  ): AgentProfileFactSummary['preferenceScope'] {
+    if (
+      key === 'taboo.comfort.avoid' ||
+      key === 'style.preference.death_wording' ||
+      key === 'style.preference.region_dialect'
+    ) {
+      return 'global';
+    }
+    return undefined;
+  }
+
   private isDirectPreferenceFactKey(key: string): boolean {
     return (
       key === USER_PREFERRED_NAME_FACT_KEY ||
@@ -2568,17 +2580,6 @@ export class AgentProfileFactService {
       ? AgentProfileFactStatus.active
       : AgentProfileFactStatus.candidate;
     fact.priority = this.normalizePriority(input.priority);
-    if (input.preferenceScope !== undefined) {
-      fact.preferenceScope = input.preferenceScope;
-    }
-    if (input.preferenceTriggers !== undefined) {
-      fact.preferenceTriggers = input.preferenceTriggers;
-    }
-    if (input.supersededBy !== undefined) {
-      fact.supersededBy = input.supersededBy
-        ? new MongoObjectId(input.supersededBy)
-        : undefined;
-    }
     // P1-2: sourceMessageId 仅首次创建设置（不可变 provenance），后续更新不覆盖
     if (!existing) {
       fact.sourceMessageId = input.sourceMessageId;
@@ -3091,9 +3092,7 @@ export class AgentProfileFactService {
       conflictingValues: (fact.conflictingValues || [])
         .map(value => value?.trim())
         .filter(Boolean),
-      preferenceScope: fact.preferenceScope,
-      preferenceTriggers: fact.preferenceTriggers,
-      supersededBy: this.stringifyObjectId(fact.supersededBy) || undefined,
+      preferenceScope: this.inferPreferenceScope(key),
       updatedAt: fact.updatedAt,
     };
     if (fact.governance?.subjectRef?.startsWith('user:')) {
