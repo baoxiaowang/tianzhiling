@@ -19,10 +19,7 @@ import { UserIdentityMemoryService } from './user-identity-memory.service';
 import { isMemoryCurrent, isCanonicalUserNameEvidence } from './memory-value';
 import { MemoryValueService } from './memory-value.service';
 import { memoryValueModeForUser } from './memory-value-rollout';
-import {
-  detectUserRequest,
-  isDirectPreferenceRequest,
-} from './user-request-router';
+import { detectUserRequest } from './user-request-router';
 import { getUserRequestWriteMode } from '../memory-write-guard';
 import {
   buildSharedFamilyMemberFactKey,
@@ -1183,9 +1180,6 @@ export class AgentProfileFactService {
     if (mode === 'off') return [];
     const signal = detectUserRequest(options.searchableText);
     if (!signal) return [];
-    if (!isDirectPreferenceRequest(signal.kind)) {
-      return [];
-    }
 
     const facts = this.extractFactsWithRules(options.searchableText, {});
     const requestFacts = facts

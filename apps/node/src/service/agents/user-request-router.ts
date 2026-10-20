@@ -5,14 +5,7 @@
  * 真正的落库仍复用 agent-profile-fact 的规则抽取，避免再维护一套事实解析。
  */
 
-export type UserRequestKind =
-  | 'address'
-  | 'style'
-  | 'taboo'
-  | 'memory'
-  | 'promise'
-  | 'one_off'
-  | 'task';
+export type UserRequestKind = 'address' | 'style' | 'taboo';
 
 export interface UserRequestSignal {
   kind: UserRequestKind;
@@ -36,12 +29,6 @@ const STYLE_PATTERN =
 const TABOO_PATTERN =
   /(?:以后|之后)?(?:别|不要|不许)(?:再)?(?:提|说)[^，。！？!?]{2,24}/;
 
-const MEMORY_PATTERN = /(?:记住|记一下|别忘了|帮我记)/;
-
-const PROMISE_PATTERN = /(?:答应我|你答应过|说好了)/;
-
-const TASK_PATTERN = /(?:帮我|给我|替我)(?:写|查|找|做|算|翻译|总结|整理)/;
-
 function compact(text: string): string {
   return (text || '').replace(/\s+/g, ' ').trim();
 }
@@ -56,13 +43,9 @@ export function detectUserRequest(text: string): UserRequestSignal | undefined {
 
   const durable = DURABLE_PATTERN.test(value);
   const oneOff = ONE_OFF_PATTERN.test(value);
-  if (oneOff && !durable) {
-    return { kind: 'one_off', confidence: 'high', durable: false, matched: 'one_off' };
-  }
+  // 一次性要求不落库；没有持久语气时直接忽略。
+  if (oneOff && !durable) return undefined;
 
-  if (MEMORY_PATTERN.test(value)) {
-    return { kind: 'memory', confidence: 'high', durable, matched: 'memory' };
-  }
   if (ADDRESS_PATTERN.test(value)) {
     return { kind: 'address', confidence: 'high', durable, matched: 'address' };
   }
@@ -72,16 +55,5 @@ export function detectUserRequest(text: string): UserRequestSignal | undefined {
   if (STYLE_PATTERN.test(value) && durable) {
     return { kind: 'style', confidence: 'high', durable, matched: 'style' };
   }
-  if (PROMISE_PATTERN.test(value)) {
-    return { kind: 'promise', confidence: 'medium', durable, matched: 'promise' };
-  }
-  if (TASK_PATTERN.test(value)) {
-    return { kind: 'task', confidence: 'high', durable: false, matched: 'task' };
-  }
   return undefined;
-}
-
-/** 只有这三类直接落成可注入的偏好事实；memory/promise/task 交给现有链路或主模型。 */
-export function isDirectPreferenceRequest(kind: UserRequestKind): boolean {
-  return kind === 'address' || kind === 'style' || kind === 'taboo';
 }

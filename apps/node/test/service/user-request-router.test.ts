@@ -1,4 +1,4 @@
-import { detectUserRequest, isDirectPreferenceRequest } from '../../src/service/agents/user-request-router';
+import { detectUserRequest } from '../../src/service/agents/user-request-router';
 
 describe('user request router', () => {
   it('detects durable address requests', () => {
@@ -31,31 +31,13 @@ describe('user request router', () => {
     });
   });
 
-  it('detects memory requests without treating care as memory', () => {
-    expect(detectUserRequest('记住我婆婆是山东人')).toMatchObject({
-      kind: 'memory',
-    });
+  it('ignores one-off requests', () => {
+    expect(detectUserRequest('今天先别讲道理')).toBeUndefined();
+  });
+
+  it('leaves memory requests, tasks and ordinary care alone', () => {
+    expect(detectUserRequest('记住我婆婆是山东人')).toBeUndefined();
+    expect(detectUserRequest('帮我查一下天气')).toBeUndefined();
     expect(detectUserRequest('你要记得吃饭')).toBeUndefined();
-  });
-
-  it('does not persist one-off requests', () => {
-    expect(detectUserRequest('今天先别讲道理')).toMatchObject({
-      kind: 'one_off',
-      durable: false,
-    });
-  });
-
-  it('leaves tasks to the main model', () => {
-    expect(detectUserRequest('帮我查一下天气')).toMatchObject({
-      kind: 'task',
-    });
-    expect(isDirectPreferenceRequest('task')).toBe(false);
-  });
-
-  it('only address/style/taboo write direct preferences', () => {
-    expect(isDirectPreferenceRequest('address')).toBe(true);
-    expect(isDirectPreferenceRequest('style')).toBe(true);
-    expect(isDirectPreferenceRequest('taboo')).toBe(true);
-    expect(isDirectPreferenceRequest('memory')).toBe(false);
   });
 });
