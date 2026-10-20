@@ -120,6 +120,58 @@ export function resolveDepartureDay(
   return diffDays >= 0 ? diffDays + 1 : undefined;
 }
 
+export interface AgentDeathWindow {
+  exactDate?: string;
+  estimatedStart?: string;
+  estimatedEnd?: string;
+}
+
+export interface DepartureDayRange {
+  min: number;
+  max: number;
+  exact: boolean;
+}
+
+/** 从 prompt facts 里取当前角色的离开日期/估计范围。 */
+export function resolveAgentDeathWindow(
+  facts: PersonTemporalPromptFact[] | undefined
+): AgentDeathWindow {
+  const death = (facts || []).find(
+    fact => fact.subjectRef === 'agent' && String(fact.eventType) === 'death'
+  );
+  return {
+    exactDate: death?.exactDate,
+    estimatedStart: death?.estimatedStart,
+    estimatedEnd: death?.estimatedEnd,
+  };
+}
+
+/**
+ * 把档案里的日期/估计范围换算成“第几天”的范围。
+ * estimatedStart 是最早日期（第几天更大），estimatedEnd 是最近日期（第几天更小）。
+ */
+export function resolveDepartureDayRange(
+  window: AgentDeathWindow | undefined,
+  now: Date
+): DepartureDayRange | undefined {
+  if (!window) return undefined;
+  const exact = resolveDepartureDay(window.exactDate, now);
+  if (exact !== undefined) {
+    return { min: exact, max: exact, exact: true };
+  }
+  const startDay = resolveDepartureDay(window.estimatedStart, now);
+  const endDay = resolveDepartureDay(window.estimatedEnd, now);
+  if (startDay === undefined && endDay === undefined) return undefined;
+  const values = [startDay, endDay].filter(
+    (value): value is number => value !== undefined
+  );
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+    exact: false,
+  };
+}
+
 export type RitualTriggerReason =
   | 'explicit'
   | 'profile_day'
@@ -140,6 +192,9 @@ export interface ResolveRitualTriggerOptions {
   query: string;
   /** 档案里的离开日期（YYYY-MM-DD）；没有就退回原话时长。 */
   agentDeathDate?: string;
+  /** 档案里的估计范围（模糊时长写入时使用）。 */
+  agentDeathStart?: string;
+  agentDeathEnd?: string;
   now?: Date;
   /** 测试用；不传则使用模块内的会话去重状态。 */
   disableDedupe?: boolean;
@@ -178,6 +233,10 @@ function buildExplicitPrompt(
   return `${milestone.label}是离开后的第 ${milestone.day} 天。`;
 }
 
+function buildEstimatedProfilePrompt(milestone: RitualMilestone): string {
+  return `按你之前说的时长估算，今天可能是离开后的第 ${milestone.day} 天（${milestone.label}），具体以家里算法为准。`;
+}
+
 export function resolveRitualTrigger(
   options: ResolveRitualTriggerOptions
 ): RitualTrigger | undefined {
@@ -206,10 +265,19 @@ export function resolveRitualTrigger(
     }
   }
 
-  // 2. 档案离开日期：算“含当天”的第几天。
-  const profileDay = resolveDepartureDay(options.agentDeathDate, now);
-  if (profileDay !== undefined) {
-    const milestone = MILESTONE_BY_DAY.get(profileDay);
+  // 2. 档案离开日期/估计范围：算“含当天”的第几天。
+  const dayRange = resolveDepartureDayRange(
+    {
+      exactDate: options.agentDeathDate,
+      estimatedStart: options.agentDeathStart,
+      estimatedEnd: options.agentDeathEnd,
+    },
+    now
+  );
+  if (dayRange) {
+    const milestone = RITUAL_MILESTONES.find(
+      item => item.day >= dayRange.min && item.day <= dayRange.max
+    );
     if (milestone) {
       const conversationId = options.conversationId?.trim();
       const dateKey = beijingDayKey(now);
@@ -230,12 +298,14 @@ export function resolveRitualTrigger(
         label: milestone.label,
         day: milestone.day,
         reason: 'profile_day',
-        confidence: 'confirmed',
-        prompt: buildPrompt(milestone, 'profile_day', 'confirmed'),
+        confidence: dayRange.exact ? 'confirmed' : 'estimated',
+        prompt: dayRange.exact
+          ? buildPrompt(milestone, 'profile_day', 'confirmed')
+          : buildEstimatedProfilePrompt(milestone),
       };
     }
-    // 档案日期存在但不是仪式日：以档案为准，不再用“离开 7 天”这类
-    // 可能偏差一天的时长去猜。
+    // 档案日期/范围存在但没有落到仪式日：以档案为准，不再用“离开 7 天”
+    // 这类可能偏差一天的时长去猜。
     return undefined;
   }
 
@@ -271,12 +341,3 @@ export function resetRitualTriggerState(): void {
   injectedByConversation.clear();
 }
 
-/** 从 prompt fact 列表里取当前角色的离开日期。 */
-export function resolveAgentDeathDate(
-  facts: PersonTemporalPromptFact[] | undefined
-): string | undefined {
-  const death = (facts || []).find(
-    fact => fact.subjectRef === 'agent' && String(fact.eventType) === 'death'
-  );
-  return death?.exactDate;
-}

@@ -207,6 +207,7 @@ import {
 } from './agents/recognition-journey';
 import { RecognitionJourneyObserverService } from './agents/recognition-journey-observer.service';
 import {
+  isDepartureDateWriteEnabled,
   isMemoryWriteDisabled,
   isMemoryWritePaused,
   isMilvusIndexEnabled,
@@ -3905,7 +3906,10 @@ export class ConversationService {
     searchableText: string,
     qaContext?: PersonTemporalQaContextItem[]
   ): Promise<MemoryFactExtractionAudit> {
-    if (isMemoryWritePaused()) {
+    // 离开日期窄写入：即使其他自动记忆写入暂停，也允许把“走了三年/200 多天”
+    // 这类确定性时长写回 person_temporal_profile；不重新打开整条流水线。
+    const departureWriteEnabled = isDepartureDateWriteEnabled();
+    if (isMemoryWritePaused() && !departureWriteEnabled) {
       return { succeeded: true, count: 0 };
     }
     if (!this.personTemporalMemoryService) {
@@ -3920,6 +3924,8 @@ export class ConversationService {
           // 普通消息路径也启用隐式模式："六年多了"、"走了三年"这类
           // 不含"离开/去世"显式关键词的表达，也能被识别为离世时间信号。
           implicitCurrentAgent: true,
+          // 窄写入模式只跑确定性解析，避免每句话触发一次语义模型。
+          deterministicOnly: isMemoryWritePaused() && departureWriteEnabled,
           // 有界问答材料：系统实际问过的离世时间问题 + 用户随后 1-3 次回答。
           // 只用来判断省略指代的回答（"15号"）在回答哪一问。
           qaContext,

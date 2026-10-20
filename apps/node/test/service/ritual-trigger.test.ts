@@ -2,6 +2,7 @@ import {
   buildRitualTriggerPrompt,
   resetRitualTriggerState,
   resolveDepartureDay,
+  resolveDepartureDayRange,
   resolveRitualTrigger,
 } from '../../src/service/agents/ritual-trigger';
 
@@ -74,6 +75,39 @@ describe('ritual trigger', () => {
       confidence: 'estimated',
     });
     expect(buildRitualTriggerPrompt(trigger)).toContain('以家里算法为准');
+  });
+
+  it('uses an estimated profile range when the exact date is unknown', () => {
+    const range = resolveDepartureDayRange(
+      { estimatedStart: '2026-10-01', estimatedEnd: '2026-10-02' },
+      NOW
+    );
+    expect(range).toEqual({ min: 7, max: 8, exact: false });
+
+    const trigger = resolveRitualTrigger({
+      query: '今天天气不错',
+      agentDeathStart: '2026-10-01',
+      agentDeathEnd: '2026-10-02',
+      now: NOW,
+      disableDedupe: true,
+    });
+    expect(trigger).toMatchObject({
+      key: 'ritual.touqi',
+      confidence: 'estimated',
+    });
+    expect(buildRitualTriggerPrompt(trigger)).toContain('可能是');
+  });
+
+  it('does not stretch a wide year range into a ritual day', () => {
+    expect(
+      resolveRitualTrigger({
+        query: '今天天气不错',
+        agentDeathStart: '2023-01-01',
+        agentDeathEnd: '2024-01-01',
+        now: NOW,
+        disableDedupe: true,
+      })
+    ).toBeUndefined();
   });
 
   it('does not trigger on unrelated chat or non-milestone days', () => {

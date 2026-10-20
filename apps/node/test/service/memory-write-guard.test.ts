@@ -11,6 +11,7 @@ import {
   type MemoryTaskDeferReason,
 } from '../../src/service/memory-pipeline-task.service';
 import {
+  isDepartureDateWriteEnabled,
   isMemoryWriteDisabled,
   isMemoryWritePaused,
   isMilvusIndexEnabled,
@@ -278,6 +279,24 @@ describe('记忆写入总闸（MEMORY_WRITE_DISABLED）', () => {
       ).queueLazyBackfill({ userId: 'u1' }, [{ id: 'x' }], [{ items: [] }]);
       expect(queued).toBe(0);
       expect(enqueueForMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('isDepartureDateWriteEnabled（只放行离开日期）', () => {
+    it('识别 true/1/yes，未设置时关闭', () => {
+      for (const value of ['true', 'TRUE', '1', 'yes']) {
+        expect(
+          isDepartureDateWriteEnabled({
+            DEPARTURE_DATE_WRITE_ENABLED: value,
+          } as never)
+        ).toBe(true);
+      }
+      expect(isDepartureDateWriteEnabled({} as never)).toBe(false);
+      expect(
+        isDepartureDateWriteEnabled({
+          DEPARTURE_DATE_WRITE_ENABLED: 'false',
+        } as never)
+      ).toBe(false);
     });
   });
 

@@ -50,6 +50,8 @@ export interface RecordAgentDepartureTimeOptions {
   qaContext?: PersonTemporalQaContextItem[];
   /** 内部标记：问答上下文确认这句是离世时间问题的回答。 */
   answeringDepartureQuestion?: boolean;
+  /** 只跑确定性解析，不调用语义模型（窄写入模式用）。 */
+  deterministicOnly?: boolean;
 }
 
 export interface RecordAgentDepartureTimeResult {
@@ -162,7 +164,7 @@ export class PersonTemporalMemoryService {
     let semanticSource: MessageEntity['temporalMemorySemanticSource'] =
       deterministicResult ? 'deterministic' : undefined;
     let parsed = deterministicResult;
-    if (!parsed && !options.semanticApproved) {
+    if (!parsed && !options.semanticApproved && !options.deterministicOnly) {
       parsed = await this.extractDepartureTimeWithModel({
         ...options,
         answeringDepartureQuestion,

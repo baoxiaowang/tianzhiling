@@ -146,6 +146,28 @@ describe('PersonTemporalMemoryService', () => {
     expect(harness.assertions).toHaveLength(1);
   });
 
+  it('stores a day-duration range without inventing an exact date', async () => {
+    const harness = createHarness();
+    const message = createMessage('你走了7天了');
+    const result = await harness.service.recordAgentDepartureFromMessage({
+      message,
+      searchableText: message.content,
+      implicitCurrentAgent: true,
+      deterministicOnly: true,
+    });
+
+    expect(result?.profile.exactDate).toBeUndefined();
+    expect(result?.profile.precision).toBe(
+      PersonTemporalPrecision.approximateDuration
+    );
+    expect(result?.profile.estimatedStart).toEqual(
+      new Date('2026-08-28T00:00:00.000Z')
+    );
+    expect(result?.profile.estimatedEnd).toEqual(
+      new Date('2026-08-30T00:00:00.000Z')
+    );
+  });
+
   it('stores a fuzzy year range without inventing an agent death date', async () => {
     const harness = createHarness();
     const message = createMessage('你离开已经20年了');

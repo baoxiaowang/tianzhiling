@@ -173,7 +173,7 @@ import {
 import type { ConversationReturnContext } from './conversation-return-context';
 import {
   buildRitualTriggerPrompt,
-  resolveAgentDeathDate,
+  resolveAgentDeathWindow,
   resolveRitualTrigger,
 } from './ritual-trigger';
 import {
@@ -1996,11 +1996,14 @@ export class AgentContextService {
     const ritualNow = options.conversationReturnContext?.currentTurnAt
       ? new Date(options.conversationReturnContext.currentTurnAt)
       : new Date();
+    const agentDeathWindow = resolveAgentDeathWindow(temporalProfiles);
     const ritualTriggerPrompt = buildRitualTriggerPrompt(
       resolveRitualTrigger({
         conversationId: this.stringifyObjectId(options.conversation.id),
         query: options.currentUserText?.trim() || options.currentQuery || '',
-        agentDeathDate: resolveAgentDeathDate(temporalProfiles),
+        agentDeathDate: agentDeathWindow.exactDate,
+        agentDeathStart: agentDeathWindow.estimatedStart,
+        agentDeathEnd: agentDeathWindow.estimatedEnd,
         now: ritualNow,
       })
     );

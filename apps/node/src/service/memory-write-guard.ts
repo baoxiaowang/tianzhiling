@@ -65,3 +65,16 @@ export function isMilvusIndexEnabled(
 ): boolean {
   return readTruthy(env.MILVUS_INDEX_ENABLED);
 }
+
+/**
+ * 离开日期写入的窄开关。
+ *
+ * 只放行 `recordAgentDepartureFromMessage` 这一条写入；其他自动记忆写入仍由
+ * `isMemoryWritePaused` 拦住。用于“用户说走了三年/200 多天”时把时间范围写回
+ * `person_temporal_profile`，不重新打开整条记忆流水线。
+ */
+export function isDepartureDateWriteEnabled(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return readTruthy(env.DEPARTURE_DATE_WRITE_ENABLED);
+}
