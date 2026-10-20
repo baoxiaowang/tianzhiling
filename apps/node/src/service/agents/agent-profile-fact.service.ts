@@ -1291,17 +1291,16 @@ export class AgentProfileFactService {
       return true;
     }).slice(0, 5);
 
-    const auditKind = signal?.kind
-      ? signal.kind
-      : comfort.comfortAvoid.length || comfort.deathWording
-      ? 'comfort'
-      : contextual
-      ? 'context'
-      : kinship.facts.length
-      ? 'kinship'
-      : regional
-      ? 'region'
-      : 'unknown';
+    const auditKind =
+      comfort.comfortAvoid.length || comfort.deathWording
+        ? 'comfort'
+        : contextual
+        ? 'context'
+        : kinship.facts.length
+        ? 'kinship'
+        : regional
+        ? 'region'
+        : signal?.kind || 'unknown';
     const auditBase = {
       kind: auditKind,
       messageId: this.stringifyObjectId(options.message.id),
