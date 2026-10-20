@@ -83,10 +83,6 @@ import {
   resolveDreamCompanionPlan,
 } from './dream-companion-plan';
 import {
-  getDreamActionKnowledge,
-  getDreamKnowledge,
-} from './knowledge/knowledge-catalog';
-import {
   buildReplyStateProtocolPrompt,
   ReplyStateProtocolPlan,
   resolveReplyStateProtocol,
@@ -731,11 +727,15 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
 }
 
 function buildDreamCompanionReplyMoves(plan: DreamCompanionPlan): string[] {
-  const knowledge = getDreamKnowledge(plan);
-  if (knowledge?.move?.length) return knowledge.move;
-  const actionKnowledge = getDreamActionKnowledge(plan.dreamAction);
-  if (actionKnowledge?.move?.length) return actionKnowledge.move;
-  return ['顺着用户说出的梦境内容自然承接，不补现实往事'];
+  const moves: Record<DreamCompanionPlan['dreamAction'], string[]> = {
+    promise: ['直接回应梦中相见的愿望，给用户一个温暖期待'],
+    invite: ['围绕一个梦境锚点发出轻邀请，让用户带着期待入睡'],
+    reconstruct: ['只沿用户说出的梦境片段回应感受或画面，不补现实往事'],
+    repair: ['接住没有梦见的失落，换一种梦内陪伴，不重复空承诺'],
+    leave_space: ['保留梦境的含混与余地，减少保证，给睡前陪伴或自然留白'],
+  };
+
+  return moves[plan.dreamAction];
 }
 
 function resolveFactClaimMode(options: {
