@@ -136,3 +136,32 @@ describe('agent evidence policy', () => {
     expect(selectAgentEvidence(evidence, { limit: 10 })).toHaveLength(10);
   });
 });
+
+describe('evidence text dedup', () => {
+  it('keeps one item when different fact keys carry the same text', () => {
+    const evidence: AgentEvidenceItem[] = [
+      {
+        id: 'A1',
+        source: 'confirmed_fact',
+        text: '用户是女生',
+        assertionPolicy: 'can_assert',
+        subjectRef: 'user',
+        factKey: 'user.gender',
+        useMode: 'assert',
+        status: 'active',
+      },
+      {
+        id: 'A2',
+        source: 'retrieved_user',
+        text: '用户是女生。',
+        assertionPolicy: 'context_only',
+        subjectRef: 'user',
+        factKey: 'memory.duplicate',
+        useMode: 'hypothesis',
+        status: 'active',
+      },
+    ];
+    const selected = selectAgentEvidence(evidence, { currentQuery: '我是女生吗' });
+    expect(selected.map(item => item.id)).toEqual(['A1']);
+  });
+});

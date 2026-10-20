@@ -167,16 +167,33 @@ export function selectAgentEvidence(
     }
   }
 
-  return [...unscoped, ...bySlot.values()]
+  const sorted = [...unscoped, ...bySlot.values()]
     .map((item, index) => ({ item, index }))
     .sort(
       (left, right) =>
         evidenceScore(right.item, options.currentQuery) -
           evidenceScore(left.item, options.currentQuery) ||
         left.index - right.index
-    )
-    .slice(0, limit)
-    .map(({ item }) => item);
+    );
+
+  // 同一句话可能从 fact / 检索 / 历史等不同来源同时进来，factKey 不同但文本相同。
+  // 按规范化文本再去重一次，保留得分更高的一条，避免 prompt 里重复注入。
+  const seenTexts = new Set<string>();
+  const deduped: AgentEvidenceItem[] = [];
+  for (const { item } of sorted) {
+    const textKey = normalizeEvidenceDedupText(item.text);
+    if (textKey && seenTexts.has(textKey)) continue;
+    if (textKey) seenTexts.add(textKey);
+    deduped.push(item);
+  }
+  return deduped.slice(0, limit);
+}
+
+function normalizeEvidenceDedupText(text?: string): string {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[\s\u3000，。！？!?；;：:、,."'“”‘’（）()【】\[\]…—\-]/g, '')
+    .slice(0, 400);
 }
 
 export function agentEvidenceSupportsClaim(

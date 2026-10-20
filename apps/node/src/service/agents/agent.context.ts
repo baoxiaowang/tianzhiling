@@ -184,6 +184,11 @@ import {
   buildUserPreferencePromptSection,
   UserPreferencePromptSection,
 } from './user-preference-prompt';
+import {
+  buildPromptSizeRecord,
+  formatPromptSizeLine,
+  shouldSamplePromptSize,
+} from './prompt-size-audit';
 import type { ReturnTurnPlan } from '../memory/memory-return-turn';
 
 /** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
@@ -2059,6 +2064,20 @@ export class AgentContextService {
           taskParts,
           includeTask: plan.includeTask,
         });
+
+    if (shouldSamplePromptSize()) {
+      this.logger?.info?.(
+        formatPromptSizeLine(
+          buildPromptSizeRecord({
+            stableChars: compiled.stableCharacters,
+            taskChars: compiled.taskCharacters,
+            totalChars: compiled.content.length,
+            evidenceCount: evidence.length,
+            mode: plan.layerMode,
+          })
+        )
+      );
+    }
 
     return {
       key: 'persona',
