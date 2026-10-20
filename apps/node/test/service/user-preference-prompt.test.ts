@@ -41,6 +41,37 @@ describe('user preference prompt compiler', () => {
     ).toBe('');
   });
 
+  it('renders per-person kinship display preferences', () => {
+    const section = buildUserPreferencePromptSection([
+      {
+        key: 'style.preference.kinship_display.p1',
+        value: '用户希望称外祖父为“外公”，不要叫“姥爷”',
+        status: 'active',
+        preferenceScope: 'person',
+        priority: 3,
+      },
+    ]);
+    expect(section.stable).toContain('称呼偏好：');
+    expect(section.stable).toContain('外公');
+  });
+
+  it('renders contextual taboos only when the trigger matches', () => {
+    const fact = {
+      key: 'taboo.context.topic.哭',
+      value: '当用户哭时，不要讲道理',
+      status: 'active',
+      preferenceScope: 'topic' as const,
+      preferenceTriggers: ['哭'],
+      priority: 2,
+    };
+    expect(
+      buildUserPreferencePromptSection([fact], { query: '我今天哭了很久' }).task
+    ).toContain('不要讲道理');
+    expect(
+      buildUserPreferencePromptSection([fact], { query: '今天天气不错' }).task
+    ).toBe('');
+  });
+
   it('skips archived facts and caps stable lines', () => {
     const archived = {
       key: 'taboo.comfort.avoid',

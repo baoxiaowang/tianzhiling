@@ -3849,8 +3849,8 @@ export class AgentContextService {
     const profileFactKeys = new Set<string>();
 
     for (const fact of options.profileFacts.slice(0, 5)) {
-      // 全局偏好由稳定段单独注入，避免在证据层重复。
-      if (fact.preferenceScope === 'global') {
+      // 偏好由读侧编译器单独注入，避免在证据层重复。
+      if (fact.preferenceScope) {
         continue;
       }
       const value = fact.value?.trim();

@@ -246,6 +246,77 @@ describe('explicit user request write', () => {
     );
   });
 
+  it('writes a per-person kinship display preference', async () => {
+    process.env.USER_REQUEST_WRITE_MODE = 'active';
+    const personId = new MongoObjectId('665000000000000000000b09');
+    const service = new AgentProfileFactService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn().mockResolvedValue({}),
+    } as never;
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue({
+        id: personId,
+        relationToUser: '外祖父',
+        realName: null,
+        preferredName: null,
+      }),
+    } as never;
+    const upsertFact = jest.fn().mockResolvedValue({});
+    (service as any).upsertFact = upsertFact;
+
+    const written = await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '别叫姥爷，叫外公',
+    });
+
+    expect(written).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: `style.preference.kinship_display.${personId.toString()}`,
+          value: '用户希望称外祖父为“外公”，不要叫“姥爷”',
+          preferenceScope: 'person',
+        }),
+      ])
+    );
+  });
+
+  it('writes a contextual taboo instead of a global one', async () => {
+    process.env.USER_REQUEST_WRITE_MODE = 'active';
+    const service = new AgentProfileFactService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    const upsertFact = jest.fn().mockResolvedValue({});
+    (service as any).upsertFact = upsertFact;
+
+    const emotion = await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '我哭的时候别讲道理',
+    });
+    const time = await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '晚上别提他',
+    });
+
+    expect(emotion).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'taboo.context.topic.哭',
+          value: '当用户哭时，不要讲道理',
+          preferenceScope: 'topic',
+        }),
+      ])
+    );
+    expect(time).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'taboo.context.time.晚上',
+          preferenceScope: 'time',
+        }),
+      ])
+    );
+  });
+
   it('does not write memory/task/one-off requests', async () => {
     process.env.USER_REQUEST_WRITE_MODE = 'active';
     const service = new AgentProfileFactService();

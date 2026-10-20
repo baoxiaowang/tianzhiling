@@ -77,6 +77,7 @@ export function buildUserPreferencePromptSection(
     );
 
   const stableLines: string[] = [];
+  const personLines: string[] = [];
   const taskLines: string[] = [];
   const seen = new Set<string>();
 
@@ -85,6 +86,16 @@ export function buildUserPreferencePromptSection(
     if (fact.preferenceScope === 'global' || GLOBAL_KEYS.has(fact.key)) {
       seen.add(fact.key);
       if (stableLines.length < 5) stableLines.push(renderGlobal(fact));
+      continue;
+    }
+    if (fact.preferenceScope === 'person') {
+      seen.add(fact.key);
+      if (personLines.length >= 5) continue;
+      if (fact.key.startsWith('style.preference.kinship_display.')) {
+        personLines.push(`称呼偏好：${fact.value}`);
+      } else if (fact.key.startsWith('taboo.kinship_avoid.')) {
+        personLines.push(`称呼禁忌：${fact.value}`);
+      }
       continue;
     }
     if (
@@ -98,10 +109,9 @@ export function buildUserPreferencePromptSection(
     }
   }
 
+  const lines = [...stableLines, ...personLines];
   return {
-    stable: stableLines.length
-      ? ['# 用户明确偏好', ...stableLines].join('\n')
-      : '',
+    stable: lines.length ? ['# 用户明确偏好', ...lines].join('\n') : '',
     task: taskLines.length
       ? ['# 本轮偏好', ...taskLines].join('\n')
       : '',

@@ -22,6 +22,8 @@ import { memoryValueModeForUser } from './memory-value-rollout';
 import { detectUserRequest } from './user-request-router';
 import { detectRegionalExpressionPreference } from './regional-expression-preference';
 import { detectComfortPreference } from './comfort-preference';
+import { detectKinshipDisplayPreference } from './kinship-display-preference';
+import { detectContextualTaboo } from './contextual-taboo';
 import { getUserRequestWriteMode } from '../memory-write-guard';
 import {
   buildSharedFamilyMemberFactKey,
@@ -1190,7 +1192,17 @@ export class AgentProfileFactService {
     const comfort = detectComfortPreference(options.searchableText);
     const hasComfort =
       comfort.comfortAvoid.length > 0 || Boolean(comfort.deathWording);
-    if (!signal && !regional && !hasComfort) return [];
+    const contextual = detectContextualTaboo(options.searchableText);
+    const kinship = await this.buildKinshipDisplayFacts(options);
+    if (
+      !signal &&
+      !regional &&
+      !hasComfort &&
+      !contextual &&
+      !kinship.facts.length
+    ) {
+      return [];
+    }
 
     const requestFacts: AgentProfileFactSummary[] = [];
     if (signal) {
@@ -1248,17 +1260,32 @@ export class AgentProfileFactService {
           }
         : undefined;
 
+    const contextualFact: AgentProfileFactSummary | undefined = contextual
+      ? {
+          type: AgentProfileFactType.taboo,
+          key: `taboo.context.${contextual.scope}.${contextual.trigger}`,
+          value: contextual.value,
+          polarity: AgentProfileFactPolarity.negative,
+          confidence: AgentProfileFactConfidence.confirmed,
+          priority: 2,
+          status: AgentProfileFactStatus.active,
+          preferenceScope: contextual.scope,
+        }
+      : undefined;
+
     const seen = new Set<string>();
     const requestFactsToWrite = [
       ...(comfortFact ? [comfortFact] : []),
       ...(deathWordingFact ? [deathWordingFact] : []),
       ...(regionalFact ? [regionalFact] : []),
+      ...(contextualFact ? [contextualFact] : []),
+      ...kinship.facts,
       ...requestFacts,
     ].filter(fact => {
       if (seen.has(fact.key)) return false;
       seen.add(fact.key);
       return true;
-    }).slice(0, 4);
+    }).slice(0, 5);
     if (!requestFactsToWrite.length) return [];
 
     if (mode === 'shadow') {
@@ -1270,6 +1297,13 @@ export class AgentProfileFactService {
       return requestFactsToWrite;
     }
 
+    for (const key of kinship.archiveKeys) {
+      await this.archivePreferenceKey(
+        options.message.userId,
+        options.message.agentId,
+        key
+      );
+    }
     const written: AgentProfileFactSummary[] = [];
     for (const fact of requestFactsToWrite) {
       const value =
@@ -1300,6 +1334,119 @@ export class AgentProfileFactService {
       written.map(fact => fact.key).join(',')
     );
     return written;
+  }
+
+  private async buildKinshipDisplayFacts(options: {
+    message: MessageEntity;
+    searchableText: string;
+  }): Promise<{
+    facts: AgentProfileFactSummary[];
+    archiveKeys: string[];
+  }> {
+    const signal = detectKinshipDisplayPreference(options.searchableText);
+    if (!signal || !this.userIdentityMemoryService) {
+      return { facts: [], archiveKeys: [] };
+    }
+    const reference = signal.oldTerm || signal.newTerm;
+    if (!reference) return { facts: [], archiveKeys: [] };
+    let person = null;
+    try {
+      person =
+        await this.userIdentityMemoryService.resolveKnownPersonReference({
+          userId: options.message.userId,
+          referenceName: reference,
+        });
+      if (!person && signal.newTerm && signal.oldTerm) {
+        person =
+          await this.userIdentityMemoryService.resolveKnownPersonReference({
+            userId: options.message.userId,
+            referenceName: signal.newTerm,
+          });
+      }
+    } catch {
+      return { facts: [], archiveKeys: [] };
+    }
+    if (!person?.id) return { facts: [], archiveKeys: [] };
+
+    const personId = person.id.toString();
+    const label = (
+      person.relationToUser ||
+      person.realName ||
+      person.preferredName ||
+      signal.newTerm ||
+      signal.oldTerm ||
+      '这位亲人'
+    )
+      .trim()
+      .slice(0, 20);
+
+    if (signal.action === 'display') {
+      const newTerm = signal.newTerm;
+      if (!newTerm) return { facts: [], archiveKeys: [] };
+      const value = signal.oldTerm
+        ? `用户希望称${label}为“${newTerm}”，不要叫“${signal.oldTerm}”`
+        : `用户希望称${label}为“${newTerm}”`;
+      return {
+        facts: [
+          {
+            type: AgentProfileFactType.style,
+            key: `style.preference.kinship_display.${personId}`,
+            value,
+            polarity: AgentProfileFactPolarity.positive,
+            confidence: AgentProfileFactConfidence.confirmed,
+            priority: 3,
+            status: AgentProfileFactStatus.active,
+            preferenceScope: 'person',
+          },
+        ],
+        archiveKeys: [`taboo.kinship_avoid.${personId}`],
+      };
+    }
+
+    const oldTerm = signal.oldTerm;
+    if (!oldTerm) return { facts: [], archiveKeys: [] };
+    const displayKey = `style.preference.kinship_display.${personId}`;
+    const display = await this.factModel.findOne({
+      where: {
+        userId: options.message.userId,
+        agentId: options.message.agentId,
+        key: displayKey,
+      },
+    });
+    const archiveKeys = display?.value?.includes(`“${oldTerm}”`)
+      ? [displayKey]
+      : [];
+    return {
+      facts: [
+        {
+          type: AgentProfileFactType.taboo,
+          key: `taboo.kinship_avoid.${personId}`,
+          value: `不要叫${label}“${oldTerm}”`,
+          polarity: AgentProfileFactPolarity.negative,
+          confidence: AgentProfileFactConfidence.confirmed,
+          priority: 3,
+          status: AgentProfileFactStatus.active,
+          preferenceScope: 'person',
+        },
+      ],
+      archiveKeys,
+    };
+  }
+
+  private async archivePreferenceKey(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    key: string
+  ): Promise<void> {
+    const existing = await this.factModel.findOne({
+      where: { userId, agentId, key },
+    });
+    if (!existing || existing.status === AgentProfileFactStatus.archived) {
+      return;
+    }
+    existing.status = AgentProfileFactStatus.archived;
+    existing.updatedAt = new Date();
+    await this.factModel.save(existing);
   }
 
   /**
@@ -1341,6 +1488,14 @@ export class AgentProfileFactService {
       key === 'style.preference.region_dialect'
     ) {
       return 'global';
+    }
+    if (key.startsWith('taboo.context.time.')) return 'time';
+    if (key.startsWith('taboo.context.topic.')) return 'topic';
+    if (
+      key.startsWith('style.preference.kinship_display.') ||
+      key.startsWith('taboo.kinship_avoid.')
+    ) {
+      return 'person';
     }
     return undefined;
   }
@@ -3093,6 +3248,9 @@ export class AgentProfileFactService {
         .map(value => value?.trim())
         .filter(Boolean),
       preferenceScope: this.inferPreferenceScope(key),
+      preferenceTriggers: key.startsWith('taboo.context.')
+        ? [key.split('.')[3]].filter(Boolean)
+        : undefined,
       updatedAt: fact.updatedAt,
     };
     if (fact.governance?.subjectRef?.startsWith('user:')) {
