@@ -117,6 +117,10 @@ describe('explicit user request write', () => {
       message: message(),
       searchableText: '以后叫我瑶瑶',
     });
+    const addressWithRemember = await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '记住，以后叫我瑶瑶',
+    });
     const style = await service.recordExplicitUserRequest({
       message: message(),
       searchableText: '以后别总在最后问我问题',
@@ -127,6 +131,9 @@ describe('explicit user request write', () => {
     });
 
     expect(address.map(item => item.key)).toContain(
+      'relationship.preferred_user_name'
+    );
+    expect(addressWithRemember.map(item => item.key)).toContain(
       'relationship.preferred_user_name'
     );
     expect(style.map(item => item.key)).toContain(

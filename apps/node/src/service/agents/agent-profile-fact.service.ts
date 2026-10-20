@@ -1181,7 +1181,14 @@ export class AgentProfileFactService {
     const signal = detectUserRequest(options.searchableText);
     if (!signal) return [];
 
-    const facts = this.extractFactsWithRules(options.searchableText, {});
+    // “记住，以后叫我X”这类前缀会干扰称呼规则；去掉记忆前缀再跑同一套规则。
+    const requestText = options.searchableText
+      .replace(/^\s*(?:记住|记一下|别忘了|帮我记)[，,：:\s]*/, '')
+      .trim();
+    const facts = this.extractFactsWithRules(
+      requestText || options.searchableText,
+      {}
+    );
     const requestFacts = facts
       .filter(fact => this.isDirectPreferenceFactKey(fact.key))
       .slice(0, 3);
