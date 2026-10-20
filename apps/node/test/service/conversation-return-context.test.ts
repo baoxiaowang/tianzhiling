@@ -97,10 +97,14 @@ describe('conversation return context', () => {
     ).toBeUndefined();
   });
 
-  it('renders Beijing time in plain Chinese with the weekday', () => {
-    // 2026-09-05T12:00:00.000Z 是北京时间 2026-09-05 20:00（周六）。
+  it('renders Beijing time in plain Chinese with the weekday and day period', () => {
+    // 2026-09-05T12:00:00.000Z 是北京时间 2026-09-05 20:00（周六，晚上）。
     expect(formatBeijingDateTime(currentTurnAt)).toBe(
-      '2026年9月5日（周六）20:00'
+      '2026年9月5日（周六）20:00（晚上）'
+    );
+    // 2026-10-07T23:06:00.000Z 是北京时间 2026-10-08 07:06（周四，早上）。
+    expect(formatBeijingDateTime(new Date('2026-10-07T23:06:00.000Z'))).toBe(
+      '2026年10月8日（周四）07:06（早上）'
     );
     expect(formatBeijingDateTime(new Date('invalid'))).toBe('');
   });

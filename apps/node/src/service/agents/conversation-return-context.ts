@@ -68,7 +68,19 @@ export function resolveConversationReturnContext(options: {
 
 const BEIJING_TIME_ZONE = 'Asia/Shanghai';
 
-/** 北京时间人话格式：2026年9月20日（周日）21:30。 */
+/** 一天中的时段，用于把 07:06 这类时刻变成模型能直接理解的“早上”。 */
+export function resolveBeijingDayPeriod(hour: number): string {
+  if (!Number.isFinite(hour)) return '';
+  if (hour < 5) return '凌晨';
+  if (hour < 9) return '早上';
+  if (hour < 12) return '上午';
+  if (hour < 14) return '中午';
+  if (hour < 18) return '下午';
+  if (hour < 23) return '晚上';
+  return '深夜';
+}
+
+/** 北京时间人话格式：2026年9月20日（周日）21:30（晚上）。 */
 export function formatBeijingDateTime(value: Date): string {
   if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
     return '';
@@ -85,12 +97,14 @@ export function formatBeijingDateTime(value: Date): string {
     weekday: 'short',
   }).formatToParts(value);
   const partMap = new Map(parts.map(part => [part.type, part.value]));
+  const hour = Number(partMap.get('hour'));
+  const period = resolveBeijingDayPeriod(hour);
 
   return `${partMap.get('year')}年${partMap.get('month')}月${partMap.get(
     'day'
   )}日（${partMap.get('weekday')}）${partMap.get('hour')}:${partMap.get(
     'minute'
-  )}`;
+  )}${period ? `（${period}）` : ''}`;
 }
 
 /** 间隔多久的人话说法：约 25 分钟 / 约 2.5 小时 / 约 7 天 / 约 3 个月 / 约 1.2 年。 */
