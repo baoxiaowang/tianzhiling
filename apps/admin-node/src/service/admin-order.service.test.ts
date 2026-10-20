@@ -2032,7 +2032,9 @@ describe('AdminOrderService', () => {
       .mocked(service.adminWechatPayService.queryVirtualOrder)
       .mockResolvedValue({
         paid_fee: 9900,
-        left_fee: 0,
+        // left_fee 仍是 9900：钱还没真退走，用来验证「观察期未满不下成功结论」
+        // （left_fee 已减少的快速确认路径见下方 fastConfirm 用例）
+        left_fee: 9900,
         refund_info: { refund_order: [{ refund_wx_order_id: 'VPR-OBS-1' }] },
       } as never);
 

@@ -102,6 +102,12 @@ const ADMIN_MANUAL_PAYMENT_PROVIDER = 'admin_manual';
  */
 const VIRTUAL_REFUND_OBSERVATION_MS = 2 * 60 * 60 * 1000;
 /**
+ * 「left_fee 已反映退款」时的最小确认间隔：
+ * 退款成功后微信侧 left_fee 会按退款金额减少，这是唯一可信的「钱真退了」信号；
+ * 连续观察 ≥2 分钟仍成立才落库，避免单次查询抖动，正常 1–2 分钟即可显示已退款。
+ */
+const VIRTUAL_REFUND_SUCCESS_CONFIRM_MS = 2 * 60 * 1000;
+/**
  * 缺失判定的最小等待：刚提交的退款单可能还没出现在微信侧退款单列表里，
  * 未满这个时长只保持 `processing`，不做「退款失败」判定。
  */
@@ -3623,6 +3629,37 @@ export class AdminOrderService {
             summary.confirmed += 1;
             continue;
           }
+
+          // 快速通道：微信侧 left_fee 已按退款金额减少 = 钱确实退走了。
+          // 满足最小确认间隔就直接落为已完成，不再死等 2 小时观察期；
+          // 观察期只在「left_fee 未变 / 查不到退款单」时兜底。
+          const snapshotPaidFee = Number(snapshot.paid_fee ?? 0);
+          const snapshotLeftFee = Number(snapshot.left_fee ?? 0);
+          const refundAmountCents = Number(record.amount ?? 0);
+          const leftFeeReflectsRefund =
+            refundAmountCents > 0 &&
+            Number.isFinite(snapshotLeftFee) &&
+            Number.isFinite(snapshotPaidFee) &&
+            snapshotLeftFee <= snapshotPaidFee - refundAmountCents;
+          if (
+            leftFeeReflectsRefund &&
+            elapsedMs >= VIRTUAL_REFUND_SUCCESS_CONFIRM_MS
+          ) {
+            summary.confirmed += 1;
+            await this.orderRefundModel.updateOne(
+              { _id: record.id } as never,
+              {
+                $set: {
+                  status: OrderRefundStatus.completed,
+                  completedAt:
+                    record.completedAt ?? record.requestedAt ?? new Date(),
+                  updatedAt: new Date(),
+                },
+              } as never
+            );
+            continue;
+          }
+
           if (elapsedMs < VIRTUAL_REFUND_OBSERVATION_MS) {
             // 观察期未满：微信侧暂时还在，但还不能下「退款成功」的结论。
             summary.pending += 1;
