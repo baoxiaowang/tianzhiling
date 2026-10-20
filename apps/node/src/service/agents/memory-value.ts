@@ -301,7 +301,7 @@ const THIRD_PARTY_TERM_PATTERN = /(?:朋友|同事|同学|邻居|闺蜜|工友)/
 // 亲属词汇：只有称呼或关系里出现这些词，才算“家人”。用来挡住把动漫角色、
 // 只有名字的熟人（“名扬”“程小时”“陆光”）写进家人总览。
 export const KINSHIP_VOCABULARY =
-  /(?:爸爸|父亲|爸|爹|妈妈|母亲|妈|娘|爷爷|奶奶|外公|外婆|姥姥|姥爷|祖父|祖母|外祖父|外祖母|公公|婆婆|舅舅|舅父|舅妈|叔叔|伯伯|姑姑|姑妈|姨妈|姨父|婶|嫂子|嫂嫂|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|孙子|孙儿|孙女|外孙|外孙女|丈夫|妻子|老公|老婆|配偶|太太|儿媳|女婿|侄子|侄女|外甥|外甥女|堂|表|亲人|家属)/;
+  /(?:爸爸|父亲|爸|爹|妈妈|母亲|妈|娘|爷爷|奶奶|外公|外婆|姥姥|姥爷|家家|祖父|祖母|外祖父|外祖母|公公|婆婆|舅舅|舅父|舅妈|叔叔|伯伯|姑姑|姑妈|姨妈|姨父|婶|嫂子|嫂嫂|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|孙子|孙儿|孙女|外孙|外孙女|丈夫|妻子|老公|老婆|配偶|太太|儿媳|女婿|侄子|侄女|外甥|外甥女|堂|表|亲人|家属)/;
 
 /**
  * 用户明确说过的稳定事实类别。用来发现"整类内容丢失"——实测 19/24 个用户
@@ -524,7 +524,7 @@ export function normalizeRelationKey(relation: string): string {
     [/妈妈|母亲|^妈$|^娘$/, '母亲'],
     [/爷爷|^嗲嗲$/, '祖父'],
     [/奶奶/, '祖母'],
-    [/外公|姥爷|外祖父/, '外祖父'],
+    [/外公|姥爷|外祖父|家家/, '外祖父'],
     [/外婆|姥姥|外祖母/, '外祖母'],
     [/婆婆|公公/, '姻亲长辈'],
     [/哥哥|^哥$/, '哥哥'],
@@ -725,7 +725,8 @@ const KINSHIP_SYNONYM_GROUPS: string[][] = [
   ['妈妈', '母亲', '妈', '娘', '老妈'],
   ['爷爷', '祖父', '嗲嗲'],
   ['奶奶', '祖母'],
-  ['外公', '姥爷', '外祖父', '公公'],
+  // “家家”在部分方言里指外祖辈；按产品场景并入外祖父组。
+  ['外公', '姥爷', '外祖父', '公公', '家家'],
   ['外婆', '姥姥', '外祖母', '婆婆'],
   ['老公', '丈夫', '先生'],
   ['老婆', '妻子', '太太', '爱人'],
@@ -742,6 +743,33 @@ export const KINSHIP_GROUP_OF = new Map<string, number>();
 KINSHIP_SYNONYM_GROUPS.forEach((group, index) => {
   for (const term of group) KINSHIP_GROUP_OF.set(term, index);
 });
+/** 每个同义组的规范称呼，用于“姥爷/外公/家家”归一到同一个人。 */
+const KINSHIP_GROUP_LABELS = [
+  '爸爸',
+  '妈妈',
+  '爷爷',
+  '奶奶',
+  '外祖父',
+  '外祖母',
+  '丈夫',
+  '妻子',
+  '儿子',
+  '女儿',
+  '哥哥',
+  '姐姐',
+  '弟弟',
+  '妹妹',
+  '女婿',
+  '儿媳',
+];
+export function canonicalKinshipRelation(
+  term: string | undefined
+): string | undefined {
+  const value = (term || '').trim();
+  if (!value) return undefined;
+  const group = KINSHIP_GROUP_OF.get(value);
+  return group === undefined ? undefined : KINSHIP_GROUP_LABELS[group];
+}
 const KINSHIP_TERM_PATTERN = new RegExp(
   [...KINSHIP_GROUP_OF.keys()]
     .sort((a, b) => b.length - a.length)

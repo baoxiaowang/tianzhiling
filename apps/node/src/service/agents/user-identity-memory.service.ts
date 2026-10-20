@@ -17,6 +17,7 @@ import {
   isExplicitCanonicalNameReplacement,
 } from './agent-name-memory';
 import { UserRelativeProfileService } from './user-relative-profile.service';
+import { canonicalKinshipRelation } from './memory-value';
 import { OpenAIService } from './openai';
 
 export interface UserIdentityPromptProfile {
@@ -907,9 +908,16 @@ export class UserIdentityMemoryService {
       take: 128,
     });
     const reference = options.referenceName?.trim().toLowerCase();
-    const relation = normalizeRelation(options.relationToUser || '');
+    // 如果用户说的本身是称谓（“姥爷/外公/家家”），把它当关系而不是姓名；
+    // 这样同一关系组的叫法都会归到同一个人。
+    const referenceRelation = canonicalKinshipRelation(options.referenceName);
+    const relation = referenceRelation
+      ? referenceRelation
+      : normalizeRelation(options.relationToUser || '');
     const matches = people.filter(person => {
-      const nameMatched = reference
+      const nameMatched = referenceRelation
+        ? true
+        : reference
         ? this.unique([
             person.realName,
             person.preferredName,
@@ -1238,6 +1246,10 @@ function normalizePersonCallsUser(value?: string): string | undefined {
 }
 
 function normalizeRelation(value: string): string {
+  // 同义称谓归一：外公/姥爷/外祖父/家家 视为同一关系，
+  // 爸/父亲、妈/母亲、老公/丈夫、老婆/妻子同样归一。
+  const canonical = canonicalKinshipRelation(value);
+  if (canonical) return canonical;
   const aliases: Record<string, string> = {
     爸: '爸爸',
     父亲: '爸爸',
@@ -1245,8 +1257,6 @@ function normalizeRelation(value: string): string {
     母亲: '妈妈',
     老公: '丈夫',
     老婆: '妻子',
-    外婆: '姥姥',
-    外公: '姥爷',
   };
   return aliases[value] || value;
 }

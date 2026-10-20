@@ -176,6 +176,10 @@ import {
   resolveAgentDeathDate,
   resolveRitualTrigger,
 } from './ritual-trigger';
+import {
+  buildFestivalTriggerPrompt,
+  resolveFestivalTrigger,
+} from './festival-dates';
 import type { ReturnTurnPlan } from '../memory/memory-return-turn';
 
 /** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
@@ -2000,12 +2004,19 @@ export class AgentContextService {
         now: ritualNow,
       })
     );
+    const festivalTriggerPrompt = buildFestivalTriggerPrompt(
+      resolveFestivalTrigger({
+        query: options.currentUserText?.trim() || options.currentQuery || '',
+        now: ritualNow,
+      })
+    );
     const taskParts = [
       '# 本轮任务层',
       // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
       // 证据与本地候选、本轮简要），统一后置，保证稳定段逐字不变。
       conversationReturnContextPrompt,
       ritualTriggerPrompt,
+      festivalTriggerPrompt,
       returnTurnMaterialPrompt,
       conversationReadingPrompt,
       initiativeResource.prompt,
