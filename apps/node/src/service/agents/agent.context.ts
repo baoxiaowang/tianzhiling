@@ -180,6 +180,10 @@ import {
   buildFestivalTriggerPrompt,
   resolveFestivalTrigger,
 } from './festival-dates';
+import {
+  buildUserPreferencePromptSection,
+  UserPreferencePromptSection,
+} from './user-preference-prompt';
 import type { ReturnTurnPlan } from '../memory/memory-return-turn';
 
 /** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
@@ -1517,6 +1521,10 @@ export class AgentContextService {
         });
     const evidence = evidencePack.items;
     const boundaryContract = this.compileReplyBoundaryContract(replyBrief);
+    const userPreferencePrompt = buildUserPreferencePromptSection(
+      profileFacts,
+      { query: options.currentQuery || '' }
+    );
     const systemLayer = await this.withTraceSpan(
       ChatTraceStage.promptBuild,
       'prompt.build_layers',
@@ -1535,7 +1543,8 @@ export class AgentContextService {
           acceptedLocalCandidateIds,
           recentHistoryMessages.map(message => memoryEvidenceCore(message.content || '').toLowerCase()).filter(Boolean),
           effectiveLocalCandidates,
-          historyCoverageNote
+          historyCoverageNote,
+          userPreferencePrompt
         ),
       {
         evidenceCount: evidence.length,
@@ -1874,7 +1883,8 @@ export class AgentContextService {
     localCandidateIds?: Set<string>,
     localCandidateVisibleTexts?: string[],
     localCandidates?: LocalMemoryCandidateInput[],
-    historyCoveragePrompt = ''
+    historyCoveragePrompt = '',
+    userPreferencePrompt: UserPreferencePromptSection = { stable: '', task: '' }
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -1926,6 +1936,7 @@ export class AgentContextService {
       persona?.prompt,
       sessionContinuityPrompt,
       mainModelPrinciplesPrompt,
+      userPreferencePrompt.stable,
       // 会话级但偶尔变化（时间事实/连续性摘要）放稳定段末尾：它们更新时只会
       // 让更少的后续内容重新计费。
       buildTemporalProfilePromptSection(temporalProfiles),
@@ -2020,6 +2031,7 @@ export class AgentContextService {
       conversationReturnContextPrompt,
       ritualTriggerPrompt,
       festivalTriggerPrompt,
+      userPreferencePrompt.task,
       returnTurnMaterialPrompt,
       conversationReadingPrompt,
       initiativeResource.prompt,
@@ -3837,6 +3849,10 @@ export class AgentContextService {
     const profileFactKeys = new Set<string>();
 
     for (const fact of options.profileFacts.slice(0, 5)) {
+      // 全局偏好由稳定段单独注入，避免在证据层重复。
+      if (fact.preferenceScope === 'global') {
+        continue;
+      }
       const value = fact.value?.trim();
 
       if (!value) {

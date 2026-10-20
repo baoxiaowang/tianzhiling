@@ -191,6 +191,61 @@ describe('explicit user request write', () => {
     expect(upsertFact).toHaveBeenCalledTimes(2);
   });
 
+  it('writes global comfort taboos and death wording', async () => {
+    process.env.USER_REQUEST_WRITE_MODE = 'active';
+    const service = new AgentProfileFactService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    service.factModel = { findOne: jest.fn().mockResolvedValue(null) } as never;
+    const upsertFact = jest.fn().mockResolvedValue({});
+    (service as any).upsertFact = upsertFact;
+
+    const written = await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '以后别跟我说节哀，我们不说死，说走了',
+    });
+
+    expect(written).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'taboo.comfort.avoid',
+          value: '不要对用户说“节哀”',
+          preferenceScope: 'global',
+        }),
+        expect.objectContaining({
+          key: 'style.preference.death_wording',
+          value: '用“走了”，不用“死”',
+          preferenceScope: 'global',
+        }),
+      ])
+    );
+    expect(upsertFact).toHaveBeenCalledTimes(2);
+  });
+
+  it('merges new comfort phrases into the existing list', async () => {
+    process.env.USER_REQUEST_WRITE_MODE = 'active';
+    const service = new AgentProfileFactService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue({
+        value: '不要对用户说“节哀”',
+      }),
+    } as never;
+    const upsertFact = jest.fn().mockResolvedValue({});
+    (service as any).upsertFact = upsertFact;
+
+    await service.recordExplicitUserRequest({
+      message: message(),
+      searchableText: '以后别跟我说想开点',
+    });
+
+    expect(upsertFact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'taboo.comfort.avoid',
+        value: '不要对用户说“节哀、想开点”',
+      })
+    );
+  });
+
   it('does not write memory/task/one-off requests', async () => {
     process.env.USER_REQUEST_WRITE_MODE = 'active';
     const service = new AgentProfileFactService();

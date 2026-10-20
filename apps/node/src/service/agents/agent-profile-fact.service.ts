@@ -21,6 +21,7 @@ import { MemoryValueService } from './memory-value.service';
 import { memoryValueModeForUser } from './memory-value-rollout';
 import { detectUserRequest } from './user-request-router';
 import { detectRegionalExpressionPreference } from './regional-expression-preference';
+import { detectComfortPreference } from './comfort-preference';
 import { getUserRequestWriteMode } from '../memory-write-guard';
 import {
   buildSharedFamilyMemberFactKey,
@@ -64,6 +65,9 @@ export interface AgentProfileFactSummary {
   sourceText?: string;
   supportCount?: number;
   conflictingValues?: string[];
+  preferenceScope?: 'global' | 'topic' | 'time' | 'person';
+  preferenceTriggers?: string[];
+  supersededBy?: string;
   updatedAt?: Date;
 }
 
@@ -1184,7 +1188,10 @@ export class AgentProfileFactService {
     const regional = detectRegionalExpressionPreference(
       options.searchableText
     );
-    if (!signal && !regional) return [];
+    const comfort = detectComfortPreference(options.searchableText);
+    const hasComfort =
+      comfort.comfortAvoid.length > 0 || Boolean(comfort.deathWording);
+    if (!signal && !regional && !hasComfort) return [];
 
     const requestFacts: AgentProfileFactSummary[] = [];
     if (signal) {
@@ -1210,18 +1217,49 @@ export class AgentProfileFactService {
           confidence: AgentProfileFactConfidence.confirmed,
           priority: 3,
           status: AgentProfileFactStatus.active,
+          preferenceScope: 'global',
         }
       : undefined;
 
+    const comfortFact: AgentProfileFactSummary | undefined =
+      comfort.comfortAvoid.length
+        ? {
+            type: AgentProfileFactType.taboo,
+            key: 'taboo.comfort.avoid',
+            value: `不要对用户说“${comfort.comfortAvoid.join('、')}”`,
+            polarity: AgentProfileFactPolarity.negative,
+            confidence: AgentProfileFactConfidence.confirmed,
+            priority: 3,
+            status: AgentProfileFactStatus.active,
+            preferenceScope: 'global',
+          }
+        : undefined;
+
+    const deathWordingFact: AgentProfileFactSummary | undefined =
+      comfort.deathWording
+        ? {
+            type: AgentProfileFactType.style,
+            key: 'style.preference.death_wording',
+            value: comfort.deathWording.value,
+            polarity: AgentProfileFactPolarity.positive,
+            confidence: AgentProfileFactConfidence.confirmed,
+            priority: 3,
+            status: AgentProfileFactStatus.active,
+            preferenceScope: 'global',
+          }
+        : undefined;
+
     const seen = new Set<string>();
     const requestFactsToWrite = [
+      ...(comfortFact ? [comfortFact] : []),
+      ...(deathWordingFact ? [deathWordingFact] : []),
       ...(regionalFact ? [regionalFact] : []),
       ...requestFacts,
     ].filter(fact => {
       if (seen.has(fact.key)) return false;
       seen.add(fact.key);
       return true;
-    }).slice(0, 3);
+    }).slice(0, 4);
     if (!requestFactsToWrite.length) return [];
 
     if (mode === 'shadow') {
@@ -1235,8 +1273,17 @@ export class AgentProfileFactService {
 
     const written: AgentProfileFactSummary[] = [];
     for (const fact of requestFactsToWrite) {
+      const value =
+        fact.key === 'taboo.comfort.avoid'
+          ? await this.mergeComfortAvoidValue(
+              options.message.userId,
+              options.message.agentId,
+              fact.value
+            )
+          : fact.value;
+      const factToWrite = { ...fact, value };
       await this.upsertFact({
-        ...fact,
+        ...factToWrite,
         userId: options.message.userId,
         agentId: options.message.agentId,
         sourceMessageId: options.message.id,
@@ -1246,7 +1293,7 @@ export class AgentProfileFactService {
         confidence: AgentProfileFactConfidence.confirmed,
         status: AgentProfileFactStatus.active,
       });
-      written.push(fact);
+      written.push(factToWrite);
     }
     this.logger?.info?.(
       '[user-request] wrote kind=%s keys=%s',
@@ -1254,6 +1301,36 @@ export class AgentProfileFactService {
       written.map(fact => fact.key).join(',')
     );
     return written;
+  }
+
+  /**
+   * 安慰禁忌是列表型偏好：新说法追加到已有列表，不覆盖、不重复。
+   */
+  private async mergeComfortAvoidValue(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    nextValue: string
+  ): Promise<string> {
+    const existing = await this.factModel.findOne({
+      where: {
+        userId,
+        agentId,
+        key: 'taboo.comfort.avoid',
+      },
+    });
+    const extract = (value?: string): string[] => {
+      const quoted = /“([^”]+)”/.exec(value || '')?.[1];
+      return (quoted || '')
+        .split(/[、,，]/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    };
+    const next = extract(nextValue);
+    if (!existing?.value) return nextValue;
+    const merged = Array.from(
+      new Set([...extract(existing.value), ...next])
+    ).slice(0, 8);
+    return merged.length ? `不要对用户说“${merged.join('、')}”` : nextValue;
   }
 
   private isDirectPreferenceFactKey(key: string): boolean {
@@ -2491,6 +2568,17 @@ export class AgentProfileFactService {
       ? AgentProfileFactStatus.active
       : AgentProfileFactStatus.candidate;
     fact.priority = this.normalizePriority(input.priority);
+    if (input.preferenceScope !== undefined) {
+      fact.preferenceScope = input.preferenceScope;
+    }
+    if (input.preferenceTriggers !== undefined) {
+      fact.preferenceTriggers = input.preferenceTriggers;
+    }
+    if (input.supersededBy !== undefined) {
+      fact.supersededBy = input.supersededBy
+        ? new MongoObjectId(input.supersededBy)
+        : undefined;
+    }
     // P1-2: sourceMessageId 仅首次创建设置（不可变 provenance），后续更新不覆盖
     if (!existing) {
       fact.sourceMessageId = input.sourceMessageId;
@@ -3003,6 +3091,9 @@ export class AgentProfileFactService {
       conflictingValues: (fact.conflictingValues || [])
         .map(value => value?.trim())
         .filter(Boolean),
+      preferenceScope: fact.preferenceScope,
+      preferenceTriggers: fact.preferenceTriggers,
+      supersededBy: this.stringifyObjectId(fact.supersededBy) || undefined,
       updatedAt: fact.updatedAt,
     };
     if (fact.governance?.subjectRef?.startsWith('user:')) {
