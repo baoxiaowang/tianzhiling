@@ -171,6 +171,11 @@ import {
   formatBeijingDateTime,
 } from './conversation-return-context';
 import type { ConversationReturnContext } from './conversation-return-context';
+import {
+  buildRitualTriggerPrompt,
+  resolveAgentDeathDate,
+  resolveRitualTrigger,
+} from './ritual-trigger';
 import type { ReturnTurnPlan } from '../memory/memory-return-turn';
 
 /** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
@@ -1982,11 +1987,25 @@ export class AgentContextService {
       recognitionJourneyPrompt: options.recognitionJourneyPrompt,
       continuityInformationCardPrompt: options.continuityInformationCardPrompt,
     });
+    // 祭祀触发器：把“离开 7 天 / 档案日期 / 头七”归一化成一行事实；
+    // 不注入回复话术，命中才出现，主动触发一天只注入一次。
+    const ritualNow = options.conversationReturnContext?.currentTurnAt
+      ? new Date(options.conversationReturnContext.currentTurnAt)
+      : new Date();
+    const ritualTriggerPrompt = buildRitualTriggerPrompt(
+      resolveRitualTrigger({
+        conversationId: this.stringifyObjectId(options.conversation.id),
+        query: options.currentUserText?.trim() || options.currentQuery || '',
+        agentDeathDate: resolveAgentDeathDate(temporalProfiles),
+        now: ritualNow,
+      })
+    );
     const taskParts = [
       '# 本轮任务层',
       // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
       // 证据与本地候选、本轮简要），统一后置，保证稳定段逐字不变。
       conversationReturnContextPrompt,
+      ritualTriggerPrompt,
       returnTurnMaterialPrompt,
       conversationReadingPrompt,
       initiativeResource.prompt,
