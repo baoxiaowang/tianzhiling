@@ -100,7 +100,7 @@ const CAPABILITY_POLICIES: Record<string, AgentCapabilityPolicy> = {
     precision: 'approximate',
     source: 'server_clock',
     briefConstraint:
-      '当前时间只能作为间接参考，可以用“大概、应该、快到”等自然表达；不得声称自己亲眼看过钟表',
+      '当前时间可以作为参考，但不得声称自己亲眼看过钟表',
     violationReason: '角色把间接获得的时间说成了自己亲眼查看钟表',
     violationPatterns: [
       /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,6}(?:刚|已经|特意)?(?:看了|看过|看着|瞧了)(?:表|钟|时间)/,

@@ -69,7 +69,7 @@ describe('resolveSemanticRetrievalQuery', () => {
 });
 
 describe('current time prompt', () => {
-  it('marks the day period and explains morning dream language', () => {
+  it('marks the day period without prescribing how to interpret a dream', () => {
     const service = new AgentContextService();
     service.logger = { info: jest.fn(), warn: jest.fn() } as never;
     const prompt = (
@@ -87,6 +87,6 @@ describe('current time prompt', () => {
     });
 
     expect(prompt).toContain('07:06（早上）');
-    expect(prompt).toContain('早上或上午通常是在说昨夜的梦');
+    expect(prompt).not.toContain('不要默认用户刚躺下准备睡');
   });
 });

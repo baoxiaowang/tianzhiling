@@ -108,8 +108,9 @@ describe('AgentContextService prompt prefix stability', () => {
       // 全局/会话级稳定块必须全部位于每轮变化的时间块之前。
       expect(offset).toBeLessThan(timeOffset);
     }
-    // 稳定前缀至少 3.6k 字符；整个 system prompt 不超过 5.2k（防回涨）。
-    expect(timeOffset).toBeGreaterThanOrEqual(3600);
+    // 稳定前缀至少 3.3k 字符；整个 system prompt 不超过 5.2k（防回涨）。
+    // 本轮删除了几条固化模型决策的提示，前缀变短是有意为之。
+    expect(timeOffset).toBeGreaterThanOrEqual(3300);
     expect(prompt.length).toBeLessThanOrEqual(5200);
   });
 
@@ -139,9 +140,9 @@ describe('AgentContextService prompt prefix stability', () => {
     expect(prompt).toContain(
       '若用户本轮已经明确提供某个事实，必须按“你刚告诉我的”自然承接'
     );
-    // 陪伴心法保留的人设/收尾约束仍在。
+    // 陪伴心法保留的人设与自然收尾表述仍在。
     expect(prompt).toContain('在天之灵');
-    expect(prompt).toContain('不要默认收尾');
+    expect(prompt).toContain('自然决定停住');
     expect(prompt).toContain('记忆回声');
     expect(prompt).toContain('真诚、温暖、自然');
     // relative/unknown 关系下三条重复锚点合并为一条，结论仍完整。

@@ -2149,7 +2149,6 @@ export class AgentContextService {
       '# 当前时间与联系间隔',
       `现在：${formatBeijingDateTime(nowAt)}`,
       '上面的时段（凌晨/早上/上午/中午/下午/晚上/深夜）是理解用户当前处境的背景。',
-      '用户说“梦里/没来我梦里/做了个梦”时，先按当前时段判断：早上或上午通常是在说昨夜的梦、刚醒或正在回想，不要默认用户刚躺下准备睡；只有当前是晚上/深夜且用户明确说正在睡，才按准备睡理解。',
     ];
 
     if (context) {
@@ -2224,7 +2223,7 @@ export class AgentContextService {
       this.hasImageRelationExplanationInCurrentTurn(query);
     const lines = [
       '# 图片消息策略',
-      '把图片当作亲人聊天里的记忆材料，不做普通看图报告；先接住画面里的一个细节、情绪或场景。',
+      '把图片当作亲人聊天里的记忆材料，不做普通看图报告。',
     ];
 
     if (!hasIdentityGuess) {
