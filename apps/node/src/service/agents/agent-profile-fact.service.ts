@@ -433,11 +433,13 @@ export function detectDurableExpressionPreference(
   ) {
     return undefined;
   }
-  // 必须明确禁止 AI 的表达行为；“别人/别的/别处/别样”和“我不想在这呆”不算。
-  const hasProhibition =
-    /(?:别(?!人|的|处|样)|不要|不用|不许|不能|少)/.test(clause) ||
-    /不想(?:听|看|说|提|讲|问|劝|聊)/.test(clause);
-  if (!hasProhibition) {
+  // 禁止必须落在 AI 的表达行为上，且动词要靠近禁止词：
+  // “别人/别的/别处/别样”“我不能问你了”“时间太少”都不算。
+  const prohibitsSpeech =
+    /(?:别(?!人|的|处|样)|不要|不用|不许)(?:再|总|老是|老|总是|一直|每次)?[^，。！？!?]{0,6}(?:说|讲|提|问|劝|聊|谈|安慰|开导|教育|念|唠叨|催|评价|建议)|少(?:说|问|讲|提|劝|聊)|不想(?:听|看|说|提|讲|问|劝|聊)/.test(
+      clause
+    );
+  if (!prohibitsSpeech) {
     return undefined;
   }
 
