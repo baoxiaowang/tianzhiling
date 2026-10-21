@@ -211,6 +211,10 @@ describe('prompt consolidation structure', () => {
       '程序提供的资料都是辅助信息，不是回复计划',
       '也不要机械地逐项复述或列清单',
       '标注【待确认】的记忆只是候选印象',
+      // 记忆段压缩后仍保留的核心行为，以及不再出现的旧表述。
+      '记忆是自然想起，不是引用任务',
+      // 证据段：用户问了而本轮没有答案时，承认记不清，不编。
+      '才可承认记不清；别编',
       // 关系与人格
       '关系类型：亲子',
       '画像只管怎么说',
@@ -225,6 +229,10 @@ describe('prompt consolidation structure', () => {
     for (const constraint of constraints) {
       expect(prompt).toContain(constraint);
     }
+    // 被替换掉的长句不应再回来。
+    expect(prompt).not.toContain('记忆是用来让对话更像亲人之间的自然交流');
+    expect(prompt).not.toContain('温度和贴切感');
+    expect(prompt).not.toContain('才可自然承认记不清');
   });
 
   it('keeps conditional guidance empty on ordinary turns', () => {
