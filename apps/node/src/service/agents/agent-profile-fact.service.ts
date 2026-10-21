@@ -399,6 +399,64 @@ export const AGENT_PROFILE_MEMORY_SOURCE_CONFIG: Record<
   },
 };
 
+export interface DurableExpressionPreference {
+  dimension: 'verbosity' | 'closing_question' | 'preachy' | 'tone';
+  instruction: string;
+}
+
+/**
+ * 表达偏好只接“明确禁止 + 持久语气”的要求。
+ *
+ * 单独的“都/一直/总是”只是叙述副词：像“妈是问都不问”“都会让沐沐问我几点下班”
+ * “遇到问题总是逃避”都不是用户在要求 AI 改变表达。必须同时出现禁止词，才写偏好。
+ */
+export function detectDurableExpressionPreference(
+  clause: string
+): DurableExpressionPreference | undefined {
+  if (!clause || /[?？]/.test(clause)) {
+    return undefined;
+  }
+  // 当下、一次性的要求只影响本轮，不写长期偏好。
+  if (
+    /(?:今天|今晚|这会儿|这次|这回|暂时|待会|一会|先别|先不要|先不用)/.test(
+      clause
+    ) ||
+    (/现在/.test(clause) && !/从现在起/.test(clause))
+  ) {
+    return undefined;
+  }
+  // 必须有持久语气；不再把单独的“都”当成持久标记。
+  if (
+    !/(?:以后|今后|从现在起|往后|之后|一直|总是|每次|别总|别老是|不要总|不要老|别再|不用再)/.test(
+      clause
+    )
+  ) {
+    return undefined;
+  }
+  // 必须明确禁止 AI 的表达行为；“别人/别的/别处/别样”和“我不想在这呆”不算。
+  const hasProhibition =
+    /(?:别(?!人|的|处|样)|不要|不用|不许|不能|少)/.test(clause) ||
+    /不想(?:听|看|说|提|讲|问|劝|聊)/.test(clause);
+  if (!hasProhibition) {
+    return undefined;
+  }
+
+  const dimension: DurableExpressionPreference['dimension'] | undefined =
+    /一大段|长篇|长段|太长|啰嗦|简短|短一点|少说|多写|太多字|这么多字|分条|别写太多|不用写太多/.test(
+      clause
+    )
+      ? 'verbosity'
+      : /(?:问(?!题)|提问|追问|反问)/.test(clause)
+      ? 'closing_question'
+      : /讲道理|说教|大道理|开导|教育我/.test(clause)
+      ? 'preachy'
+      : /煽情|客套|官方|模板|肉麻|冷淡|生硬/.test(clause)
+      ? 'tone'
+      : undefined;
+
+  return dimension ? { dimension, instruction: clause } : undefined;
+}
+
 @Provide()
 export class AgentProfileFactService {
   @Logger()
@@ -2530,41 +2588,7 @@ export class AgentProfileFactService {
   private readDurableExpressionPreference(
     clause: string
   ): { dimension: string; instruction: string } | undefined {
-    if (!clause || /[?？]/.test(clause)) {
-      return undefined;
-    }
-    // 当下、一次性的要求只影响本轮，不写长期偏好。
-    if (
-      /(?:今天|今晚|这会儿|这次|这回|暂时|待会|一会|先别|先不要|先不用)/.test(
-        clause
-      ) ||
-      (/现在/.test(clause) && !/从现在起/.test(clause))
-    ) {
-      return undefined;
-    }
-    // 必须有持久语气，否则普通祈使句不永久化。
-    if (
-      !/(?:以后|今后|从现在起|往后|之后|都|一直|总是|每次|别总|别老是|不要总|不要老|别再|不用再)/.test(
-        clause
-      )
-    ) {
-      return undefined;
-    }
-
-    const dimension =
-      /一大段|长篇|长段|太长|啰嗦|简短|短一点|少说|多写|太多字|这么多字|分条|别写太多|不用写太多/.test(
-        clause
-      )
-        ? 'verbosity'
-        : /问|提问|追问/.test(clause)
-        ? 'closing_question'
-        : /讲道理|说教|大道理|开导|教育我/.test(clause)
-        ? 'preachy'
-        : /煽情|客套|官方|模板|肉麻|冷淡|生硬/.test(clause)
-        ? 'tone'
-        : undefined;
-
-    return dimension ? { dimension, instruction: clause } : undefined;
+    return detectDurableExpressionPreference(clause);
   }
 
   private addMemoryAndTabooFacts(
