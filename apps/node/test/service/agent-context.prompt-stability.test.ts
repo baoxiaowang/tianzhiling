@@ -95,7 +95,6 @@ describe('AgentContextService prompt prefix stability', () => {
       '# 陪伴心法',
       '# 最小核心原则',
       '# 当前角色与关系',
-      '# 人格与关系底色',
       '# 会话连续感',
       '# 主模型自主理解',
     ];
@@ -108,10 +107,23 @@ describe('AgentContextService prompt prefix stability', () => {
       // 全局/会话级稳定块必须全部位于每轮变化的时间块之前。
       expect(offset).toBeLessThan(timeOffset);
     }
-    // 稳定前缀至少 3.3k 字符；整个 system prompt 不超过 5.2k（防回涨）。
-    // 本轮删除了几条固化模型决策的提示，前缀变短是有意为之。
-    expect(timeOffset).toBeGreaterThanOrEqual(3300);
-    expect(prompt.length).toBeLessThanOrEqual(5200);
+    // 人格底色并入身份段后不应再出现独立小节标题。
+    expect(prompt).not.toContain('# 人格与关系底色');
+    // 证据、世界设定和本轮边界合并成一个小节，旧标题不再出现。
+    expect(prompt).toContain('# 证据与边界');
+    for (const legacyHeading of [
+      '# 本轮证据包',
+      '# 证据规则',
+      '# 世界与证据公共政策',
+      '# 本轮必要边界',
+    ]) {
+      expect(prompt).not.toContain(legacyHeading);
+    }
+    // 条件规则只在条件成立时进入任务层，普通轮不出现。
+    expect(prompt).not.toContain('# 本轮条件规则');
+    // 合并 + 去重后的体量守护：稳定前缀约 2.9k，整条 prompt 约 4.2k。
+    expect(timeOffset).toBeGreaterThanOrEqual(2850);
+    expect(prompt.length).toBeLessThanOrEqual(4300);
   });
 
   it('keeps the necessary constraints after removing duplicates', async () => {
@@ -131,6 +143,13 @@ describe('AgentContextService prompt prefix stability', () => {
     );
     // 多人物/多诉求处理改由 `# 主模型自主理解` 承担。
     expect(prompt).toContain('也不要机械地逐项复述或列清单');
+    // 证据、世界设定和动态边界合并为同一小节，规则与数据在同一处。
+    expect(prompt).toContain('# 证据与边界');
+    expect(prompt).toContain('证据用法：');
+    expect(prompt).toContain('世界设定：');
+    expect(prompt.indexOf('# 证据与边界')).toBeLessThan(
+      prompt.indexOf('# 输出合同')
+    );
     // 连续性摘要是背景、不是事实证据：只保留稳定段一处逐轮约束。
     expect(prompt).toContain('用户此前主要聊到最近睡得晚');
     expect(
@@ -142,8 +161,10 @@ describe('AgentContextService prompt prefix stability', () => {
     );
     // 陪伴心法保留的人设与自然收尾表述仍在。
     expect(prompt).toContain('在天之灵');
-    expect(prompt).toContain('自然决定停住');
     expect(prompt).toContain('记忆回声');
+    // 收住时机只由 `# 主模型自主理解` 说一次，陪伴心法不重复。
+    expect(prompt).toContain('何时自然收住');
+    expect(prompt).not.toContain('自然决定停住');
     expect(prompt).toContain('真诚、温暖、自然');
     // relative/unknown 关系下三条重复锚点合并为一条，结论仍完整。
     expect(prompt).toContain('不统一成温柔客服');

@@ -330,28 +330,45 @@ export function buildKnownConversationObjects(options: {
 export function buildAgentIdentityPrompt(
   identity: AgentIdentityContract
 ): string {
+  // 身份段每轮都在前缀缓存里重发，空值和重复值都是纯成本：
+  // `realName:"未知"`、`aliases:[]`、`preferredName:"未设置"` 一律不渲染；
+  // relationToUser / userCallsAgent 与显示名相同时也不重复写。
+  const displayName = identity.agent.displayName;
+  const relationshipLabel = identity.relationship.label;
+  const userCallsAgent = identity.addresses.userCallsAgent;
   const agent = {
     id: identity.agent.objectId,
-    name: identity.agent.displayName,
-    realName: identity.agent.realName || '未知',
-    aliases: identity.agent.aliases,
-    preferredName: identity.agent.preferredName || '未设置',
+    name: displayName,
+    ...(identity.agent.realName ? { realName: identity.agent.realName } : {}),
+    ...(identity.agent.aliases.length
+      ? { aliases: identity.agent.aliases }
+      : {}),
+    ...(identity.agent.preferredName
+      ? { preferredName: identity.agent.preferredName }
+      : {}),
     sex: identity.agent.sex,
-    relationToUser: identity.relationship.label,
-    userCallsAgent: identity.addresses.userCallsAgent,
+    ...(relationshipLabel && relationshipLabel !== displayName
+      ? { relationToUser: relationshipLabel }
+      : {}),
+    ...(userCallsAgent &&
+    userCallsAgent !== displayName &&
+    userCallsAgent !== relationshipLabel
+      ? { userCallsAgent }
+      : {}),
   };
   const user = {
     id: identity.user.objectId,
     agentCallsUser: identity.addresses.agentCallsUser,
     ...(identity.addresses.agentCallsUserAlternates.length
       ? {
-          agentCallsUserAlternates:
-            identity.addresses.agentCallsUserAlternates,
+          agentCallsUserAlternates: identity.addresses.agentCallsUserAlternates,
         }
       : {}),
-    realName: identity.user.realName || '未知',
-    aliases: identity.user.aliases,
-    preferredName: identity.user.preferredName || '未设置',
+    ...(identity.user.realName ? { realName: identity.user.realName } : {}),
+    ...(identity.user.aliases.length ? { aliases: identity.user.aliases } : {}),
+    ...(identity.user.preferredName
+      ? { preferredName: identity.user.preferredName }
+      : {}),
   };
   // 其他家人对用户的称呼只归属到“与当前角色关系下可用”的具体人物：
   // 用亲人档案（已按 agentId 作用域）匹配 personId，未匹配的 user_known_person
@@ -361,15 +378,17 @@ export function buildAgentIdentityPrompt(
   );
   const knownPeople = (identity.knownPeople || []).map(person => {
     const relative = relativeById.get(person.id);
-    const personCallsUser = relative
-      ? clean(person.personCallsUser, 24)
-      : '';
+    const personCallsUser = relative ? clean(person.personCallsUser, 24) : '';
+    const preferredName = clean(person.preferredName, 24);
+    const realName = clean(person.realName, 24);
+    const relationToUser = clean(person.relationToUser, 24);
+    const aliases = unique(person.aliases);
     return {
       id: person.id,
-      preferredName: person.preferredName || '未设置',
-      realName: person.realName || '未知',
-      aliases: person.aliases,
-      relationToUser: person.relationToUser || '未确认',
+      ...(preferredName ? { preferredName } : {}),
+      ...(realName ? { realName } : {}),
+      ...(aliases.length ? { aliases } : {}),
+      ...(relationToUser ? { relationToUser } : {}),
       ...(personCallsUser ? { personCallsUser } : {}),
     };
   });
@@ -393,36 +412,52 @@ export function buildAgentIdentityPrompt(
       return `${label}（${relation}）平时叫你${called}`;
     })
     .filter(Boolean);
-  const relatives = (identity.relatives || []).map(relative => ({
-    id: relative.id,
-    preferredName: clean(relative.preferredName, 24) || '未设置',
-    realName: clean(relative.realName, 24) || '未知',
-    aliases: unique(relative.aliases),
-    relationToUser: clean(relative.relationToUser, 24) || '未确认',
-    relationToAgent: clean(relative.relationToAgent, 24) || '未确认',
-    personCallsAgent: clean(relative.personCallsAgent, 24) || '未确认',
-    lifeStage: relative.lifeStage,
-    sex: relative.sex || 'unknown',
-    birthDate: relative.birthDate,
-    birthYear: relative.birthYear,
-    facts: relative.facts.map(fact => ({
-      domain: fact.domain,
-      key: clean(fact.key, 120),
-      value: clean(fact.value, 240),
-      status: fact.status,
-      occurredAt: fact.occurredAt,
-      confidence: fact.confidence,
-      // 稳定历史与可能变化的状态分开表达：current/uncertain 只是“上次提到”，
-      // 不能读成长期不变的事实。
-      ...(fact.status === UserRelativeFactStatus.current ||
-      fact.status === UserRelativeFactStatus.uncertain
-        ? { recency: '上次提到' }
+  const relatives = (identity.relatives || []).map(relative => {
+    const preferredName = clean(relative.preferredName, 24);
+    const realName = clean(relative.realName, 24);
+    const aliases = unique(relative.aliases);
+    const relationToUser = clean(relative.relationToUser, 24);
+    const relationToAgent = clean(relative.relationToAgent, 24);
+    const personCallsAgent = clean(relative.personCallsAgent, 24);
+    return {
+      id: relative.id,
+      ...(preferredName ? { preferredName } : {}),
+      ...(realName ? { realName } : {}),
+      ...(aliases.length ? { aliases } : {}),
+      ...(relationToUser ? { relationToUser } : {}),
+      ...(relationToAgent ? { relationToAgent } : {}),
+      ...(personCallsAgent ? { personCallsAgent } : {}),
+      lifeStage: relative.lifeStage,
+      ...(relative.sex ? { sex: relative.sex } : {}),
+      ...(relative.birthDate ? { birthDate: relative.birthDate } : {}),
+      ...(relative.birthYear !== undefined
+        ? { birthYear: relative.birthYear }
         : {}),
-    })),
-    nameKnown: relative.nameKnown,
-    nameInquiryLastAskedAt: relative.nameInquiryLastAskedAt,
-    nameInquiryCount: relative.nameInquiryCount,
-  }));
+      ...(relative.facts.length
+        ? {
+            facts: relative.facts.map(fact => ({
+              domain: fact.domain,
+              key: clean(fact.key, 120),
+              value: clean(fact.value, 240),
+              status: fact.status,
+              occurredAt: fact.occurredAt,
+              confidence: fact.confidence,
+              // 稳定历史与可能变化的状态分开表达：current/uncertain 只是“上次提到”，
+              // 不能读成长期不变的事实。
+              ...(fact.status === UserRelativeFactStatus.current ||
+              fact.status === UserRelativeFactStatus.uncertain
+                ? { recency: '上次提到' }
+                : {}),
+            })),
+          }
+        : {}),
+      nameKnown: relative.nameKnown,
+      ...(relative.nameInquiryLastAskedAt
+        ? { nameInquiryLastAskedAt: relative.nameInquiryLastAskedAt }
+        : {}),
+      nameInquiryCount: relative.nameInquiryCount,
+    };
+  });
 
   return [
     '# 当前角色与关系',

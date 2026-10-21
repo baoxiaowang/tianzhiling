@@ -1,5 +1,6 @@
 import { AgentContextService } from '../../src/service/agents/agent.context';
 import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
+import { buildMainModelConditionalGuidance } from '../../src/service/agents/main-model-conversation-principles';
 import { resolveAgentChatToolTurnPlan } from '../../src/service/agents/agent-chat-tools';
 import {
   buildMemoryRetrievalQuery,
@@ -585,7 +586,7 @@ describe('AgentContextService', () => {
     expect(String(systemMessage.content).match(/# 输出合同/g)).toHaveLength(1);
     expect(systemMessage.content).not.toContain('# 工具');
     expect(systemMessage.content).toContain('# 当前对话参考模式：boundary');
-    expect(systemMessage.content).toContain('本轮证据包');
+    expect(systemMessage.content).toContain('# 证据与边界');
     expect(systemMessage.content).toContain('对话连续性摘要');
     expect(systemMessage.content).toContain('摘要只用于理解此前聊到哪里');
     expect(systemMessage.content).toContain('用户是女生');
@@ -950,7 +951,7 @@ describe('AgentContextService', () => {
     expect(context.replyBrief.mode).toBe('memory');
     expect(context.replyBrief.strictGrounding).toBe(true);
     expect(context.replyBrief.factClaimMode).toBe('grounded');
-    expect(systemMessage.content).toContain('本轮证据包');
+    expect(systemMessage.content).toContain('# 证据与边界');
     expect(systemMessage.content).toContain('# 当前对话参考模式：memory');
     expect(systemMessage.content).toContain('沿用户已说片段回应感受和意义');
     expect(systemMessage.content).not.toContain('不足就说记不清');
@@ -2660,23 +2661,24 @@ describe('AgentContextService', () => {
     expect(semanticPrompt).not.toContain('# 直接路径的可选主动贡献');
   });
 
-  it('keeps receiving user care as a soft strategy in the generation prompt', () => {
-    const service = new AgentContextService();
+  it('keeps receiving user care as a conditional task-layer strategy', () => {
     const replyBrief = buildReplyBrief({
       currentQuery: '妈，你吃过饭了吗',
       planningMode: 'direct',
     });
-    const prompt = (service as any).buildModelReplyBriefPrompt(
-      replyBrief,
-      undefined,
-      'direct',
-      false
-    );
+    // 关心接收是条件规则：只在 careReception 成立时进入任务层，
+    // 稳定段不再为它每轮付费。
+    expect(replyBrief.careReception?.active).toBe(true);
+    const prompt = buildMainModelConditionalGuidance({
+      careReception: Boolean(replyBrief.careReception?.active),
+    });
 
+    expect(prompt).toContain('# 本轮条件规则');
     expect(prompt).toContain('把关心递给当前角色');
-    expect(prompt).toContain('让这份关心自然落在角色身上');
-    expect(prompt).toContain('这是软策略');
+    expect(prompt).toContain('让这份关心落在角色身上');
+    expect(prompt).toContain('这是软原则');
     expect(prompt).toContain('不要求固定句式、额外气泡或字数');
+    expect(prompt).not.toContain('主模型自主理解');
   });
 
   it('does not repeat the per-turn care reminder on an ordinary direct turn', () => {

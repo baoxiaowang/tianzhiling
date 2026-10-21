@@ -118,6 +118,11 @@ describe('relative address rendering in the identity prompt', () => {
     expect(identity.knownPeople?.[1].personCallsUser).toBe('小宝');
     // 未证实称谓的歧义说明仍在。
     expect(prompt).toContain('不得合并成同一个人');
+    // 空占位值不再渲染，避免每轮为“未知/未设置/未确认”付费。
+    expect(prompt).not.toContain('"realName":"未知"');
+    expect(prompt).not.toContain('"preferredName":"未设置"');
+    expect(prompt).not.toContain('"relationToUser":"未确认"');
+    expect(prompt).not.toContain('"aliases":[]');
     // 用户正式姓名/别名不受影响。
     expect(identity.user.aliases).toEqual([]);
     expect(identity.user.realName).toBeUndefined();

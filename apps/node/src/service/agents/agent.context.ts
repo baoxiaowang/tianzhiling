@@ -104,7 +104,10 @@ import {
   REPLY_OUTPUT_CONTRACT_VERSION,
   buildReplyOutputContractPrompt,
 } from './reply-output-contract';
-import { buildMainModelConversationPrinciplesPrompt } from './main-model-conversation-principles';
+import {
+  buildMainModelConditionalGuidance,
+  buildMainModelConversationPrinciplesPrompt,
+} from './main-model-conversation-principles';
 import {
   REPLY_BOUNDARY_CONTRACT_VERSION,
   buildReplyBoundaryContract,
@@ -153,7 +156,6 @@ import {
 } from './reply-prompt-compiler.service';
 import { TURN_DECISION_VERSION, TurnDecision } from './turn-decision';
 import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
-import { buildWorldBoundaryPolicyPrompt } from './world-boundary-policy';
 import { buildConversationProtectionStatePrompt } from './conversation-protection-state';
 import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
 import { buildConversationInitiativeResource } from './conversation-initiative-resource';
@@ -990,6 +992,8 @@ export class AgentContextService {
       agent: options.agent,
       identityContract: identity,
       coreLanguageSettings: buildCoreLanguageSettings({ profileFacts }),
+      // 人格底色并入 `# 当前角色与关系`，避免同一段身份/关系信息分两个小节重复。
+      embedInIdentitySection: true,
     });
     const knownFamilyMembers = (profileFacts || [])
       .map(fact => getSharedFamilyMemberNameFromFactKey(fact.key))
@@ -1930,14 +1934,22 @@ export class AgentContextService {
     // 时间事实/连续性摘要），每轮会变化的内容（时间戳与联系间隔、回归轮材料、场景
     // 指导、证据与候选、本轮简要）统一放到任务段尾部。主模型原则是全局常量，此前
     // 落在每轮变化的时间块之后而整段无法命中缓存，现上移到稳定段末尾。
-    const mainModelPrinciplesPrompt = buildMainModelConversationPrinciplesPrompt({
+    const mainModelPrinciplesPrompt =
+      buildMainModelConversationPrinciplesPrompt();
+    // 只在条件成立时才进入任务层的规则；稳定段本身保持不变。
+    const mainModelConditionalPrompt = buildMainModelConditionalGuidance({
       explicitClose:
         replyBrief?.experiencePlan.shortTurnKind === 'explicit_close',
+      activeSpeechRequested: Boolean(
+        replyBrief?.understanding.activeSpeechRequest
+      ),
+      careReception: Boolean(replyBrief?.careReception?.active),
     });
     const stableParts = [
       '# 稳定系统层',
       companionCorePrompt,
       basePrompt + doubaoAdaptation,
+      // persona 不再自带标题，作为 `# 当前角色与关系` 的延续段落紧随其后。
       persona?.prompt,
       sessionContinuityPrompt,
       mainModelPrinciplesPrompt,
@@ -1964,10 +1976,6 @@ export class AgentContextService {
             item.assertionPolicy === 'can_assert')
       )
       .slice(0, 8);
-    const evidencePrompt =
-      plan.includeEvidence && systemActionEvidence.length
-        ? this.buildEvidencePrompt(systemActionEvidence)
-        : '';
     // 去重只依据“已经实际进入最终请求”的内容：本轮会渲染的 system_action/confirmed/agent_profile
     // 证据文本 + 最近历史（历史层会发出）+ 当前用户话。未渲染的证据对象不占去重名额。
     const renderedEvidenceTexts = systemActionEvidence.map(item =>
@@ -1988,7 +1996,8 @@ export class AgentContextService {
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
       plan.includeTools ? chatToolPlan : undefined,
-      options.deliberateLongReplyCandidate
+      options.deliberateLongReplyCandidate,
+      plan.includeEvidence ? systemActionEvidence : []
     );
     const deliberateLongReplyPrompt = options.deliberateLongReplyExecutionPrompt
       ? options.deliberateLongReplyExecutionPrompt
@@ -2031,6 +2040,8 @@ export class AgentContextService {
     );
     const taskParts = [
       '# 本轮任务层',
+      // 条件规则随本轮信号出现/消失，放在任务层，稳定段因此逐字不变。
+      mainModelConditionalPrompt,
       // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
       // 证据与本地候选、本轮简要），统一后置，保证稳定段逐字不变。
       conversationReturnContextPrompt,
@@ -2041,7 +2052,6 @@ export class AgentContextService {
       conversationReadingPrompt,
       initiativeResource.prompt,
       deliberateLongReplyPrompt,
-      evidencePrompt,
       localMemoryCandidatePrompt,
       replyBriefPrompt,
       // 回归轮清单非空时，把"必须用上一件"放到靠后的任务层，避免埋在系统层里被忽略。
@@ -2384,11 +2394,19 @@ export class AgentContextService {
   private buildModelReplyBriefPrompt(
     replyBrief?: ReplyBrief,
     chatToolPlan?: AgentChatToolTurnPlan,
-    deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment
+    deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment,
+    evidence: AgentEvidenceItem[] = []
   ): string {
     if (!replyBrief) return '';
 
     const boundaryContract = this.compileReplyBoundaryContract(replyBrief);
+    // 证据、世界设定和本轮动态边界以前是三个独立小节，内容互相引用；
+    // 合并成 `# 证据与边界` 一段，模型不用在三个位置之间拼接同一套判断。
+    const evidenceBoundaryPrompt = this.buildEvidenceBoundaryPrompt({
+      evidence,
+      worldBoundaryPolicy: replyBrief.worldBoundaryPolicy,
+      boundaryRules: boundaryContract.rules,
+    });
     const outputContractPrompt = buildReplyOutputContractPrompt({
       grounded: replyBrief.factClaimMode === 'grounded',
       segmentMode: 'one',
@@ -2429,13 +2447,11 @@ export class AgentContextService {
       '# 本轮回复任务',
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
-      '# 世界与证据公共政策',
-      buildWorldBoundaryPolicyPrompt(replyBrief.worldBoundaryPolicy),
+      evidenceBoundaryPrompt,
       ...(conversationProtectionPrompt
         ? ['# 会话级硬边界', conversationProtectionPrompt]
         : []),
       ...realityDependencyLines,
-      ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
       ...(chatToolPrompt ? [chatToolPrompt] : []),
       outputContractPrompt,
     ]
@@ -4353,7 +4369,11 @@ export class AgentContextService {
     return '';
   }
 
-  private buildEvidencePrompt(evidence: AgentEvidenceItem[]): string {
+  private buildEvidenceBoundaryPrompt(options: {
+    evidence: AgentEvidenceItem[];
+    worldBoundaryPolicy: ReplyBrief['worldBoundaryPolicy'];
+    boundaryRules: string[];
+  }): string {
     const sourceLabels: Record<AgentEvidenceItem['source'], string> = {
       agent_profile: '资料',
       system_action: '系统',
@@ -4371,22 +4391,46 @@ export class AgentContextService {
       recall: '回忆',
       hypothesis: '待确认',
     };
-    const lines = evidence.map(item => {
+    const evidenceItems = Array.isArray(options.evidence)
+      ? options.evidence
+      : [];
+    const evidenceLines = evidenceItems.map(item => {
       const subject = item.subjectRef || 'unknown';
       return `[${item.id}|${sourceLabels[item.source]}|${subject}|${
         useLabels[resolveAgentEvidenceUseMode(item)]
       }] ${item.text}`;
     });
+    const worldLines = options.worldBoundaryPolicy.activeSpaces.map(
+      item =>
+        `${item.allowed ? '允许' : '禁止'}[${item.evidencePolicy}]：${
+          item.rule
+        }`
+    );
 
     return [
-      '# 本轮证据包',
-      ...(lines.length ? lines : ['当前没有可用于扩写具体事实的证据。']),
-      '',
-      '# 证据规则',
-      '可确认：可以自然陈述；承接：可直接接住用户本轮明确陈述，不必机械加“你说”；回忆：只作用户此前表达，必要时自然标明；待确认和问句不能证明其假设。',
-      'claims 必须绑定支持该事实的证据；对象不同、事实无关、已撤回或被替代的证据均无效。',
+      '# 证据与边界',
+      '本轮证据：',
+      ...(evidenceLines.length
+        ? evidenceLines
+        : ['当前没有可用于扩写具体事实的证据。']),
+      '证据用法：可确认=可以自然陈述；承接=可直接接住用户本轮明确陈述，不必机械加“你说”；回忆=只作用户此前表达，必要时自然标明；待确认和问句不能证明其假设。',
       '无证据不新增用户偏好、习惯、性格、现实关系或共同细节。若用户本轮已经明确提供某个事实，必须按“你刚告诉我的”自然承接，不能反过来说想不起来、不记得或不知道；只有用户询问而本轮又没有给出答案时，才可自然承认记不清。角色侧离世日常可自然想象，不延伸成现实做饭、到场或触碰。',
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情；不向用户暴露 ID、标签或结构。',
+      ...(worldLines.length
+        ? [
+            '世界设定：',
+            ...worldLines,
+            '同一内容在离世世界内部可以成立，不代表它能影响或证明现实；只按内容属于哪个世界判断，不按某个词一律放行或一律拒绝。',
+          ]
+        : []),
+      ...(options.boundaryRules.length
+        ? [
+            '本轮边界：',
+            ...options.boundaryRules.map(
+              (rule, index) => `${index + 1}. ${rule}`
+            ),
+          ]
+        : []),
     ].join('\n');
   }
 

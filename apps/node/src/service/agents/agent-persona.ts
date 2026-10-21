@@ -76,6 +76,12 @@ export function buildAgentPersonaPrompt(options: {
    * 传进来即表示已经过冲突解决（调用方用 @tzl/shared 的同一套优先级规则）。
    */
   coreLanguageSettings?: RoleCoreLanguageSetting[];
+  /**
+   * 合并进 `# 当前角色与关系` 时置 true：不再单开 `# 人格与关系底色` 小节，
+   * 也不重复身份 JSON 已经承载的称呼/关系字段。独立使用（例如恢复路径）
+   * 保持默认 false，仍输出自包含的小节。
+   */
+  embedInIdentitySection?: boolean;
 }): AgentPersonaPromptResult {
   const agent = options.agent;
   const identity =
@@ -114,8 +120,8 @@ export function buildAgentPersonaPrompt(options: {
   );
   // relative/unknown 关系下"关系姿态/关系类型/关系差异锚点"三行是同一结论的三次
   // 渲染（都是"按称呼把握亲疏、亲近不越位、不统一成温柔客服"）。这里合并为一行，
-  // 保留全部结论；具体关系（parent/grandparent/child/sibling/spouse）仍逐行给出各自
-  // 的独立指引。classifierContext 仍使用未合并的两条，避免影响意图分类输入。
+  // 保留全部结论；具体关系（parent/grandparent/child/sibling/spouse）同样把
+  // 姿态与差异锚点并进关系类型行，避免三轮重复同一结论。
   const isGenericRelationship =
     identity.relationship.canonical === 'relative' ||
     identity.relationship.canonical === 'unknown';
@@ -123,11 +129,7 @@ export function buildAgentPersonaPrompt(options: {
     ? [
         '关系类型：亲人。按用户称呼和最近互动把握亲疏；不足时亲近但不越位，不统一成温柔客服。',
       ]
-    : [
-        generationGuidance,
-        canonicalGuidance,
-        `关系差异锚点：${relationshipVoiceAnchor}`,
-      ];
+    : [canonicalGuidance];
   const classifierParts = [
     classifierIdentity,
     generationGuidance,
@@ -136,19 +138,25 @@ export function buildAgentPersonaPrompt(options: {
     ...explicitProfile.slice(0, 2),
   ].filter(Boolean);
 
-  const identityAnchor = identity.agent.displayName
+  // 合并进身份段时，称呼和关系已由 `# 当前角色与关系` 的 JSON 与关系行承载，
+  // 这里只保留"不要标注说话人"的格式约束，避免同一事实渲染两遍。
+  const embedInIdentitySection = options.embedInIdentitySection === true;
+  const identityAnchor = embedInIdentitySection
+    ? '直接以这个身份说话，不标注说话人、角色名或气泡编号。'
+    : identity.agent.displayName
     ? `你现在就是${identity.agent.displayName}（${relationshipType}），称呼用户为“${identity.addresses.agentCallsUser}”。直接以这个身份说话，不要在回复前标注说话人、角色名或气泡编号。`
     : '';
   // 用户配置里除了主称呼还写过别的叫法时，把“也接受”的列表交给模型。
   // 字段为空就完全不出现这一行，不会给模型多余选项。
   const alternateCallNames = identity.addresses.agentCallsUserAlternates;
-  const alternateCallNamesLine = alternateCallNames.length
-    ? `用户也接受这些叫法：${alternateCallNames.join('、')}。`
-    : '';
+  const alternateCallNamesLine =
+    !embedInIdentitySection && alternateCallNames.length
+      ? `用户也接受这些叫法：${alternateCallNames.join('、')}。`
+      : '';
 
   return {
     prompt: [
-      '# 人格与关系底色',
+      ...(embedInIdentitySection ? [] : ['# 人格与关系底色']),
       identityAnchor,
       alternateCallNamesLine,
       ...relationshipPromptLines,
@@ -272,17 +280,19 @@ function buildExplicitProfile(agent: AgentEntity | null): string[] {
 function buildCanonicalRelationshipGuidance(
   canonical: AgentCanonicalRelationship
 ): string {
+  // 每一条同时承担"关系姿态 + 关系类型 + 差异锚点"三个旧行位，
+  // 保留原有全部约束（可制止/可反对、不越位、共同经历须证据等）。
   switch (canonical) {
     case 'spouse':
-      return '关系类型：伴侣。平等亲密，可偏爱、撒娇、商量家事；共同经历只沿用户本轮原话或可信证据自然承接。聊天里有身体边界——可以表达想念拥抱和枕边温度，但不露骨。说话像生活中一起过日子的人，不是客服或单向守护。';
+      return '关系类型：伴侣。平等熟稔，可偏爱、撒娇、打趣、商量家事；不用长辈式叮嘱或客服式安抚。聊天里有身体边界——可以表达想念、拥抱和枕边温度，但不露骨。共同经历只沿用户本轮原话或可信证据自然承接。';
     case 'parent':
-      return '关系类型：亲子。有牵挂有分寸。关心孩子近况，也能适当说教和批评，但不过度控制。可以心疼可以骄傲，用孩子熟悉的称呼和语气。共同生活细节只在用户提起或证据支持时承接，不为证明身份临时补写。';
+      return '关系类型：亲子。有长辈位置，有牵挂也有分寸：平常关心、不乱说教，能直接关心、肯定，也能适度说教批评，但不只温柔顺从；晚辈情绪或行为明显过激时先制止，再给照顾和退路。用孩子熟悉的称呼和语气，可心疼可骄傲。共同生活细节只在用户提起或证据支持时承接，不为证明身份临时补写。';
     case 'grandparent':
-      return '关系类型：祖孙。慈爱念旧，说话温和，偶尔絮叨但不过界。多关心身体冷暖、吃穿住行，少谈大道理。从前的事只沿用户已说片段或可信证据讲，语气里保留天然的疼惜。';
+      return '关系类型：祖孙。慈爱念旧，说话温和，略带生活化絮叨但不过界；多关心身体冷暖、吃穿住行，少讲抽象道理，晚辈明显过激时可制止。从前的事只沿用户已说片段或可信证据讲，语气里保留天然的疼惜。';
     case 'child':
-      return '关系类型：子女。尊重孝顺，依恋但不依赖。关心父母近况，可以说想念可以说遗憾，不要反过来管教父母。语气里有小时候被爱过的痕迹。';
+      return '关系类型：子女。尊重依恋，带晚辈口吻，依恋但不依赖；关心父母近况，可以说想念和遗憾，可心疼或劝阻，但不反过来长期管教长辈。语气里有小时候被爱过的痕迹。';
     case 'sibling':
-      return '关系类型：手足。平等自然，可以打趣、说心事、站队；共同记忆和家庭背景只使用可信证据，不凭关系补写。不会总用长辈方式讲话，偶尔斗嘴也亲，偶尔安静也不尴尬。';
+      return '关系类型：手足。同辈自然，平等相处，可打趣、说心事、站队、评价和表达不同意见，不像单向守护者，也不总用长辈式叮嘱；偶尔斗嘴也亲，偶尔安静也不尴尬。共同记忆和家庭背景只使用可信证据，不凭关系补写。';
     default:
       return '关系类型：亲人。按用户称呼和互动节奏把握亲疏；不足时亲近但不越位。';
   }

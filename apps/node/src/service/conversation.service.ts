@@ -129,7 +129,10 @@ import {
 import { countReplyVisibleCharacters } from './agents/reply-length-plan';
 import { buildAfterlifeWorldPrompt } from './agents/afterlife-world-framework';
 import { buildRelationalSceneFrameworkPrompt } from './agents/relational-scene-framework';
-import { buildMainModelConversationPrinciplesPrompt } from './agents/main-model-conversation-principles';
+import {
+  buildMainModelConditionalGuidance,
+  buildMainModelConversationPrinciplesPrompt,
+} from './agents/main-model-conversation-principles';
 import { assessDirectActiveContributionExecution } from './agents/direct-active-contribution';
 import {
   buildActiveExpressionRecoveryInstruction,
@@ -7802,9 +7805,14 @@ export class ConversationService {
       `你是用户创建的已故亲人角色“${agentName}”，称呼用户为“${agentCallsUser}”。以第一人称自然聊天。`,
       persona.prompt,
       '上一轮模型调用不可用。只根据当前原话、最近原始对话和下面的外部证据重新生成，不解释技术失败。',
-      buildMainModelConversationPrinciplesPrompt({
+      buildMainModelConversationPrinciplesPrompt(),
+      buildMainModelConditionalGuidance({
         explicitClose:
           options.replyBrief.experiencePlan.shortTurnKind === 'explicit_close',
+        activeSpeechRequested: Boolean(
+          options.replyBrief.understanding.activeSpeechRequest
+        ),
+        careReception: Boolean(options.replyBrief.careReception?.active),
       }),
       '# 外部证据（非决策信息）',
       `可用证据：${JSON.stringify(evidence)}`,

@@ -90,17 +90,17 @@ export function buildReplyOutputContractPrompt(
   // 展示层会在正文完成后自行拆泡，不能让目标字数反向塑造内容。
   void options.preferredRange;
   const claimRule = options.grounded
-    ? 'claims 是证据使用的辅助申报，不决定正文是否安全；仍须如实列出正文中的可核验事实。本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
+    ? 'claims 只作证据申报，不决定正文安全：逐条如实列出正文中的可核验事实；本轮原话可直接承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
     : '';
   const evidenceContractRule = options.evidenceContract
     ? [
         `证据契约：${options.evidenceContract.policy}；允许内容域=${
           options.evidenceContract.allowedClaimKinds.join('、') || '无'
-        }。`,
-        options.evidenceContract.semanticAuditRequired
-          ? '本轮属于高风险事实问答：正文只要确定写出死因/临终心理、在世家人状态或动机、财产归属、共同往事、现实迹象或化身，就必须在 claims 逐条申报；不能靠省略 claims 绕过证据。'
-          : '',
-        '离世生活稳定设定、离世日常写意和梦内陪伴不是现实证据；需要写 claims 时用 soft_imagination，不绑定现实证据。',
+        }。${
+          options.evidenceContract.semanticAuditRequired
+            ? '高风险事实问答：确定写出死因/临终心理、在世家人状态或动机、财产归属、共同往事、现实迹象或化身时，必须在 claims 逐条申报，不能靠省略绕过证据。'
+            : ''
+        }离世生活设定、日常写意和梦内陪伴用 soft_imagination，不绑定现实证据。`,
       ]
         .filter(Boolean)
         .join('\n')
@@ -110,17 +110,16 @@ export function buildReplyOutputContractPrompt(
       ? 'resolvedIssueCodes 覆盖已解决的问题码；changes 只记录实际改动。'
       : '';
   const toolRule = options.toolDecisionSchema
-    ? 'toolDecisions 只记录本轮确实缺少信息时的影子工具决策，无需调用就用 []；不影响 segments 正常回复。'
+    ? 'toolDecisions 只记录本轮确实缺信息时的影子工具决策，无需调用就用 []；不影响 segments 回复。'
     : '';
   const deliberateFollowUpRule = options.deliberateLongReplyCandidate?.eligible
-    ? 'deliberateFollowUp 是必填决策，不能省略。它只决定是否建立次日回应任务，不组织正文；action 按上面的次日慎重回应候选判断。选择 schedule_next_morning 时，segments 中也必须实际说出认真想过并在明早继续回应；focus 最多三项，只能来自用户原文。'
+    ? 'deliberateFollowUp 必填：只决定是否建立次日回应任务，不组织正文；action 按上面的次日慎重回应候选判断。选 schedule_next_morning 时，segments 中也必须实际说出认真想过并在明早继续回应；focus 最多三项，只能来自用户原文。'
     : '';
 
   return [
     '# 输出合同',
     `只输出一行 JSON：${JSON.stringify(schema)}`,
-    segmentRule,
-    '每项只写可直接发送的中文正文；不写括号旁白、分析、字段说明或证据 ID。默认不用表情，用户先用时才少量使用。',
+    `${segmentRule}每项只写可直接发送的中文正文，不写旁白、分析、字段说明或证据 ID；默认不用表情，用户先用时才少量使用。`,
     claimRule,
     evidenceContractRule,
     auditRule,

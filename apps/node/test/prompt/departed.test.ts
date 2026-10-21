@@ -45,16 +45,22 @@ describe('buildDepartedSystemPrompt', () => {
       '不要根据当前时间推断'
     );
     expect(prompt).toContain('# 当前角色与关系');
-    expect(prompt).toContain('"agent":{"id":"agent","name":"爸爸"');
-    expect(prompt).toContain('"relationToUser":"爸爸"');
-    expect(prompt).toContain('"userCallsAgent":"爸爸"');
+    // 空值和与显示名重复的字段不再渲染，身份 JSON 保持最小。
+    expect(prompt).toContain(
+      '"agent":{"id":"agent","name":"爸爸","sex":"男性"}'
+    );
     expect(prompt).toContain('"user":{"id":"user","agentCallsUser":"旺旺"}');
+    expect(prompt).not.toContain('"realName":"未知"');
+    expect(prompt).not.toContain('"preferredName":"未设置"');
+    expect(prompt).not.toContain('"aliases":[]');
+    expect(prompt).not.toContain('"relationToUser":"爸爸"');
+    expect(prompt).not.toContain('"userCallsAgent":"爸爸"');
     expect(prompt).toContain('其他人物、地点和物品必须另建对象');
     expect(prompt).toContain(
       '亲密感靠称呼、关系立场、贴着原话的理解和角色侧心意'
     );
-    expect(prompt).toContain('让关心落在角色身上');
-    expect(prompt).toContain('按人物性格自然表现出珍惜');
+    expect(prompt).toContain('把它当作用户递给这个亲人的关系动作');
+    expect(prompt).toContain('按人物性格自然承接');
     expect(prompt).toContain('这是软策略');
     expect(prompt).toContain('不要求固定句式、额外气泡或字数');
     expect(prompt).not.toContain('我吃过了，你总惦记我，我心里暖');
@@ -87,10 +93,9 @@ describe('buildDepartedSystemPrompt', () => {
       tone: 'natural_role_consistent',
       identityBoundary: 'roleplay_without_fake_human_claims',
       grounding: 'evidence_first',
-      verbosity: 'short_chat',
+      verbosity: 'relationship_adaptive',
     });
-    expect(prompt).toContain('"agent":{"id":"agent","name":"方方"');
-    expect(prompt).toContain('"userCallsAgent":"方方"');
+    expect(prompt).toContain('"agent":{"id":"agent","name":"方方","sex":"女性"}');
     expect(prompt).toContain('"agentCallsUser":"小天"');
     expect(prompt).not.toContain('爸不要你这样');
     expect(prompt).not.toContain('妈知道你太难受了');
@@ -103,8 +108,11 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('在天之灵');
     expect(prompt).toContain('记忆回声');
     expect(prompt).toContain('真诚、温暖、自然');
-    expect(prompt).toContain('选择最自然的回应策略');
-    expect(prompt).toContain('自然决定停住');
+    expect(prompt).toContain('不只回答字面问题');
+    // “每轮先判断用户需要什么 / 回应后自然收住”只在稳定段 `# 主模型自主理解`
+    // 保留一处，陪伴心法不再重复。
+    expect(prompt).not.toContain('每轮先在心里判断');
+    expect(prompt).not.toContain('自然决定停住');
     expect(prompt).not.toContain('输出合同');
     expect(prompt).not.toContain('riskLevel');
   });
