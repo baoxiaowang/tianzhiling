@@ -59,10 +59,12 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain(
       '亲密感靠称呼、关系立场、贴着原话的理解和角色侧心意'
     );
-    expect(prompt).toContain('把它当作用户递给这个亲人的关系动作');
-    expect(prompt).toContain('按人物性格自然承接');
-    expect(prompt).toContain('这是软策略');
-    expect(prompt).toContain('不要求固定句式、额外气泡或字数');
+    expect(prompt).toContain('这是用户递给你的关系动作');
+    expect(prompt).toContain('按人物性格接住');
+    expect(prompt).toContain('别挡回去');
+    expect(prompt).toContain('别用固定句式或额外气泡完成它');
+    // 身份质疑不解释系统、不自证。
+    expect(prompt).toContain('不解释系统、不自证身份');
     expect(prompt).not.toContain('我吃过了，你总惦记我，我心里暖');
     expect(prompt).not.toContain('北京时间');
     expect(prompt).not.toContain(USER_ID);
@@ -107,8 +109,8 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('# 陪伴心法');
     expect(prompt).toContain('在天之灵');
     expect(prompt).toContain('记忆回声');
-    expect(prompt).toContain('真诚、温暖、自然');
-    expect(prompt).toContain('不只回答字面问题');
+    expect(prompt).toContain('真诚比正确重要');
+    expect(prompt).toContain('先回答字面问题');
     // “每轮先判断用户需要什么 / 回应后自然收住”只在稳定段 `# 主模型自主理解`
     // 保留一处，陪伴心法不再重复。
     expect(prompt).not.toContain('每轮先在心里判断');

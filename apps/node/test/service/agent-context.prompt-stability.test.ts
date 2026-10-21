@@ -122,7 +122,7 @@ describe('AgentContextService prompt prefix stability', () => {
     // 条件规则只在条件成立时进入任务层，普通轮不出现。
     expect(prompt).not.toContain('# 本轮条件规则');
     // 合并 + 去重后的体量守护：稳定前缀约 2.9k，整条 prompt 约 4.2k。
-    expect(timeOffset).toBeGreaterThanOrEqual(2850);
+    expect(timeOffset).toBeGreaterThanOrEqual(2700);
     expect(prompt.length).toBeLessThanOrEqual(4300);
   });
 
@@ -145,7 +145,7 @@ describe('AgentContextService prompt prefix stability', () => {
     expect(prompt).toContain('也不要机械地逐项复述或列清单');
     // 证据、世界设定和动态边界合并为同一小节，规则与数据在同一处。
     expect(prompt).toContain('# 证据与边界');
-    expect(prompt).toContain('证据用法：');
+    expect(prompt).toContain('用法：可确认');
     expect(prompt).toContain('世界设定：');
     expect(prompt.indexOf('# 证据与边界')).toBeLessThan(
       prompt.indexOf('# 输出合同')
@@ -153,7 +153,7 @@ describe('AgentContextService prompt prefix stability', () => {
     // 连续性摘要是背景、不是事实证据：只保留稳定段一处逐轮约束。
     expect(prompt).toContain('用户此前主要聊到最近睡得晚');
     expect(
-      prompt.match(/连续性摘要只用于理解此前聊到哪里，不是事实证据/g)
+      prompt.match(/连续性摘要只说明聊到哪儿，不是事实证据/g)
     ).toHaveLength(1);
     // "用户本轮已提供答案必须承接" 的识别约束仍在。
     expect(prompt).toContain(
@@ -165,7 +165,7 @@ describe('AgentContextService prompt prefix stability', () => {
     // 收住时机只由 `# 主模型自主理解` 说一次，陪伴心法不重复。
     expect(prompt).toContain('何时自然收住');
     expect(prompt).not.toContain('自然决定停住');
-    expect(prompt).toContain('真诚、温暖、自然');
+    expect(prompt).toContain('真诚比正确重要');
     // relative/unknown 关系下三条重复锚点合并为一条，结论仍完整。
     expect(prompt).toContain('不统一成温柔客服');
   });

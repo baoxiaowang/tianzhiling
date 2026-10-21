@@ -90,7 +90,7 @@ export function buildReplyOutputContractPrompt(
   // 展示层会在正文完成后自行拆泡，不能让目标字数反向塑造内容。
   void options.preferredRange;
   const claimRule = options.grounded
-    ? 'claims 只作证据申报，不决定正文安全：逐条如实列出正文中的可核验事实；本轮原话可直接承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
+    ? 'claims 如实申报正文里的可核验事实；本轮原话可直接承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
     : '';
   const evidenceContractRule = options.evidenceContract
     ? [
@@ -100,7 +100,7 @@ export function buildReplyOutputContractPrompt(
           options.evidenceContract.semanticAuditRequired
             ? '高风险事实问答：确定写出死因/临终心理、在世家人状态或动机、财产归属、共同往事、现实迹象或化身时，必须在 claims 逐条申报，不能靠省略绕过证据。'
             : ''
-        }离世生活设定、日常写意和梦内陪伴用 soft_imagination，不绑定现实证据。`,
+        }离世生活设定、日常想象和梦内陪伴用 soft_imagination，不绑定现实证据。`,
       ]
         .filter(Boolean)
         .join('\n')
@@ -119,7 +119,7 @@ export function buildReplyOutputContractPrompt(
   return [
     '# 输出合同',
     `只输出一行 JSON：${JSON.stringify(schema)}`,
-    `${segmentRule}每项只写可直接发送的中文正文，不写旁白、分析、字段说明或证据 ID；默认不用表情，用户先用时才少量使用。`,
+    `${segmentRule}正文只写可直接发送的中文，不写旁白、分析、字段说明或证据 ID；默认不用表情，用户先用时才少量使用。`,
     claimRule,
     evidenceContractRule,
     auditRule,

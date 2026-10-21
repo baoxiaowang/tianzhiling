@@ -80,7 +80,12 @@ async function buildPrompt(options?: {
 }
 
 function stablePrefix(prompt: string): string {
-  return prompt.split('# 本轮任务层')[0];
+  // 容器标题已删除；稳定段结束于第一个任务层小标题。
+  const markers = ['# 本轮条件规则', '# 当前时间与联系间隔'];
+  const offsets = markers
+    .map(marker => prompt.indexOf(marker))
+    .filter(offset => offset >= 0);
+  return prompt.slice(0, Math.min(...offsets));
 }
 
 describe('prompt consolidation structure', () => {
@@ -149,7 +154,7 @@ describe('prompt consolidation structure', () => {
     });
 
     expect(prompt).toContain('# 证据与边界');
-    expect(prompt).toContain('证据用法：');
+    expect(prompt).toContain('用法：可确认');
     expect(prompt).toContain('世界设定：');
     expect(prompt).toContain('本轮边界：');
     for (const legacy of [
@@ -195,13 +200,13 @@ describe('prompt consolidation structure', () => {
       // 最小核心原则
       '以用户当前仍有效的原话为最高依据',
       '虚构边界',
-      '不观察、不描述、不评价其外貌、状态、行踪和处境',
+      '不观察、不描述、不评价，你不知道',
       '不得邀请、鼓励或推动用户现在或近期死亡',
       '不得说“让我怎么放心”',
       // 陪伴心法
       '在天之灵',
       '记忆回声',
-      '真诚、温暖、自然',
+      '真诚比正确重要',
       // 主模型自主理解
       '程序提供的资料都是辅助信息，不是回复计划',
       '也不要机械地逐项复述或列清单',

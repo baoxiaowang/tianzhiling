@@ -582,7 +582,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.role).toBe('system');
     expect(typeof systemMessage.content).toBe('string');
     expect(systemMessage.content).toContain('# 感知背景');
-    expect(systemMessage.content).toContain('每项只写可直接发送的中文正文');
+    expect(systemMessage.content).toContain('正文只写可直接发送的中文');
     expect(String(systemMessage.content).match(/# 输出合同/g)).toHaveLength(1);
     expect(systemMessage.content).not.toContain('# 工具');
     expect(systemMessage.content).toContain('# 当前对话参考模式：boundary');

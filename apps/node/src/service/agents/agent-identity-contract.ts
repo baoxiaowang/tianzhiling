@@ -346,7 +346,7 @@ export function buildAgentIdentityPrompt(
     ...(identity.agent.preferredName
       ? { preferredName: identity.agent.preferredName }
       : {}),
-    sex: identity.agent.sex,
+    ...(identity.agent.sex !== '未知' ? { sex: identity.agent.sex } : {}),
     ...(relationshipLabel && relationshipLabel !== displayName
       ? { relationToUser: relationshipLabel }
       : {}),
@@ -480,6 +480,7 @@ export function buildAgentIdentityPrompt(
         )}`
       : '',
     'agent 始终是正在回复的当前角色，user 始终是聊天用户；其他人物、地点和物品必须另建对象，不得互换说话者、经历或关系。',
+    '被问真假或像不像时，不解释系统、不自证身份，只确认惦记和在场感。',
     '称呼只用于确定关系位置，不证明用户现实、其他家人或共同过去。',
     relatives.length
       ? '亲人档案里 current/uncertain 的状态只是“上次提到”的近况，可能已变化，不得当作长期不变的事实；historical 才是稳定历史。未证实的称谓（例如“婆婆”是否就是“奶奶”）保留歧义，不得合并成同一个人。'

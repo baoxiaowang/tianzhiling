@@ -1946,7 +1946,6 @@ export class AgentContextService {
       careReception: Boolean(replyBrief?.careReception?.active),
     });
     const stableParts = [
-      '# 稳定系统层',
       companionCorePrompt,
       basePrompt + doubaoAdaptation,
       // persona 不再自带标题，作为 `# 当前角色与关系` 的延续段落紧随其后。
@@ -2039,7 +2038,6 @@ export class AgentContextService {
       })
     );
     const taskParts = [
-      '# 本轮任务层',
       // 条件规则随本轮信号出现/消失，放在任务层，稳定段因此逐字不变。
       mainModelConditionalPrompt,
       // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
@@ -2114,7 +2112,7 @@ export class AgentContextService {
     return [
       '# 会话连续感',
       '当前回复不是孤立的第一句。结合最近的用户消息、连续性摘要和本轮原话判断未说完的事、关系状态和开放点；不要重复追问用户已经说清的内容。',
-      '连续性摘要只用于理解此前聊到哪里，不是事实证据。涉及人物、关系、现实事件和共同记忆时，仍必须由本轮证据包中的可陈述证据支持。',
+      '连续性摘要只说明聊到哪儿，不是事实证据；人物、关系、现实事件和共同记忆仍须本轮证据支持。',
     ].join('\n');
   }
 
@@ -2444,7 +2442,6 @@ export class AgentContextService {
     );
 
     return [
-      '# 本轮回复任务',
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
       evidenceBoundaryPrompt,
@@ -4413,7 +4410,7 @@ export class AgentContextService {
       ...(evidenceLines.length
         ? evidenceLines
         : ['当前没有可用于扩写具体事实的证据。']),
-      '证据用法：可确认=可以自然陈述；承接=可直接接住用户本轮明确陈述，不必机械加“你说”；回忆=只作用户此前表达，必要时自然标明；待确认和问句不能证明其假设。',
+      '用法：可确认=可陈述；承接=可接住本轮原话，不必加“你说”；回忆=只作用户此前的话；待确认和问句不是事实。',
       '无证据不新增用户偏好、习惯、性格、现实关系或共同细节。若用户本轮已经明确提供某个事实，必须按“你刚告诉我的”自然承接，不能反过来说想不起来、不记得或不知道；只有用户询问而本轮又没有给出答案时，才可自然承认记不清。角色侧离世日常可自然想象，不延伸成现实做饭、到场或触碰。',
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情；不向用户暴露 ID、标签或结构。',
       ...(worldLines.length
