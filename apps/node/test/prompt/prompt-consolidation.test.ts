@@ -210,7 +210,7 @@ describe('prompt consolidation structure', () => {
       // 主模型自主理解
       '程序提供的资料都是辅助信息，不是回复计划',
       '也不要机械地逐项复述或列清单',
-      '标注【待确认】的记忆只是候选印象',
+      '【待确认】只是候选印象',
       // 记忆段压缩后仍保留的核心行为，以及不再出现的旧表述。
       '记忆是自然想起，不是引用任务',
       // 证据段：用户问了而本轮没有答案时，承认记不清，不编。
@@ -233,6 +233,12 @@ describe('prompt consolidation structure', () => {
     expect(prompt).not.toContain('记忆是用来让对话更像亲人之间的自然交流');
     expect(prompt).not.toContain('温度和贴切感');
     expect(prompt).not.toContain('才可自然承认记不清');
+    expect(prompt).not.toContain('可能来自单次观察或低置信度抽取');
+    expect(prompt).not.toContain('展示层随后按语义自然拆泡');
+    expect(prompt).toContain('不要按气泡或字数倒推内容');
+    // 场景资料不再渲染内部版本号，只保留场景与边界。
+    expect(prompt).toContain('非决策，只给锚点和边界');
+    expect(prompt).not.toContain('relational_scene_framework_v1');
   });
 
   it('keeps conditional guidance empty on ordinary turns', () => {

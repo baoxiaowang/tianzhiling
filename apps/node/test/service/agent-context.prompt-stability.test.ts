@@ -121,8 +121,8 @@ describe('AgentContextService prompt prefix stability', () => {
     }
     // 条件规则只在条件成立时进入任务层，普通轮不出现。
     expect(prompt).not.toContain('# 本轮条件规则');
-    // 合并 + 去重 + 逐段精炼后的体量守护：稳定前缀约 2.6k，整条 prompt 约 4k。
-    expect(timeOffset).toBeGreaterThanOrEqual(2600);
+    // 合并 + 去重 + 逐段精炼后的体量守护：稳定前缀约 2.55k，整条 prompt 约 4k。
+    expect(timeOffset).toBeGreaterThanOrEqual(2550);
     expect(prompt.length).toBeLessThanOrEqual(4300);
   });
 

@@ -385,10 +385,9 @@ export function buildRelationalSceneFrameworkPrompt(
   );
 
   return [
-    `版本：${context.version}；激活：${context.cards
+    `场景：${context.cards
       .map(card => card.label)
-      .join('、')}。`,
-    '这是非决策的场景资料，只提供可信锚点、证据规则和产品硬边界。它不规定本轮动作、情感目标、提问、收尾、长度或措辞；请结合完整上下文自主理解和回应。',
+      .join('、')}（非决策，只给锚点和边界，不规定动作、情绪目标、提问、收尾、长度或措辞）。`,
     ...cardLines,
     context.suppressPriorFacts
       ? '本轮存在纠正：冲突旧事实立即失效，只保留用户给出的最小替代事实。'

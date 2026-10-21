@@ -74,7 +74,8 @@ describe('relational scene framework', () => {
       'reunion_future',
     ]);
     expect(context?.cards).toHaveLength(2);
-    expect(prompt).toContain('只提供可信锚点、证据规则和产品硬边界');
+    expect(prompt).toContain('非决策，只给锚点和边界');
+    expect(prompt).not.toContain('relational_scene_framework_v1');
     expect(prompt).not.toContain('家庭人物与关系图谱');
   });
 
