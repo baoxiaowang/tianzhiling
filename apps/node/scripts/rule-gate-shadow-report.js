@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 /** 规则门 shadow 日志聚合（只读）。 */
 const fs = require('fs');
-const PREFIX = '[rule-gate-shadow]';
+const PREFIXES = ['[rule-gate]', '[rule-gate-shadow]'];
 
 function parseLines(lines) {
   const records = [];
   for (const line of lines) {
-    const index = line.indexOf(PREFIX);
-    if (index < 0) continue;
+    const prefix = PREFIXES.find(value => line.includes(value));
+    if (!prefix) continue;
+    const index = line.indexOf(prefix);
     try {
-      const record = JSON.parse(line.slice(index + PREFIX.length).trim());
+      const record = JSON.parse(line.slice(index + prefix.length).trim());
       if (record && record.gate) records.push(record);
     } catch {}
   }

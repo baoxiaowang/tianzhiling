@@ -4,9 +4,9 @@ describe('rule gate shadow report', () => {
   it('aggregates gate and reason counts', () => {
     const records = parseLines([
       'noise',
-      '[rule-gate-shadow] {"gate":"structured_memory_enqueue","action":"would_skip","reason":"pure_social","textLength":2,"messageId":"m1"}',
-      '[rule-gate-shadow] {"gate":"structured_memory_enqueue","action":"would_skip","reason":"pure_social","textLength":2}',
-      '[rule-gate-shadow] broken',
+      '[rule-gate] {"gate":"structured_memory_enqueue","action":"would_skip","reason":"pure_social","textLength":2,"messageId":"m1"}',
+      '[rule-gate] {"gate":"structured_memory_enqueue","action":"would_skip","reason":"pure_social","textLength":2}',
+      '[rule-gate] broken',
     ]);
     expect(records).toHaveLength(2);
     const result = aggregate(records, 5);

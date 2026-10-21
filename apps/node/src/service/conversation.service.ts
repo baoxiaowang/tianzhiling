@@ -216,8 +216,10 @@ import {
 import {
   buildRuleGateShadowRecord,
   formatRuleGateShadowLine,
+  getRuleGateMode,
   isPureSocialTurn,
   shouldSampleRuleGateShadow,
+  shouldSkipStructuredMemoryEnqueue,
 } from './agents/rule-gate-shadow';
 import {
   PersonTemporalMemoryService,
@@ -3759,20 +3761,23 @@ export class ConversationService {
     if (isMemoryWriteDisabled()) {
       return;
     }
-    if (
-      isPureSocialTurn(searchableText) &&
-      shouldSampleRuleGateShadow()
-    ) {
+    const pureSocial = isPureSocialTurn(searchableText);
+    const gateMode = getRuleGateMode();
+    if (pureSocial && (gateMode === 'active' || shouldSampleRuleGateShadow())) {
       this.logger.info(
         formatRuleGateShadowLine(
           buildRuleGateShadowRecord({
             gate: 'structured_memory_enqueue',
+            mode: gateMode,
             reason: 'pure_social',
             textLength: searchableText.length,
             messageId: this.stringifyObjectId(message.id),
           })
         )
       );
+    }
+    if (shouldSkipStructuredMemoryEnqueue(searchableText, gateMode)) {
+      return;
     }
     await this.memoryPipelineTaskService.enqueueForMessage(
       message,

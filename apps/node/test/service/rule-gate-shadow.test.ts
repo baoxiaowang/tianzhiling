@@ -1,7 +1,9 @@
 import {
   buildRuleGateShadowRecord,
   formatRuleGateShadowLine,
+  getRuleGateMode,
   isPureSocialTurn,
+  shouldSkipStructuredMemoryEnqueue,
   shouldSampleRuleGateShadow,
 } from '../../src/service/agents/rule-gate-shadow';
 
@@ -23,9 +25,30 @@ describe('rule gate shadow', () => {
       messageId: 'm1',
       now: new Date('2026-10-20T00:00:00.000Z'),
     });
-    expect(record.action).toBe('would_skip');
-    expect(formatRuleGateShadowLine(record)).toContain('[rule-gate-shadow]');
+    expect(record).toMatchObject({ mode: 'shadow', action: 'would_skip' });
+    expect(formatRuleGateShadowLine(record)).toContain('[rule-gate]');
     expect(record).not.toHaveProperty('text');
+  });
+
+  it('defaults to active and supports shadow', () => {
+    expect(getRuleGateMode({} as NodeJS.ProcessEnv)).toBe('active');
+    expect(
+      getRuleGateMode({ RULE_GATE_MODE: 'shadow' } as NodeJS.ProcessEnv)
+    ).toBe('shadow');
+    expect(
+      buildRuleGateShadowRecord({
+        gate: 'structured_memory_enqueue',
+        mode: 'active',
+        reason: 'pure_social',
+        textLength: 1,
+      })
+    ).toMatchObject({ mode: 'active', action: 'skip' });
+  });
+
+  it('skips structured memory only in active mode for pure social turns', () => {
+    expect(shouldSkipStructuredMemoryEnqueue('嗯', 'active')).toBe(true);
+    expect(shouldSkipStructuredMemoryEnqueue('嗯', 'shadow')).toBe(false);
+    expect(shouldSkipStructuredMemoryEnqueue('我想你', 'active')).toBe(false);
   });
 
   it('samples by env rate', () => {

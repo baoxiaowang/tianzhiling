@@ -1,16 +1,19 @@
 /**
- * 高置信规则门的 shadow 记录。
+ * 高置信规则门的 shadow / active 记录。
  *
- * 只记录“如果启用会跳过什么”，不改变任何现有行为。
+ * shadow 只记录“如果启用会跳过什么”；active 才真正跳过。
  */
 
-export const RULE_GATE_SHADOW_PREFIX = '[rule-gate-shadow]';
+export const RULE_GATE_PREFIX = '[rule-gate]';
+export const LEGACY_RULE_GATE_PREFIX = '[rule-gate-shadow]';
 
+export type RuleGateMode = 'shadow' | 'active';
 export type RuleGateName = 'structured_memory_enqueue';
 
 export interface RuleGateShadowRecord {
   gate: RuleGateName;
-  action: 'would_skip';
+  mode: RuleGateMode;
+  action: 'would_skip' | 'skip';
   reason: string;
   textLength: number;
   messageId?: string;
@@ -27,16 +30,34 @@ export function isPureSocialTurn(text: string): boolean {
   );
 }
 
+export function shouldSkipStructuredMemoryEnqueue(
+  text: string,
+  mode: RuleGateMode
+): boolean {
+  return mode === 'active' && isPureSocialTurn(text);
+}
+
+export function getRuleGateMode(
+  env: NodeJS.ProcessEnv = process.env
+): RuleGateMode {
+  const raw = (env.RULE_GATE_MODE || 'active').trim().toLowerCase();
+  return raw === 'shadow' ? 'shadow' : 'active';
+}
+
 export function buildRuleGateShadowRecord(options: {
   gate: RuleGateName;
+  mode?: RuleGateMode;
+  action?: 'would_skip' | 'skip';
   reason: string;
   textLength: number;
   messageId?: string;
   now?: Date;
 }): RuleGateShadowRecord {
+  const mode = options.mode || 'shadow';
   return {
     gate: options.gate,
-    action: 'would_skip',
+    mode,
+    action: options.action || (mode === 'active' ? 'skip' : 'would_skip'),
     reason: options.reason,
     textLength: Math.max(0, Math.round(options.textLength || 0)),
     ...(options.messageId ? { messageId: options.messageId } : {}),
@@ -45,7 +66,7 @@ export function buildRuleGateShadowRecord(options: {
 }
 
 export function formatRuleGateShadowLine(record: RuleGateShadowRecord): string {
-  return `${RULE_GATE_SHADOW_PREFIX} ${JSON.stringify(record)}`;
+  return `${RULE_GATE_PREFIX} ${JSON.stringify(record)}`;
 }
 
 export function shouldSampleRuleGateShadow(
