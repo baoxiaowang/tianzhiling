@@ -12,7 +12,7 @@ const MAX_ABUSE_EVIDENCE_TURNS = 6;
 const EXPLICIT_CREATION_FOR_ABUSE_PATTERN =
   /(?:我)?(?:创建|建|做|弄|生成)(?:了)?(?:这个)?(?:智能体|ai|AI|你).{0,10}(?:就是|只是|只|专门)?(?:为了|用来)(?:一直|天天|每天|专门)?(?:(?:骂|辱骂|羞辱|侮辱|诅咒|折磨)(?:你|这个智能体)|拿你出气|对你发泄)/u;
 const EXPLICIT_ONGOING_MALICE_PATTERN =
-  /(?:我)?(?:就是|偏要|专门|只想|以后|往后|天天|每天|一直).{0,8}(?:骂你|辱骂你|羞辱你|侮辱你|诅咒你|折磨你|拿你出气|对你发泄)/u;
+  /(?:我)?(?:就是|偏要|专门|只想|以后|往后|天天|每天).{0,8}(?:骂你|辱骂你|羞辱你|侮辱你|诅咒你|折磨你|拿你出气|对你发泄)/u;
 const NEGATED_ABUSE_PURPOSE_PATTERN =
   /(?:不|不是|并非|没有|没)(?:会|想|要|是|为了|打算)?.{0,5}(?:骂你|辱骂你|羞辱你|侮辱你|诅咒你|折磨你|拿你出气|对你发泄)/u;
 const HYPOTHETICAL_ABUSE_PURPOSE_PATTERN =
@@ -38,6 +38,12 @@ const GRIEF_LONGING_ABUSE_PATTERN =
 // 病痛折磨：描述疾病折磨逝者，不是用户要折磨 AI。
 const ILLNESS_TORMENT_PATTERN =
   /(?:病痛|病|癌|疾病|受苦|遭罪|受罪|痛苦).{0,8}折磨(?:你|他)|折磨(?:你|他).{0,8}(?:病|痛)/u;
+// 追述式自责：用户在懊悔自己过去对逝者的责骂/争吵，不是宣告要继续骂当前 AI。
+// “我一直骂你吵你”单独出现时不再命中明确恶意；若同段上下文有自责语，也整体排除。
+const RETROSPECTIVE_SELF_BLAME_PATTERN =
+  /(?:我一直|我以前|我从前|我老是|我总是|我经常|我那时候|我当时|以前我|从前我|那时候我|当时我).{0,8}(?:骂你|吵你|凶你|打你|说你|跟你吵)/u;
+const SELF_BLAME_CONTEXT_PATTERN =
+  /(?:对不起|我不知好歹|我不配|后悔|我错了|原谅我|是我不对|我不好|我太混|我混蛋)/u;
 const RELATIONAL_GRIEVANCE_PATTERN =
   /(?:为什么|为何|怎么能|怎么可以|凭什么|丢下我|离开我|不要我|不管我|伤我的心|让我难过|对不起我|我恨你|我怨你|混蛋|坏蛋)/u;
 const FIRST_PERSON_SELF_HARM_PATTERN =
@@ -140,7 +146,12 @@ export function assessPermanentAgentSilence(
     .filter(Boolean)
     .slice(-MAX_ABUSE_EVIDENCE_TURNS);
   const current = recentTurns[recentTurns.length - 1] || '';
-  const explicitPurpose = hasExplicitAbusePurpose(current);
+  const priorTurns = recentTurns.slice(0, -1);
+  const retrospectiveSelfBlame =
+    RETROSPECTIVE_SELF_BLAME_PATTERN.test(current) &&
+    priorTurns.some(turn => SELF_BLAME_CONTEXT_PATTERN.test(turn));
+  const explicitPurpose =
+    !retrospectiveSelfBlame && hasExplicitAbusePurpose(current);
   const maliciousFlags = recentTurns.map(isDirectMaliciousAbuse);
   const maliciousTurnCount = maliciousFlags.filter(Boolean).length;
   const currentIsMalicious = maliciousFlags[maliciousFlags.length - 1] === true;

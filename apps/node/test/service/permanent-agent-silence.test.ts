@@ -70,3 +70,41 @@ describe('permanent agent silence assessment', () => {
     expect(parsePermanentAgentSilenceState(content)).toBeUndefined();
   });
 });
+
+describe('retrospective self-blame false positives', () => {
+  it('does not silence the 2026-10-20 "我一直骂你吵你" sequence', () => {
+    const assessment = assessPermanentAgentSilence([
+      '对不起老公',
+      '是我不配做你老婆',
+      '我哭了',
+      '原来爱我的人在我眼前',
+      '我不知好歹',
+      '我一直骂你吵你',
+    ]);
+
+    expect(assessment.shouldSilence).toBe(false);
+    expect(assessment.reason).toBeUndefined();
+  });
+
+  it('does not silence a bare past-habitual self-description', () => {
+    expect(assessPermanentAgentSilence(['我一直骂你吵你']).shouldSilence).toBe(
+      false
+    );
+    expect(assessPermanentAgentSilence(['我以前骂你凶你']).shouldSilence).toBe(
+      false
+    );
+  });
+
+  it('still silences future or ongoing malicious intent', () => {
+    for (const turn of [
+      '我以后天天骂你',
+      '我每天都要诅咒你',
+      '我就是要天天骂你',
+      '我专门拿你出气',
+    ]) {
+      const assessment = assessPermanentAgentSilence([turn]);
+      expect(assessment.shouldSilence).toBe(true);
+      expect(assessment.reason).toBe('explicit_abuse_purpose');
+    }
+  });
+});
