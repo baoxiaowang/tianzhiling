@@ -189,12 +189,6 @@ import {
   formatPromptSizeLine,
   shouldSamplePromptSize,
 } from './prompt-size-audit';
-import {
-  buildRuleGateShadowRecord,
-  formatRuleGateShadowLine,
-  isPureSocialTurn,
-  shouldSampleRuleGateShadow,
-} from './rule-gate-shadow';
 import type { ReturnTurnPlan } from '../memory/memory-return-turn';
 
 /** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
@@ -1177,21 +1171,6 @@ export class AgentContextService {
             this.retrieveService?.retrieveConversationMemoriesDetailed &&
               semanticRetrievalQuery
           ));
-    if (
-      memoryRetrievalReady &&
-      isPureSocialTurn(memoryGateText) &&
-      shouldSampleRuleGateShadow()
-    ) {
-      this.logger?.info?.(
-        formatRuleGateShadowLine(
-          buildRuleGateShadowRecord({
-            gate: 'memory_retrieval',
-            reason: 'pure_social',
-            textLength: memoryGateText.length,
-          })
-        )
-      );
-    }
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
       memoryRetrievalReady ? 'active' : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];

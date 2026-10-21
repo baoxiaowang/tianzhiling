@@ -6,15 +6,14 @@
 
 export const RULE_GATE_SHADOW_PREFIX = '[rule-gate-shadow]';
 
-export type RuleGateName =
-  | 'memory_retrieval'
-  | 'structured_memory_enqueue';
+export type RuleGateName = 'structured_memory_enqueue';
 
 export interface RuleGateShadowRecord {
   gate: RuleGateName;
   action: 'would_skip';
   reason: string;
   textLength: number;
+  messageId?: string;
   at: string;
 }
 
@@ -32,6 +31,7 @@ export function buildRuleGateShadowRecord(options: {
   gate: RuleGateName;
   reason: string;
   textLength: number;
+  messageId?: string;
   now?: Date;
 }): RuleGateShadowRecord {
   return {
@@ -39,6 +39,7 @@ export function buildRuleGateShadowRecord(options: {
     action: 'would_skip',
     reason: options.reason,
     textLength: Math.max(0, Math.round(options.textLength || 0)),
+    ...(options.messageId ? { messageId: options.messageId } : {}),
     at: (options.now || new Date()).toISOString(),
   };
 }

@@ -3769,6 +3769,7 @@ export class ConversationService {
             gate: 'structured_memory_enqueue',
             reason: 'pure_social',
             textLength: searchableText.length,
+            messageId: this.stringifyObjectId(message.id),
           })
         )
       );

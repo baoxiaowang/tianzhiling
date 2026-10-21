@@ -17,9 +17,10 @@ describe('rule gate shadow', () => {
 
   it('records would-skip without text', () => {
     const record = buildRuleGateShadowRecord({
-      gate: 'memory_retrieval',
+      gate: 'structured_memory_enqueue',
       reason: 'pure_social',
       textLength: 2,
+      messageId: 'm1',
       now: new Date('2026-10-20T00:00:00.000Z'),
     });
     expect(record.action).toBe('would_skip');
