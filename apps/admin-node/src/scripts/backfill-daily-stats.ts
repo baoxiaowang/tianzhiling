@@ -13,6 +13,7 @@ import {
   readStringFrom,
 } from '@tzl/shared';
 import { AdminOperationsService } from '../service/admin-operations.service';
+import { DouyinReviewService } from '../service/douyin-review.service';
 import { AdminDailyStatsService } from '../service/admin-daily-stats.service';
 
 loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
@@ -85,6 +86,21 @@ async function main(): Promise<void> {
 
   // 手动实例化 service（不启动 Midway 应用）
   const adminOps = new AdminOperationsService();
+  // 推广费与线上一致：优先取抖评系统当日合计（未配密码时自动回退静态表）
+  const douyinReview = new DouyinReviewService();
+  douyinReview.douyinReviewConfig = {
+    baseUrl: readStringFrom(
+      ['ADMIN_API_DOUYIN_REVIEW_BASE_URL', 'DOUYIN_REVIEW_BASE_URL'],
+      'http://comment-admin:8890'
+    ),
+    password: readStringFrom(
+      ['ADMIN_API_DOUYIN_REVIEW_PASSWORD', 'DOUYIN_REVIEW_PASSWORD'],
+      ''
+    ),
+    timeoutMs: Number(readStringFrom(['DOUYIN_REVIEW_TIMEOUT_MS'], '5000')),
+  };
+  (adminOps as unknown as { douyinReviewService: unknown }).douyinReviewService =
+    douyinReview;
   (adminOps as unknown as { userModel: unknown }).userModel =
     dataSource.getMongoRepository(UserEntity);
   (adminOps as unknown as { agentModel: unknown }).agentModel =
