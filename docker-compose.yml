@@ -136,6 +136,9 @@ services:
       ADMIN_API_MONGO_AUTH_SOURCE: ${MONGO_AUTH_SOURCE:-admin}
       ADMIN_API_MONGO_USERNAME: ${MONGO_USERNAME:-admin}
       ADMIN_API_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
+      # 抖评（comment-admin）内部接口：每日推广费来源
+      DOUYIN_REVIEW_BASE_URL: ${DOUYIN_REVIEW_BASE_URL:-http://comment-admin:8890}
+      DOUYIN_REVIEW_PASSWORD: ${DOUYIN_REVIEW_PASSWORD:-}
     expose:
       - "7101"
     volumes:

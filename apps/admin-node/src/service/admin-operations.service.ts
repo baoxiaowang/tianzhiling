@@ -1,4 +1,4 @@
-import { Provide } from '@midwayjs/core';
+import { Inject, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type {
   AdminAuthenticatedPayload,
@@ -44,6 +44,7 @@ import {
   UserEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
+import { DouyinReviewService } from './douyin-review.service';
 
 type TaskQuery = {
   page?: string | number;
@@ -312,6 +313,9 @@ export class AdminOperationsService {
     }).format(date);
   }
 
+  @Inject()
+  douyinReviewService: DouyinReviewService;
+
   @InjectEntityModel(PostEntity)
   postModel: MongoRepository<PostEntity>;
 
@@ -575,7 +579,10 @@ export class AdminOperationsService {
 
     const dayMap = await this.ensureDaysFromStats([date]);
     const point = dayMap.get(date);
-    const promotionExpense = override ?? getDouyinPromotionExpense(date);
+    const promotionExpense = await this.resolvePromotionExpense(
+      date,
+      override
+    );
     // 累计收入是同期群终身口径，必须实时重算，否则会把过期快照值算进 profit。
     const liveCohortRevenue = await this.loadLiveCohortRevenue(date, date);
     const cohortRevenue = this.roundMoney(liveCohortRevenue.get(date) ?? 0);
@@ -1061,6 +1068,26 @@ export class AdminOperationsService {
    * 计算单日统计数据（北京时间）。供预计算汇总表写入使用。
    * 与 getReport 中 daily 行的口径完全一致。
    */
+  /**
+   * 推广费取值顺序：人工覆盖 > 抖评系统当日合计 > 内置静态表。
+   * 抖评不可用（未配密码/网络异常/接口报错）时自动回退，不影响报表主流程。
+   */
+  private async resolvePromotionExpense(
+    date: string,
+    override?: number
+  ): Promise<number> {
+    if (override !== undefined) return override;
+    try {
+      const remote = await this.douyinReviewService?.getDailyExpense(date);
+      if (typeof remote === 'number' && Number.isFinite(remote)) {
+        return this.roundMoney(remote);
+      }
+    } catch (error) {
+      // 抖评异常：静默回退静态表
+    }
+    return getDouyinPromotionExpense(date);
+  }
+
   async computeDailyStats(date: string): Promise<AdminOperationsDailyPointDTO> {
     if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)) {
       throw new AppError(`invalid date: ${date}`, 'INVALID_DATE');
@@ -1131,7 +1158,7 @@ export class AdminOperationsService {
     const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
     const refundedRevenue = this.centsToYuan(refundMap.get(date) ?? 0);
     const cohortRevenue = this.centsToYuan(cohortMap.get(date) ?? 0);
-    const promotionExpense = getDouyinPromotionExpense(date);
+    const promotionExpense = await this.resolvePromotionExpense(date);
 
     return {
       date,

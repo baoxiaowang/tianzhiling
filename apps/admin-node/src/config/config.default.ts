@@ -154,6 +154,18 @@ export default {
       files: 1,
     },
   },
+  // 抖评（comment-admin）内部接口：每日推广费的真实来源
+  douyinReview: {
+    baseUrl: readStringFrom(
+      ['ADMIN_API_DOUYIN_REVIEW_BASE_URL', 'DOUYIN_REVIEW_BASE_URL'],
+      'http://comment-admin:8890'
+    ),
+    password: readStringFrom(
+      ['ADMIN_API_DOUYIN_REVIEW_PASSWORD', 'DOUYIN_REVIEW_PASSWORD'],
+      ''
+    ),
+    timeoutMs: readNumberFrom(['DOUYIN_REVIEW_TIMEOUT_MS'], 5000),
+  },
   jwt: {
     secret: readStringFrom(
       ['ADMIN_API_JWT_SECRET', 'NODE_JWT_SECRET'],
