@@ -1040,6 +1040,33 @@ export class AdminOperationsService {
     return value.trim().slice(0, DAILY_NOTE_MAX_LENGTH);
   }
 
+  /**
+   * 重算「昨天 + 今天」并清掉缓存。
+   * 抖评的费用是按天补录的（今天可能补昨天的记录），所以需要定时把最近两天刷新一次，
+   * 否则每日明细里昨天的推广费会停在首次计算时的快照（2026-10-20 实测差 4 元即此原因）。
+   */
+  async refreshRecentDailyStats(): Promise<{ dates: string[] }> {
+    reportCache.clear();
+    allTimeCache = undefined;
+    hourlyCountCache.clear();
+    periodOrderStatsCache.clear();
+    monthlySummaryCache.clear();
+
+    const today = this.getTodayBeijing();
+    const [year, monthNumber, day] = today.split('-').map(Number);
+    const yesterdayDate = new Date(
+      Date.UTC(year, monthNumber - 1, day) - 24 * 60 * 60 * 1000
+    );
+    const yesterday = `${yesterdayDate.getUTCFullYear()}-${String(
+      yesterdayDate.getUTCMonth() + 1
+    ).padStart(2, '0')}-${String(yesterdayDate.getUTCDate()).padStart(2, '0')}`;
+
+    for (const date of [yesterday, today]) {
+      await this.computeAndPersistDailyStats(date);
+    }
+    return { dates: [yesterday, today] };
+  }
+
   private async refreshReportData(month: string): Promise<void> {
     reportCache.delete(month);
     allTimeCache = undefined;

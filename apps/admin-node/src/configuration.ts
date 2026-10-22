@@ -51,6 +51,7 @@ export class MainConfiguration {
   private dailyStatsTimer?: NodeJS.Timeout;
   private relationshipBackfillTimer?: NodeJS.Timeout;
   private downgradeReconcileTimer?: NodeJS.Timeout;
+  private dailyStatsRefreshTimer?: NodeJS.Timeout;
   private relationshipBackfillLastRunDate = '';
 
   async onReady() {
@@ -64,6 +65,7 @@ export class MainConfiguration {
     this.backfillHistoricalDailyStats();
     this.startRelationshipLlmBackfillScheduler();
     this.startVoiceMembershipDowngradeReconcileScheduler();
+    this.startDailyStatsRefreshScheduler();
   }
 
   /**
@@ -106,6 +108,8 @@ export class MainConfiguration {
       clearInterval(this.relationshipBackfillTimer);
       if (this.downgradeReconcileTimer)
         clearInterval(this.downgradeReconcileTimer);
+      if (this.dailyStatsRefreshTimer)
+        clearInterval(this.dailyStatsRefreshTimer);
       this.relationshipBackfillTimer = undefined;
     }
   }
@@ -241,6 +245,41 @@ export class MainConfiguration {
    * 会让这笔退款在所有收入统计（净收入、净收入下钻、月度报表）里凭空消失。
    * 任务只查询不发起退款，虚拟支付通道与 failed 记录都不在自动范围内。
    */
+  /**
+   * 每日明细「昨天 + 今天」定时重算。
+   * 推广费来自抖评（按天补录，可能今天才补昨天的记录），不重算会一直停在首次快照；
+   * 每 30 分钟刷新一次，启动 3 分钟后首跑。
+   */
+  private startDailyStatsRefreshScheduler() {
+    const run = async () => {
+      try {
+        const service = await this.app
+          .getApplicationContext()
+          .getAsync(AdminOperationsService);
+        const result = await service.refreshRecentDailyStats();
+        // eslint-disable-next-line no-console
+        console.log(
+          '[daily-stats-refresh] refreshed=%s',
+          result.dates.join(',')
+        );
+      } catch (err) {
+        this.app
+          .getLogger()
+          .error(
+            '[daily-stats-refresh] scheduler failed: %s',
+            (err as Error).message
+          );
+      }
+    };
+
+    setTimeout(() => {
+      run().catch(() => {});
+    }, 3 * 60 * 1000);
+    this.dailyStatsRefreshTimer = setInterval(() => {
+      run().catch(() => {});
+    }, 30 * 60 * 1000);
+  }
+
   private startVoiceMembershipDowngradeReconcileScheduler() {
     const run = async () => {
       try {
