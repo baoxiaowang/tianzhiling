@@ -67,6 +67,40 @@ const NON_NAME_EXACT = new Set([
 ]);
 
 // P1-5: 时间/星期/常见地点词黑名单——避免"我改成明天吧"被记成用户叫"明天"
+// 动作短语黑名单："我就叫你起床"是在叫醒对方，不是把"起床"当昵称。
+const NON_NAME_ACTION_EXACT = new Set([
+  '起床',
+  '起来',
+  '回家',
+  '回来',
+  '吃饭',
+  '睡觉',
+  '上班',
+  '下班',
+  '出来',
+  '过来',
+  '进去',
+  '出去',
+  '醒来',
+  '睡着',
+  '早睡',
+  '晚睡',
+  '喝水',
+  '吃药',
+  '休息',
+  '坐下',
+  '等着',
+  '看看',
+  '说话',
+  '听说',
+  '走路',
+  '洗澡',
+  '洗脸',
+  '刷牙',
+  '开门',
+  '关门',
+]);
+
 const NON_NAME_TIME_PLACE_EXACT = new Set([
   // 时间
   '今天', '明天', '后天', '昨天', '前天', '大前天', '大后天',
@@ -474,6 +508,7 @@ function normalizeName(value?: string): string | undefined {
     !/^[\u4e00-\u9fa5A-Za-z0-9·]+$/.test(name) ||
     (/^[\u4e00-\u9fa5]+$/.test(name) && name.length > 8) ||
     NON_NAME_EXACT.has(name) ||
+    NON_NAME_ACTION_EXACT.has(name) ||
     NON_NAME_TIME_PLACE_EXACT.has(name) ||
     /^(?:我|你|他|她|它|的|了|要|想|听|看|来|去|叫|上|下)/.test(name) ||
     /(?:我|你|他|她|它|的|了|要|吗)$/.test(name) ||

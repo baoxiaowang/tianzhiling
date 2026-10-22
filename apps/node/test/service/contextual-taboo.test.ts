@@ -54,3 +54,11 @@ describe('contextual taboo false positives', () => {
     });
   });
 });
+
+describe('contextual taboo cross-space narrative', () => {
+  it('does not treat a later 说 in the same space-joined sentence as the action', () => {
+    const message =
+      '你以后记得早睡 以后在要不用等我了  以前让你早睡你说要陪我聊天 怕我无聊 其实我也怕你孤单 晚上有点小事情你也会给我分享 起来上厕所你也会给我发上几句';
+    expect(detectContextualTaboo(message)).toBeUndefined();
+  });
+});
