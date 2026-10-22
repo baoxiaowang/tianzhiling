@@ -463,7 +463,7 @@ describe('AdminOperationsService', () => {
     } as never;
     const recompute = jest
       .spyOn(service, 'computeAndPersistDailyStats')
-      .mockResolvedValue({ date: '2026-09-19' } as never);
+      .mockImplementation(async (date: string) => stats.get(date) as never);
 
     const result = await service.getDailyDetail('2026-09');
     expect(result.month).toBe('2026-09');
@@ -476,10 +476,12 @@ describe('AdminOperationsService', () => {
     // 累计收入用实时同期群口径覆盖快照里的旧值（快照 seeded 为 19）
     expect(result.daily[18].cohortRevenue).toBe(99);
     expect(result.daily[0].cohortRevenue).toBe(0);
-    // 普通读取不该触发任何重算
-    expect(recompute).not.toHaveBeenCalled();
+    // 今天始终重算（否则当天的退款/订单会停在首次快照，2026-10-22 漏一笔 169 退款即此问题）
+    expect(recompute).toHaveBeenCalledTimes(1);
+    expect(recompute).toHaveBeenCalledWith('2026-09-19');
 
-    // 手动刷新：只重算今天和昨天
+    // 手动刷新：重算昨天，今天由读取路径重算 → 合计昨天+今天各一次
+    recompute.mockClear();
     await service.getDailyDetail('2026-09', { refresh: true });
     expect(recompute).toHaveBeenCalledTimes(2);
     expect(recompute).toHaveBeenCalledWith('2026-09-18');
@@ -749,6 +751,12 @@ describe('AdminOperationsService', () => {
       aggregate: jest.fn(() => aggregateResult(mockDailyRows)),
       updateOne: jest.fn().mockResolvedValue({}),
     } as never;
+    // 读取路径会强制重算「今天」（8-25）：用汇总行模拟，避免依赖底层聚合
+    jest
+      .spyOn(service, 'computeAndPersistDailyStats')
+      .mockImplementation(async (date: string) =>
+        (mockDailyRows.find(row => row.date === date) ?? { date }) as never
+      );
 
     const result = await service.getOrderAnalytics('2026-08');
 
@@ -861,6 +869,9 @@ describe('AdminOperationsService', () => {
       });
     }
     service.statsModel = statsModel as never;
+    jest
+      .spyOn(service, 'computeAndPersistDailyStats')
+      .mockImplementation(async (date: string) => stats.get(date) as never);
     service.orderModel = {
       aggregate: jest.fn(() =>
         aggregateResult([{ _id: '2026-09-25', revenue: 9900 }])

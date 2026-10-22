@@ -822,8 +822,10 @@ export class AdminOperationsService {
       daily,
       hourly,
     };
+    // 当月数字（尤其今日）随时在变，缓存只留 60 秒；历史月份仍缓存 30 分钟。
+    const isCurrentMonth = this.getTodayBeijing().startsWith(normalizedMonth);
     reportCache.set(normalizedMonth, {
-      expiresAt: now.getTime() + 30 * 60 * 1000,
+      expiresAt: now.getTime() + (isCurrentMonth ? 60 * 1000 : 30 * 60 * 1000),
       value: result,
     });
     return result;
@@ -960,11 +962,11 @@ export class AdminOperationsService {
         2,
         '0'
       )}`;
-      for (const date of [yesterday, today]) {
-        if (date.startsWith(normalizedMonth)) {
-          await this.computeAndPersistDailyStats(date);
-        }
+      // 今天由读取路径的 ensureDaysFromStats 统一重算，这里只补昨天。
+      if (yesterday.startsWith(normalizedMonth)) {
+        await this.computeAndPersistDailyStats(yesterday);
       }
+      void today;
     }
     const [daily, notes] = await Promise.all([
       this.getMonthDailyFromStats(normalizedMonth),
@@ -1047,11 +1049,12 @@ export class AdminOperationsService {
       yesterdayDate.getUTCMonth() + 1
     ).padStart(2, '0')}-${String(yesterdayDate.getUTCDate()).padStart(2, '0')}`;
 
-    for (const date of [yesterday, today]) {
-      if (date.startsWith(month)) {
-        await this.computeAndPersistDailyStats(date);
-      }
+    // 今天由读取路径的 ensureDaysFromStats 统一重算（每天都强制重算），
+    // 这里只补昨天，避免同一次请求把今天算两遍。
+    if (yesterday.startsWith(month)) {
+      await this.computeAndPersistDailyStats(yesterday);
     }
+    void today;
   }
 
   /**
@@ -1271,10 +1274,16 @@ export class AdminOperationsService {
       sorted[sorted.length - 1]
     );
     const missing = dates.filter(d => !cached.has(d));
-    if (missing.length > 0) {
-      const toBackfill = missing.slice(
-        -AdminOperationsService.MAX_LIVE_BACKFILL_DAYS
-      );
+    // 今天必须重算：汇总表只在首次写入时计算，当天的订单/退款还在变，
+    // 不重算会让「今日」永远停在第一次计算时的数字（2026-10-22 净收入漏掉当天
+    // 一笔 169 元退款就是这个原因）。历史日期仍只补缺失。
+    const today = this.getTodayBeijing();
+    const targets = new Set<string>(
+      missing.slice(-AdminOperationsService.MAX_LIVE_BACKFILL_DAYS)
+    );
+    if (dates.includes(today)) targets.add(today);
+    if (targets.size > 0) {
+      const toBackfill = [...targets];
       const CONCURRENCY = 3;
       for (let i = 0; i < toBackfill.length; i += CONCURRENCY) {
         const batch = toBackfill.slice(i, i + CONCURRENCY);
