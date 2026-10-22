@@ -9,6 +9,10 @@
         <a-typography-text v-if="lastUpdatedAt" type="secondary">
           最后更新 {{ lastUpdatedAt }}
         </a-typography-text>
+        <a-typography-text v-if="isStale" type="warning">
+          数据可能不是最新
+          <a-link @click="fetch()">立即刷新</a-link>
+        </a-typography-text>
         <a-month-picker
           v-model="month"
           value-format="YYYY-MM"
@@ -251,7 +255,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { onMounted, onUnmounted, reactive, ref } from 'vue';
+  import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
@@ -278,6 +282,14 @@
   const daily = ref<AdminOperationsDailyPointDTO[]>([]);
   const notes = ref<Record<string, string>>({});
   const lastUpdatedAt = ref('');
+  const lastUpdatedMs = ref(0);
+  const nowMs = ref(Date.now());
+  /** 超过 2 个刷新周期没拿到新数据就提示，避免运营以为「数据没更新」 */
+  const isStale = computed(
+    () =>
+      lastUpdatedMs.value > 0 &&
+      nowMs.value - lastUpdatedMs.value > AUTO_REFRESH_MS * 2
+  );
   const promotionDrafts = reactive<Record<string, number | undefined>>({});
   const savingDates = reactive<Record<string, boolean>>({});
   const promotionTimers: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -285,6 +297,7 @@
   const savingNoteDates = reactive<Record<string, boolean>>({});
   const noteTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   let autoRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  let staleTimer: ReturnType<typeof setInterval> | undefined;
 
   const formatMoney = (value?: number) =>
     `¥${Number(value || 0).toLocaleString('zh-CN', {
@@ -622,6 +635,10 @@
       clearInterval(autoRefreshTimer);
       autoRefreshTimer = undefined;
     }
+    if (staleTimer) {
+      clearInterval(staleTimer);
+      staleTimer = undefined;
+    }
   };
 
   const fetch = async (options?: { refresh?: boolean; silent?: boolean }) => {
@@ -634,6 +651,7 @@
       daily.value = data?.daily || [];
       notes.value = data?.notes || {};
       lastUpdatedAt.value = dayjs().format('HH:mm:ss');
+      lastUpdatedMs.value = Date.now();
       clearCohortDetails();
       clearNetDetails();
       if (!options?.silent) {
@@ -652,7 +670,10 @@
 
   const handleVisibilityChange = () => {
     // 页面回到前台时补一次，避免长时间挂在后台后显示过期数据
-    if (!document.hidden) fetch({ silent: true });
+    if (!document.hidden) {
+      nowMs.value = Date.now();
+      if (isStale.value) fetch({ silent: true });
+    }
   };
 
   onMounted(() => {
@@ -662,6 +683,10 @@
       if (document.hidden) return;
       fetch({ silent: true });
     }, AUTO_REFRESH_MS);
+    nowMs.value = Date.now();
+    staleTimer = setInterval(() => {
+      nowMs.value = Date.now();
+    }, 10 * 1000);
     document.addEventListener('visibilitychange', handleVisibilityChange);
   });
 
