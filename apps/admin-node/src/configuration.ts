@@ -246,7 +246,7 @@ export class MainConfiguration {
    * 任务只查询不发起退款，虚拟支付通道与 failed 记录都不在自动范围内。
    */
   /**
-   * 每日明细「昨天 + 今天」定时重算。
+   * 每日明细「最近 3 天」定时重算。
    * 推广费来自抖评（按天补录，可能今天才补昨天的记录），不重算会一直停在首次快照；
    * 每 30 分钟刷新一次，启动 3 分钟后首跑。
    */
@@ -256,7 +256,7 @@ export class MainConfiguration {
         const service = await this.app
           .getApplicationContext()
           .getAsync(AdminOperationsService);
-        const result = await service.refreshRecentDailyStats();
+        const result = await service.refreshRecentDailyStats(3);
         // eslint-disable-next-line no-console
         console.log(
           '[daily-stats-refresh] refreshed=%s',

@@ -1045,7 +1045,7 @@ export class AdminOperationsService {
    * 抖评的费用是按天补录的（今天可能补昨天的记录），所以需要定时把最近两天刷新一次，
    * 否则每日明细里昨天的推广费会停在首次计算时的快照（2026-10-20 实测差 4 元即此原因）。
    */
-  async refreshRecentDailyStats(): Promise<{ dates: string[] }> {
+  async refreshRecentDailyStats(days = 3): Promise<{ dates: string[] }> {
     reportCache.clear();
     allTimeCache = undefined;
     hourlyCountCache.clear();
@@ -1053,18 +1053,24 @@ export class AdminOperationsService {
     monthlySummaryCache.clear();
 
     const today = this.getTodayBeijing();
-    const [year, monthNumber, day] = today.split('-').map(Number);
-    const yesterdayDate = new Date(
-      Date.UTC(year, monthNumber - 1, day) - 24 * 60 * 60 * 1000
-    );
-    const yesterday = `${yesterdayDate.getUTCFullYear()}-${String(
-      yesterdayDate.getUTCMonth() + 1
-    ).padStart(2, '0')}-${String(yesterdayDate.getUTCDate()).padStart(2, '0')}`;
+    const dates: string[] = [];
+    for (let offset = 0; offset < Math.max(1, days); offset += 1) {
+      const [year, monthNumber, day] = today.split('-').map(Number);
+      const target = new Date(
+        Date.UTC(year, monthNumber - 1, day) - offset * 24 * 60 * 60 * 1000
+      );
+      dates.push(
+        `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(
+          2,
+          '0'
+        )}-${String(target.getUTCDate()).padStart(2, '0')}`
+      );
+    }
 
-    for (const date of [yesterday, today]) {
+    for (const date of dates) {
       await this.computeAndPersistDailyStats(date);
     }
-    return { dates: [yesterday, today] };
+    return { dates };
   }
 
   private async refreshReportData(month: string): Promise<void> {
