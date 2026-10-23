@@ -29,6 +29,7 @@ const PAST_MONTH_TTL_MS = 30 * 60 * 1000;
 export const CALCULATION_VERSION = 9;
 
 type RawMonthlyOrder = {
+  includeInFinance?: boolean;
   _id: { toString(): string };
   orderNo?: string;
   createdAt?: Date;
@@ -144,7 +145,9 @@ export class AdminOrderStatisticsService {
     // 从付款月剔除，且退款完成月又扣一次，导致重复扣减/漏计。
     const netPaidAmount = rows
       .filter(
-        row => row.source !== 'admin' && row.paymentProvider !== 'admin_manual'
+        row =>
+          row.includeInFinance === true ||
+          (row.source !== 'admin' && row.paymentProvider !== 'admin_manual')
       )
       .reduce(
         (sum, row) => sum + (Number(row.paidAmount ?? row.payableAmount) || 0),
@@ -304,6 +307,7 @@ export class AdminOrderStatisticsService {
             status: 1,
             source: 1,
             paymentProvider: 1,
+            includeInFinance: 1,
             snapshot: 1,
             relationship: 1,
             user: { $arrayElemAt: ['$userRows', 0] },
@@ -329,8 +333,13 @@ export class AdminOrderStatisticsService {
             status: OrderRefundStatus.completed,
             completedAt: { $gte: start, $lt: end },
             targetCode: { $ne: 'voice_one' },
-            source: { $ne: 'admin' },
-            paymentProvider: { $ne: 'admin_manual' },
+            $or: [
+              {
+                source: { $ne: 'admin' },
+                paymentProvider: { $ne: 'admin_manual' },
+              },
+              { includeInFinance: true },
+            ],
           },
         },
         { $sort: { completedAt: 1, _id: 1 } },
@@ -387,8 +396,17 @@ export class AdminOrderStatisticsService {
         {
           $match: {
             targetCode: { $ne: 'voice_one' },
-            source: { $ne: 'admin' },
-            paymentProvider: { $ne: 'admin_manual' },
+            $and: [
+              {
+                $or: [
+                  {
+                    source: { $ne: 'admin' },
+                    paymentProvider: { $ne: 'admin_manual' },
+                  },
+                  { includeInFinance: true },
+                ],
+              },
+            ],
             $or: [
               { refundedAt: { $gte: start, $lt: end } },
               {

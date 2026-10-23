@@ -698,6 +698,7 @@ export class AdminOrderService {
       status: OrderStatus.granting,
       source: OrderSource.admin,
       paymentProvider: ADMIN_MANUAL_PAYMENT_PROVIDER,
+      includeInFinance: payload.includeInFinance === true,
       paymentNotifyAt: now,
       paidAt: now,
       snapshot: {
@@ -724,6 +725,42 @@ export class AdminOrderService {
     const userMap = await this.getOrderUserMap([savedOrder]);
 
     return this.buildOrderRecord(savedOrder, userMap);
+  }
+
+  /**
+   * 手工调整后台补单是否计入财务统计。
+   * 只有管理端补单（source=admin / paymentProvider=admin_manual）可切换；
+   * 同步更新该订单的退款单，保证退款同样计入/不计入，避免收入与退款口径不一致。
+   */
+  async updateFinanceInclusion(
+    orderId: string,
+    includeInFinance: boolean
+  ): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+    if (
+      order.source !== OrderSource.admin &&
+      order.paymentProvider !== ADMIN_MANUAL_PAYMENT_PROVIDER
+    ) {
+      throw new AppError(
+        'FINANCE_INCLUSION_NOT_ALLOWED',
+        '只有后台补单可以调整是否计入财务统计',
+        400
+      );
+    }
+
+    order.includeInFinance = includeInFinance === true;
+    order.updatedAt = new Date();
+    await this.orderModel.save(order);
+    await this.orderRefundModel.updateMany(
+      { originalOrderId: order.id } as never,
+      { $set: { includeInFinance: order.includeInFinance } } as never
+    );
+
+    const userMap = await this.getOrderUserMap([order]);
+    return this.buildOrderRecord(order, userMap);
   }
 
   private async createAdminVoicePackageOrder(
@@ -768,6 +805,7 @@ export class AdminOrderService {
       status: OrderStatus.granting,
       source: OrderSource.admin,
       paymentProvider: ADMIN_MANUAL_PAYMENT_PROVIDER,
+      includeInFinance: payload.includeInFinance === true,
       paymentNotifyAt: now,
       paidAt: now,
       snapshot: {
@@ -3887,6 +3925,7 @@ export class AdminOrderService {
           currency: order.currency || 'CNY',
           source: order.source,
           paymentProvider: order.paymentProvider,
+          includeInFinance: order.includeInFinance === true,
           requestedAt: normalizedRequestedAt,
           createdAt: normalizedRequestedAt,
         },
@@ -4912,6 +4951,7 @@ export class AdminOrderService {
     return {
       kind: 'order',
       id: this.stringifyObjectId(order.id),
+      includeInFinance: order.includeInFinance === true,
       orderNo: order.orderNo,
       userId,
       user: userMap.get(userId),

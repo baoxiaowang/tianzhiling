@@ -194,6 +194,19 @@
                 </template>
                 <template v-else>
                   <div class="order-page__title">{{ record.title || '-' }}</div>
+                  <div
+                    v-if="isAdminManualOrder(record)"
+                    class="order-page__muted"
+                  >
+                    <a-tag
+                      size="small"
+                      :color="record.includeInFinance ? 'green' : 'orangered'"
+                    >
+                      {{
+                        record.includeInFinance ? '补单·已入账' : '补单·未入账'
+                      }}
+                    </a-tag>
+                  </div>
                   <a-tooltip :content="record.orderNo">
                     <a-typography-text
                       class="order-page__mono order-page__order-no"
@@ -383,6 +396,15 @@
                     @click="openDetail(record)"
                   >
                     详情
+                  </a-button>
+                  <a-button
+                    v-if="isAdminManualOrder(record)"
+                    type="text"
+                    size="small"
+                    :loading="financeUpdatingId === record.id"
+                    @click="toggleFinanceInclusion(record)"
+                  >
+                    {{ record.includeInFinance ? '取消计入' : '计入财务' }}
                   </a-button>
                   <template v-if="refundMode && canRejectRefund(record)">
                     <a-popconfirm
@@ -950,6 +972,15 @@
           show-icon
           content="会将该智能体现有未完成声音训练任务标记为失败，再创建新的训练任务。"
         />
+        <a-form-item field="includeInFinance">
+          <a-checkbox v-model="createForm.includeInFinance">
+            计入财务统计（收入 / 净收入 / 推广报表）
+          </a-checkbox>
+        </a-form-item>
+        <a-alert type="normal" show-icon>
+          默认**不计入**：后台补单只发放权益，不改变收入与净收入；勾选后按普通订单计入，
+          之后也可以在订单列表里随时调整。
+        </a-alert>
       </a-form>
       <div class="order-page__modal-footer">
         <a-space>
@@ -1005,6 +1036,7 @@
     syncOrderPaymentStatus as syncOrderPaymentStatusApi,
     retryVoiceMembershipDowngradeRefund as retryVoiceMembershipDowngradeRefundApi,
     syncVoiceMembershipDowngrade as syncVoiceMembershipDowngradeApi,
+    updateOrderFinanceInclusion,
     withdrawVoiceMembershipDowngrade as withdrawVoiceMembershipDowngradeApi,
     type VoiceMembershipDowngradePreview,
   } from '@/api/order';
@@ -1086,6 +1118,7 @@
     registeredMonth: undefined,
     includeClosed: true,
   });
+  const financeUpdatingId = ref('');
   const createForm = reactive<{
     orderType: OrderTypeDTO;
     userId: string;
@@ -1093,6 +1126,7 @@
     voicePackageId: string;
     agentId: string;
     replaceActiveVoiceTrainingTask: boolean;
+    includeInFinance: boolean;
   }>({
     orderType: 'vip_plan',
     userId: '',
@@ -1100,6 +1134,7 @@
     voicePackageId: '',
     agentId: '',
     replaceActiveVoiceTrainingTask: false,
+    includeInFinance: false,
   });
   const downgradeForm = reactive({
     targetVipPlanId: '',
@@ -1834,6 +1869,30 @@
     fetchAgentOptions(createForm.userId, value);
   };
 
+  /** 后台补单：切换是否计入财务统计（切换后后端会重算当天汇总） */
+  const toggleFinanceInclusion = async (record: OrderRecord) => {
+    if (financeUpdatingId.value) return;
+    try {
+      financeUpdatingId.value = record.id;
+      await updateOrderFinanceInclusion(
+        record.id,
+        record.includeInFinance !== true
+      );
+      Message.success(
+        record.includeInFinance ? '已取消计入财务统计' : '已计入财务统计'
+      );
+      await fetchData();
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '调整失败，请稍后重试'
+      );
+    } finally {
+      financeUpdatingId.value = '';
+    }
+  };
+
   const handleCreateOrder = async () => {
     if (createSubmitting.value) {
       return;
@@ -1876,6 +1935,7 @@
         replaceActiveVoiceTrainingTask: isCreateVoicePackageOrder.value
           ? createForm.replaceActiveVoiceTrainingTask
           : undefined,
+        includeInFinance: createForm.includeInFinance || undefined,
       });
       createVisible.value = false;
       Message.success(`${createSubmitText.value}已创建`);

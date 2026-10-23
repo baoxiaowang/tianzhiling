@@ -86,6 +86,13 @@ export class OrderEntity extends BaseEntity {
   @Column()
   paymentProvider?: string;
 
+  /**
+   * 是否计入财务统计（收入 / 净收入 / 推广报表）。
+   * 后台手动创建的补单默认不计（避免把人工补单当真实流水），运营勾选后按正常订单计入。
+   */
+  @Column()
+  includeInFinance?: boolean;
+
   @Column()
   paymentPrepayId?: string;
 

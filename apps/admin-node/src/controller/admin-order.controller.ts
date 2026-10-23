@@ -1,13 +1,24 @@
-import { Body, Controller, Get, Inject, Param, Post, Query } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import { AdminAuthenticatedPayload } from '@tzl/shared';
 import {
   CreateAdminOrderDTO,
   ListAdminOrdersQueryDTO,
   RejectRefundDTO,
+  UpdateAdminOrderFinanceInclusionDTO,
   VoiceMembershipDowngradeDTO,
 } from '../dto/admin-order.dto';
 import { AdminOrderService } from '../service/admin-order.service';
+import { AdminOperationsService } from '../service/admin-operations.service';
 
 @Controller('/orders')
 export class AdminOrderController {
@@ -16,6 +27,9 @@ export class AdminOrderController {
 
   @Inject()
   adminOrderService: AdminOrderService;
+
+  @Inject()
+  adminOperationsService: AdminOperationsService;
 
   @Get('/')
   async list(@Query() query: ListAdminOrdersQueryDTO) {
@@ -30,6 +44,34 @@ export class AdminOrderController {
   @Post('/:id/refund')
   async refund(@Param('id') id: string) {
     return this.adminOrderService.refundOrder(id);
+  }
+
+  /**
+   * 调整后台补单是否计入财务统计，并立即重算该订单支付日的每日汇总，
+   * 让「每日明细」当场反映，而不是等到下一次定时重算。
+   */
+  @Put('/:id/finance-inclusion')
+  async updateFinanceInclusion(
+    @Param('id') id: string,
+    @Body() body: UpdateAdminOrderFinanceInclusionDTO
+  ) {
+    const record = await this.adminOrderService.updateFinanceInclusion(
+      id,
+      body?.includeInFinance === true
+    );
+    const paidAt = record.paidAt ? new Date(record.paidAt) : null;
+    if (paidAt && !Number.isNaN(paidAt.getTime())) {
+      const beijing = new Date(paidAt.getTime() + 8 * 60 * 60 * 1000);
+      const date = `${beijing.getUTCFullYear()}-${String(
+        beijing.getUTCMonth() + 1
+      ).padStart(2, '0')}-${String(beijing.getUTCDate()).padStart(2, '0')}`;
+      try {
+        await this.adminOperationsService.computeAndPersistDailyStats(date);
+      } catch (error) {
+        // 汇总重算失败不影响标记本身，读取路径/定时任务会再算
+      }
+    }
+    return record;
   }
 
   @Post('/:id/reject-refund')

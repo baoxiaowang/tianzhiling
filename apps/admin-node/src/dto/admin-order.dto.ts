@@ -38,6 +38,15 @@ export class CreateAdminOrderDTO {
 
   @Rule(RuleType.boolean().optional())
   replaceActiveVoiceTrainingTask?: boolean;
+
+  /** 后台补单是否计入财务统计（默认 false：只发权益，不计收入） */
+  @Rule(RuleType.boolean().optional())
+  includeInFinance?: boolean;
+}
+
+export class UpdateAdminOrderFinanceInclusionDTO {
+  @Rule(RuleType.boolean().required())
+  includeInFinance: boolean;
 }
 
 export class ListAdminOrdersQueryDTO {

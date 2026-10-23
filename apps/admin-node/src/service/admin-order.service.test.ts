@@ -1328,6 +1328,20 @@ describe('AdminOrderService', () => {
         totalQuota: 1,
       })
     );
+    // 默认不计入财务统计；勾选后订单文档带上标记，财务聚合据此计入
+    expect(orders[0]).toEqual(
+      expect.objectContaining({ includeInFinance: false })
+    );
+    orders.length = 0;
+    await service.createOrder({
+      orderType: OrderType.vipPlan,
+      userId: USER_ID.toHexString(),
+      vipPlanId: VIP_PLAN_ID.toHexString(),
+      includeInFinance: true,
+    });
+    expect(orders[0]).toEqual(
+      expect.objectContaining({ includeInFinance: true })
+    );
     expect(result).toEqual(
       expect.objectContaining({
         id: ORDER_ID.toHexString(),

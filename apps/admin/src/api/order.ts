@@ -30,6 +30,18 @@ export function createAdminOrder(data: CreateAdminOrderData) {
   } as TzlAxiosRequestConfig);
 }
 
+/** 后台补单：手工调整是否计入财务统计 */
+export function updateOrderFinanceInclusion(
+  id: string,
+  includeInFinance: boolean
+) {
+  return axios.put<OrderRecord>(
+    `/admin_api/orders/${id}/finance-inclusion`,
+    { includeInFinance },
+    { hideErrorMessage: true } as TzlAxiosRequestConfig
+  );
+}
+
 export function refundOrder(id: string) {
   return axios.post<OrderRecord>(`/admin_api/orders/${id}/refund`, undefined, {
     hideErrorMessage: true,

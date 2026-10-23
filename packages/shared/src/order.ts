@@ -158,6 +158,8 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   refundTypeLabel?: string;
   /** 退款失败原因（仅退款失败时有值） */
   refundFailureReason?: string;
+  /** 后台补单是否计入财务统计（默认 false） */
+  includeInFinance?: boolean;
   /** 判定退款失败的时间（ISO） */
   refundFailedAt?: string;
   /**
@@ -240,6 +242,13 @@ export interface CreateAdminOrderDTO {
   voicePackageId?: string;
   agentId?: string;
   replaceActiveVoiceTrainingTask?: boolean;
+  /** 后台补单是否计入财务统计（收入/净收入/推广报表），默认不计 */
+  includeInFinance?: boolean;
+}
+
+/** 手工调整某笔后台订单是否计入财务统计 */
+export interface UpdateAdminOrderFinanceInclusionDTO {
+  includeInFinance: boolean;
 }
 
 export interface CreateVipPlanOrderDTO {

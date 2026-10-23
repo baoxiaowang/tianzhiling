@@ -744,8 +744,7 @@ export class AdminOperationsService {
     };
     const realOrderMatch = {
       targetCode: { $ne: 'voice_one' },
-      source: { $ne: 'admin' },
-      paymentProvider: { $ne: 'admin_manual' },
+      ...this.buildFinanceOrderCondition(),
     };
 
     // daily 数据优先从预计算汇总表读取，缺失日期实时补算并写入。
@@ -874,8 +873,7 @@ export class AdminOperationsService {
     };
     const realOrderMatch = {
       targetCode: { $ne: 'voice_one' },
-      source: { $ne: 'admin' },
-      paymentProvider: { $ne: 'admin_manual' },
+      ...this.buildFinanceOrderCondition(),
     };
 
     const [userRows, messageRows, paidRows, refundRows, legacyRefundRows] =
@@ -1141,8 +1139,7 @@ export class AdminOperationsService {
     };
     const realOrderMatch = {
       targetCode: { $ne: 'voice_one' },
-      source: { $ne: 'admin' },
-      paymentProvider: { $ne: 'admin_manual' },
+      ...this.buildFinanceOrderCondition(),
     };
 
     const [
@@ -2694,11 +2691,28 @@ export class AdminOperationsService {
     return labels[value ?? ''] ?? value ?? '未知';
   }
 
+  /**
+   * 计入财务统计的订单条件。
+   *
+   * 后台补单（source=admin / paymentProvider=admin_manual）默认不计入收入，
+   * 但运营在创建订单时/之后勾选「计入财务统计」的，按正常订单统计。
+   */
+  private buildFinanceOrderCondition(): Record<string, unknown> {
+    return {
+      $or: [
+        {
+          source: { $ne: 'admin' },
+          paymentProvider: { $ne: 'admin_manual' },
+        },
+        { includeInFinance: true },
+      ],
+    };
+  }
+
   private buildRealOrderMatch(): Record<string, unknown> {
     return {
       targetCode: { $ne: 'voice_one' },
-      source: { $ne: 'admin' },
-      paymentProvider: { $ne: 'admin_manual' },
+      ...this.buildFinanceOrderCondition(),
     };
   }
 
