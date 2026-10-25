@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{SITE_URL}}/about/#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "公司", "item": "{{SITE_URL}}/about/" }
+            ]
+          },
+          {
+            "@type": "Organization",
+            "@id": "{{SITE_URL}}/#organization",
+            "name": "{{BRAND_NAME}}",
+            "legalName": "{{BRAND_COMPANY}}",
+            "url": "{{SITE_URL}}/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "{{SITE_URL}}/assets/icon-512.png",
+              "width": 512,
+              "height": 512
+            },
+            "image": "{{OG_IMAGE}}",
+            "email": "{{BRAND_EMAIL}}",
+            "telephone": "{{BRAND_PHONE}}",
+            "slogan": "{{BRAND_TAGLINE}}",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "武汉市",
+              "addressRegion": "湖北省",
+              "addressCountry": "CN"
+            },
+            "areaServed": { "@type": "Country", "name": "中国" },
+            "knowsAbout": ["AI 纪念", "情感陪伴", "声音复刻", "记忆系统", "数据治理"],
+            "contactPoint": {
+              "@type": "ContactPoint",
+              "telephone": "{{BRAND_PHONE}}",
+              "email": "{{BRAND_EMAIL}}",
+              "contactType": "customer service",
+              "areaServed": "CN",
+              "availableLanguage": "zh-CN"
+            },
+            "description": "{{BRAND_NAME}}由{{BRAND_COMPANY}}运营，专注于生成式 AI 在纪念与情感陪伴场景的产品研发与服务运营。"
+          },
+          {
+            "@type": "AboutPage",
+            "@id": "{{SITE_URL}}/about/#webpage",
+            "url": "{{SITE_URL}}/about/",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "about": { "@id": "{{SITE_URL}}/#organization" },
+            "mainEntity": { "@id": "{{SITE_URL}}/#organization" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": { "@id": "{{SITE_URL}}/about/#breadcrumb" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}}">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      {{> page-hero.html}}
+
+      <section class="corp-section" aria-labelledby="intro-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>01</span><p>INTRO</p></div>
+          <div class="corp-section-body">
+            <h2 id="intro-title" class="display">我们是谁</h2>
+            <div class="corp-prose">
+              <p>{{BRAND_NAME}}是 {{BRAND_POSITIONING}}。我们由{{BRAND_COMPANY}}运营，专注于生成式 AI 在纪念与情感陪伴场景的产品研发、服务运营与安全治理。</p>
+              <p>我们面对的不是一个普通的效率市场，而是一段正在发生的失去。产品必须同时处理技术、情感与伦理：对话要像人，但不能冒充人；记忆要长期，但不能不可删除；声音要熟悉，但不能越过授权边界。</p>
+              <p>因此，我们把“克制”写进产品结构：少收集、说清楚、可删除、可验证。技术负责保存与回应，人保留决定与告别的权利。</p>
+              <p>{{BRAND_ORIGIN}}</p>
+            </div>
+            <dl class="fact-grid">
+              <div><dt>公司主体</dt><dd>{{BRAND_COMPANY}}</dd></div>
+              <div><dt>业务方向</dt><dd>AI 纪念与情感陪伴</dd></div>
+              <div><dt>产品形态</dt><dd>微信小程序</dd></div>
+              <div><dt>服务人群</dt><dd>成年人；未成年人需监护人同意</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <section class="corp-section corp-section--ink" aria-labelledby="values-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>02</span><p>MISSION</p></div>
+          <div class="corp-section-body">
+            <h2 id="values-title" class="display">使命、愿景与价值观</h2>
+            <p class="corp-lead">技术不应该是冷的。它也不应该假装自己是人。</p>
+          </div>
+        </div>
+        <div class="corp-wrap value-grid">
+          <article class="value-card">
+            <span>使命</span>
+            <h3>让思念有处安放</h3>
+            <p>用克制、透明、尊重隐私的技术，为丧亲者提供一个可以说说话、整理记忆、慢慢告别的空间。</p>
+          </article>
+          <article class="value-card">
+            <span>愿景</span>
+            <h3>成为值得信赖的 AI 纪念基础设施</h3>
+            <p>让“纪念”不再依赖某一次技术演示或某一条爆款视频，而是一套长期可维护、可审计、可被信任的服务。</p>
+          </article>
+          <article class="value-card">
+            <span>价值观</span>
+            <h3>不冒充真人，不消费悲伤，不滥用数据</h3>
+            <p>这三句话不是口号，而是产品评审、内容审核、模型接入和数据治理时的否决项。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="corp-section" aria-labelledby="principles-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>03</span><p>PRINCIPLES</p></div>
+          <div class="corp-section-body">
+            <h2 id="principles-title" class="display">我们如何工作</h2>
+            <p class="corp-lead">每一项功能上线前，都要先通过这四个问题。</p>
+          </div>
+        </div>
+        <div class="corp-wrap principle-grid">
+          <article class="principle">
+            <span>01</span>
+            <h3>克制</h3>
+            <p>不做制造幻觉的功能，不用“复活”“真人再现”之类的话术，不用恐惧或倒计时推动付费。</p>
+          </article>
+          <article class="principle">
+            <span>02</span>
+            <h3>透明</h3>
+            <p>明确标识 AI 生成内容，明确说明第三方模型与受托处理方的角色，明确哪些事情我们不做。</p>
+          </article>
+          <article class="principle">
+            <span>03</span>
+            <h3>可删除</h3>
+            <p>对话、记忆、照片与声音素材都可以删除；账号可以注销，删除路径不藏在客服后面。</p>
+          </article>
+          <article class="principle">
+            <span>04</span>
+            <h3>可验证</h3>
+            <p>安全、隐私与内容边界写进协议、写进产品，也接受用户、合作伙伴与监管的检验。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="contact" class="corp-section corp-contact" aria-labelledby="contact-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>04</span><p>CONTACT</p></div>
+          <div class="corp-section-body">
+            <h2 id="contact-title" class="display">联系我们</h2>
+            <p class="corp-lead">产品使用、商务合作、媒体采访与数据权利问题，都可以通过以下方式联系我们。</p>
+            <div class="contact-grid contact-grid--company">
+              <div class="contact-cell"><span>公司主体</span><p>{{BRAND_COMPANY}}</p></div>
+              <div class="contact-cell"><span>客服电话</span><a href="{{BRAND_PHONE_HREF}}">{{BRAND_PHONE}}</a></div>
+              <div class="contact-cell"><span>客服邮箱</span><a href="mailto:{{BRAND_EMAIL}}">{{BRAND_EMAIL}}</a></div>
+              <div class="contact-cell"><span>官网</span><a href="{{SITE_URL}}/">{{BRAND_DOMAIN}}</a></div>
+              <div class="contact-cell"><span>备案信息</span><p>{{ICP_LINK}}</p></div>
+            </div>
+            <p class="content-note">完整协议可在产品内「我的」页面查看，或通过客服邮箱索取。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

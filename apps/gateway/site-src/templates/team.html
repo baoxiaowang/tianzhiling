@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{SITE_URL}}/team/#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "团队", "item": "{{SITE_URL}}/team/" }
+            ]
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{SITE_URL}}/team/#webpage",
+            "url": "{{SITE_URL}}/team/",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "about": { "@id": "{{SITE_URL}}/#organization" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": { "@id": "{{SITE_URL}}/team/#breadcrumb" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}}">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      {{> page-hero.html}}
+
+      <section class="corp-section" aria-labelledby="team-intro-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>01</span><p>BELIEF</p></div>
+          <div class="corp-section-body">
+            <h2 id="team-intro-title" class="display">为什么是小团队</h2>
+            <div class="corp-prose corp-prose--two">
+              <p>纪念产品不适合被拆成很多互不相识的模块。称呼、记忆、声音、内容安全与数据删除之间，存在大量需要现场判断的边界。团队越大、链路越长，这些判断越容易被稀释。</p>
+              <p>我们保持小团队、短链路：产品判断、技术实现与合规审查在同一条线上完成。每一次功能评审，都要同时回答“它能做什么”“它不能做什么”“用户如何退出”。</p>
+              <p>这不是一种更快的组织方式，而是一种更慢、更可控的方式。对纪念产品来说，慢一点，往往比做错更重要。</p>
+            </div>
+            <blockquote class="inline-quote">“把复杂留给自己，把安静留给用户。”</blockquote>
+          </div>
+        </div>
+      </section>
+
+      <section class="corp-section corp-section--ink" aria-labelledby="team-grid-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>02</span><p>TEAM</p></div>
+          <div class="corp-section-body">
+            <h2 id="team-grid-title" class="display">团队构成</h2>
+            <p class="corp-lead">核心团队来自产品、AI 工程、语音、记忆系统与安全合规等方向。</p>
+          </div>
+        </div>
+        <div class="corp-wrap team-grid team-grid--page">
+          <article class="team-card">
+            <span>01</span>
+            <h3>产品与体验</h3>
+            <p>产品定义、用户研究、服务设计、内容边界与会员体验。</p>
+            <ul>
+              <li>用户旅程与信息架构</li>
+              <li>纪念场景与内容策略</li>
+              <li>可用性与可退出性</li>
+            </ul>
+          </article>
+          <article class="team-card">
+            <span>02</span>
+            <h3>AI 与语音工程</h3>
+            <p>对话系统、模型接入、语音合成、质量评估与成本控制。</p>
+            <ul>
+              <li>多模型路由与降级</li>
+              <li>语音合成与音色服务</li>
+              <li>回复质量与稳定性</li>
+            </ul>
+          </article>
+          <article class="team-card">
+            <span>03</span>
+            <h3>记忆系统</h3>
+            <p>结构化记忆、检索、事实边界、关系连续性与长期一致性。</p>
+            <ul>
+              <li>记忆抽取与检索</li>
+              <li>事实边界与不确定性</li>
+              <li>记忆管理与删除</li>
+            </ul>
+          </article>
+          <article class="team-card">
+            <span>04</span>
+            <h3>安全与合规</h3>
+            <p>隐私、授权、内容安全、数据生命周期、审计与应急响应。</p>
+            <ul>
+              <li>隐私与数据权利</li>
+              <li>内容安全与 AI 标识</li>
+              <li>第三方处理与审计</li>
+            </ul>
+          </article>
+        </div>
+        <div class="corp-wrap team-foot">
+          <p>核心成员姓名与履历将在正式版本补充。</p>
+        </div>
+      </section>
+
+      <section class="corp-section" aria-labelledby="collab-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>03</span><p>COLLABORATION</p></div>
+          <div class="corp-section-body">
+            <h2 id="collab-title" class="display">我们如何协作</h2>
+            <p class="corp-lead">用三条简单规则，减少纪念产品里最危险的“想当然”。</p>
+          </div>
+        </div>
+        <div class="corp-wrap principle-grid">
+          <article class="principle"><span>01</span><h3>先写边界，再写功能</h3><p>每个需求先回答：它不应该做什么，用户如何删除，失败时如何退出。</p></article>
+          <article class="principle"><span>02</span><h3>先看真实素材，再谈模型</h3><p>声音、照片与聊天记录的质量，决定体验的下限；模型只是其中一层。</p></article>
+          <article class="principle"><span>03</span><h3>先让用户能离开，再谈留存</h3><p>删除、注销与撤回授权不是例外流程，而是产品的基本能力。</p></article>
+          <article class="principle"><span>04</span><h3>先承认不知道，再生成</h3><p>当记忆没有依据时，产品应该说不确定，而不是编一个更像的答案。</p></article>
+        </div>
+      </section>
+
+      <section class="corp-section corp-contact" aria-labelledby="join-title">
+        <div class="corp-wrap">
+          <p class="corp-section-label"><span>04</span><span>CONTACT</span></p>
+          <h2 id="join-title" class="display">想和我们一起做这件事？</h2>
+          <p class="corp-lead">如果你对 AI 纪念、记忆系统、语音或安全治理有长期兴趣，欢迎联系我们。</p>
+          <div class="corp-actions">
+            <a class="btn btn--ink" href="mailto:{{BRAND_EMAIL}}">发送邮件<svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg></a>
+            <a class="btn btn--quiet" href="/about/#contact">公司联系方式</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> product-subpage-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} product-subpage">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/product/">产品</a></li>
+          <li aria-current="page">技术架构</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <div class="product-layout">
+        {{> product-side.html}}
+        <div class="product-main">
+          <section class="corp-section corp-section--paper" aria-labelledby="page-title">
+            <div class="corp-wrap architecture-grid">
+                      <article class="architecture-layer">
+                        <span>01 / CLIENT</span>
+                        <h3>客户端</h3>
+                        <p>微信小程序承载唤醒、对话、相册、会员与客服入口；官网提供公司与产品信息，不提供注册与支付。</p>
+                      </article>
+                      <article class="architecture-layer">
+                        <span>02 / SERVICE</span>
+                        <h3>服务层</h3>
+                        <p>账号、对话、记忆任务、订单与内容安全由服务端统一编排，支持异步回复、重试与失败恢复。</p>
+                      </article>
+                      <article class="architecture-layer">
+                        <span>03 / MEMORY</span>
+                        <h3>记忆与检索</h3>
+                        <p>结构化记忆与检索服务负责长期上下文、事实边界与关系连续性；用户可查看、补充与删除。</p>
+                      </article>
+                      <article class="architecture-layer">
+                        <span>04 / MODEL</span>
+                        <h3>模型与语音</h3>
+                        <p>对话、语音识别与语音合成由第三方生成式模型与语音服务提供；平台不自行训练底层大模型。</p>
+                      </article>
+                    </div>
+                    <div class="corp-wrap">
+                      <p class="content-note">架构说明为公开版概述，不包含部署细节、密钥或第三方供应商敏感信息。</p>
+                    </div>
+          </section>
+
+          <nav class="product-pager" aria-label="产品页翻页">
+            <a class="product-pager__link" href="/product/usage/">
+              <span>上一节</span>
+              <strong>使用说明</strong>
+            </a>
+            <a class="product-pager__link product-pager__link--next" href="/product/security/">
+              <span>下一节</span>
+              <strong>安全与数据</strong>
+            </a>
+          </nav>
+        </div>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{SITE_URL}}/whitepaper/#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "产品白皮书", "item": "{{SITE_URL}}/whitepaper/" }
+            ]
+          },
+          {
+            "@type": "TechArticle",
+            "@id": "{{SITE_URL}}/whitepaper/#article",
+            "headline": "{{BRAND_NAME}}产品白皮书 v1.0",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "url": "{{SITE_URL}}/whitepaper/",
+            "datePublished": "2026-10-25",
+            "dateModified": "{{UPDATED_ISO}}",
+            "author": { "@id": "{{SITE_URL}}/#organization" },
+            "publisher": { "@id": "{{SITE_URL}}/#organization" },
+            "about": { "@id": "{{SITE_URL}}/#service" },
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "breadcrumb": { "@id": "{{SITE_URL}}/whitepaper/#breadcrumb" }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{SITE_URL}}/whitepaper/#webpage",
+            "url": "{{SITE_URL}}/whitepaper/",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "about": { "@id": "{{SITE_URL}}/#service" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "mainEntity": { "@id": "{{SITE_URL}}/whitepaper/#article" },
+            "breadcrumb": { "@id": "{{SITE_URL}}/whitepaper/#breadcrumb" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}}">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      {{> page-hero.html}}
+
+      <div class="corp-wrap whitepaper-layout">
+        <aside class="whitepaper-aside" aria-label="白皮书目录">
+          <p class="whitepaper-aside__label">CONTENTS</p>
+          <nav class="whitepaper-toc" aria-label="白皮书目录">
+            <a href="#summary"><span>00</span>摘要</a>
+            <a href="#problem"><span>01</span>问题与判断</a>
+            <a href="#definition"><span>02</span>产品定义</a>
+            <a href="#architecture"><span>03</span>系统架构</a>
+            <a href="#memory"><span>04</span>记忆系统</a>
+            <a href="#voice"><span>05</span>声音复刻</a>
+            <a href="#governance"><span>06</span>安全、伦理与数据治理</a>
+            <a href="#boundary"><span>07</span>服务边界</a>
+            <a href="#roadmap"><span>08</span>路线图</a>
+            <a href="#citation"><span>09</span>引用与版本</a>
+          </nav>
+          <button class="print-button" type="button" onclick="window.print()"><svg class="icon" aria-hidden="true"><use href="#i-print"></use></svg>打印 / 另存为 PDF</button>
+          <p class="whitepaper-aside__version">v1.0 · 2026 · 公开版</p>
+        </aside>
+
+        <article class="whitepaper-article" id="download">
+          <section id="summary" class="wp-section">
+            <p class="wp-kicker">00 / ABSTRACT</p>
+            <h2>摘要</h2>
+            <p class="wp-lead">{{BRAND_NAME}}是 {{BRAND_POSITIONING}}——一款面向成年人的 AI 纪念与情感陪伴服务。它为逝去的亲人创建专属纪念对象，以对话、记忆、照片与声音为媒介，帮助用户在想念时表达、整理与告别。</p>
+            <p>本白皮书说明我们如何理解“AI 纪念”、产品如何工作、数据如何被处理，以及哪些事情我们选择不做。它不是一份技术炫耀文档，而是一份边界说明：技术能力越强，越需要明确什么应该被模拟、什么不应该。</p>
+            <div class="wp-callout">
+              <strong>一句话定义</strong>
+              <p>不是让 AI 复活一个人，而是为活着的人提供一个安全、克制、可删除的纪念空间。</p>
+            </div>
+          </section>
+
+          <section id="problem" class="wp-section">
+            <p class="wp-kicker">01 / PROBLEM</p>
+            <h2>问题与判断</h2>
+            <p>丧亲之后，很多人需要一个可以说说话的地方。但“AI 复活”产品往往把技术能力直接变成卖点：合成逝者的脸、声音与语气，制造“还在”的幻觉。它可能带来短暂的安慰，也可能带来二次伤害、隐私侵犯与伦理风险。我们想做的，是 {{BRAND_POSITIONING}}：保留称呼、声音与记忆，让想念有处安放，而不是制造“还在”的幻觉。</p>
+            <h3>我们的三个判断</h3>
+            <div class="wp-rule-grid">
+              <div><span>01</span><h4>不是数字永生</h4><p>我们不承诺把一个人“保存”在服务器里。产品提供的是一段可被管理的纪念关系，而不是对死亡的否定。</p></div>
+              <div><span>02</span><h4>不是替代真人</h4><p>AI 生成内容可能不准确、不完整，也不能替代真实的人际关系与哀伤支持。它必须被标识，也必须被限制。</p></div>
+              <div><span>03</span><h4>不是心理治疗</h4><p>我们不提供心理治疗、医疗建议或危机干预。当痛苦超出产品边界时，我们会明确建议寻求专业帮助。</p></div>
+            </div>
+          </section>
+
+          <section id="definition" class="wp-section">
+            <p class="wp-kicker">02 / DEFINITION</p>
+            <h2>产品定义</h2>
+            <p>{{BRAND_NAME}}围绕“一个人、一段关系、一些共同记忆”组织产品，而不是围绕通用问答或角色扮演。</p>
+            <div class="wp-definition-grid">
+              <div><h3>称呼与关系</h3><p>用户先告诉产品“他是谁”“他怎么称呼我”，让对话从真实关系开始。</p></div>
+              <div><h3>素材</h3><p>文字、照片、语音、故事与聊天记录，构成记忆与回应的原材料；用户需拥有合法授权。</p></div>
+              <div><h3>对话</h3><p>支持文字、语音转文字与图片，围绕日常问候、回忆片段与想说的话展开。</p></div>
+              <div><h3>记忆</h3><p>把访谈、聊天与资料整理成结构化记忆，让回应有依据，而不是凭空生成。</p></div>
+              <div><h3>声音</h3><p>在授权与素材清晰的前提下，还原熟悉的语气与声音特征；不主动复刻任何人。</p></div>
+              <div><h3>管理</h3><p>用户可以补充、修改、删除记忆与素材，或注销账号；删除路径不藏在客服后面。</p></div>
+            </div>
+            <h3>适用人群</h3>
+            <p>主要面向成年人。未满 18 周岁需在监护人陪同下阅读并同意相关协议；未满 14 周岁需监护人明确同意。服务仅用于纪念本人逝去的亲人，并需要用户合法持有相关素材、拥有必要的使用权。</p>
+          </section>
+
+          <section id="architecture" class="wp-section">
+            <p class="wp-kicker">03 / ARCHITECTURE</p>
+            <h2>系统架构</h2>
+            <p>产品由客户端、服务层、记忆与检索、模型与语音服务四层组成。公开版仅描述逻辑关系，不包含部署细节、密钥或第三方供应商敏感信息。</p>
+            <div class="wp-architecture">
+              <div><span>01</span><h3>客户端</h3><p>微信小程序承载唤醒、对话、相册、会员与客服入口；官网只提供公司与产品信息，不提供注册与支付。</p></div>
+              <div><span>02</span><h3>服务层</h3><p>账号、对话、记忆任务、订单与内容安全由服务端统一编排，支持异步回复、重试与失败恢复。</p></div>
+              <div><span>03</span><h3>记忆与检索</h3><p>结构化记忆与检索服务负责长期上下文、事实边界与关系连续性；用户可查看、补充与删除。</p></div>
+              <div><span>04</span><h3>模型与语音</h3><p>对话、语音识别与语音合成由第三方生成式模型与语音服务提供；平台不自行训练底层大模型。</p></div>
+            </div>
+            <p class="wp-note">数据流：客户端 → 服务层 → 记忆/检索 → 模型与语音服务。每一步都以最小必要为原则，并对第三方受托处理方设定处理目的、期限与删除义务。</p>
+          </section>
+
+          <section id="memory" class="wp-section">
+            <p class="wp-kicker">04 / MEMORY</p>
+            <h2>记忆系统</h2>
+            <p>记忆是{{BRAND_NAME}}与通用聊天机器人最重要的区别。通用模型只拥有上下文窗口，而纪念服务需要长期记住一个人、一段关系与一些共同经历。</p>
+            <h3>记忆的四个层次</h3>
+            <ul class="wp-list">
+              <li><strong>事实层：</strong>称呼、关系、时间、地点、偏好等可核对的信息。</li>
+              <li><strong>故事层：</strong>用户主动讲述的经历、对话与家庭记忆。</li>
+              <li><strong>情感层：</strong>用户在当前对话中的情绪与表达方式；不将其固化为对逝者的“人格设定”。</li>
+              <li><strong>边界层：</strong>哪些话题不回应、哪些内容不生成、哪些记忆不应被推断。</li>
+            </ul>
+            <p>记忆不是越多越好。产品优先保证可核对、可编辑、可删除，而不是用大量推断制造“像”的错觉。事实边界与不确定性提示，是记忆系统的一部分。</p>
+          </section>
+
+          <section id="voice" class="wp-section">
+            <p class="wp-kicker">05 / VOICE</p>
+            <h2>声音复刻</h2>
+            <p>声音是纪念中最敏感的部分之一。它涉及逝者的人格权、家属的授权与第三方模型的处理边界，因此我们把它设计成一项需要明确同意与素材审核的服务。</p>
+            <h3>我们坚持的做法</h3>
+            <ul class="wp-list">
+              <li>只有用户主动上传素材并完成授权确认后，才会进入声音制作流程。</li>
+              <li>素材需要清晰、安静、无多人同时说话；素材质量与方言口音会影响效果。</li>
+              <li>平台不主动复刻任何人，也不将声音用于服务之外的目的。</li>
+              <li>声音服务的效果不被保证与逝者完全一致；生成内容会按规范标识。</li>
+              <li>用户可以停止使用、删除素材或注销账号；平台会指示受托处理方删除相应素材与衍生数据，法律法规要求留存的除外。</li>
+            </ul>
+          </section>
+
+          <section id="governance" class="wp-section">
+            <p class="wp-kicker">06 / GOVERNANCE</p>
+            <h2>安全、伦理与数据治理</h2>
+            <p>纪念涉及一个人最私密的照片、声音和故事。数据治理不是附加条款，而是产品结构的一部分。</p>
+            <h3>数据生命周期</h3>
+            <table class="wp-table">
+              <thead><tr><th>阶段</th><th>我们的做法</th></tr></thead>
+              <tbody>
+                <tr><td>收集</td><td>只收集提供服务所必需的信息；素材由用户主动提供，并需确认合法授权。</td></tr>
+                <tr><td>使用</td><td>仅用于提供对话、记忆、声音合成与内容安全；不用于训练或优化任何模型。</td></tr>
+                <tr><td>存储</td><td>在境内运营中收集和产生的个人信息，存储在中华人民共和国境内。</td></tr>
+                <tr><td>共享</td><td>仅在必要时传输至第三方受托处理方，并要求其按约定目的、期限与方式处理。</td></tr>
+                <tr><td>删除</td><td>支持删除对话、记忆与素材；支持注销账号。注销后相关数据删除或停止使用，依法留存的数据除外。</td></tr>
+              </tbody>
+            </table>
+            <h3>伦理原则</h3>
+            <ul class="wp-list">
+              <li><strong>不冒充真人：</strong>AI 生成内容会标识，不使用“复活”“本人”等误导性说法。</li>
+              <li><strong>不消费悲伤：</strong>不用恐惧、倒计时或“再也见不到”之类话术推动付费。</li>
+              <li><strong>不滥用数据：</strong>素材不用于训练；能删除、能注销；第三方处理边界写进协议。</li>
+              <li><strong>不越过能力边界：</strong>不提供心理治疗、医疗建议或危机干预；遇到高风险情形时引导寻求现实帮助。</li>
+              <li><strong>未成年人保护：</strong>主要面向成年人；未成年人需监护人同意与指导。</li>
+            </ul>
+          </section>
+
+          <section id="boundary" class="wp-section">
+            <p class="wp-kicker">07 / BOUNDARY</p>
+            <h2>服务边界</h2>
+            <div class="wp-boundary">
+              <div><h3>它不做</h3><ul><li>不替代逝者本人</li><li>不承诺“复活”</li><li>不提供心理治疗或医疗建议</li><li>不保证音色完全一致</li><li>不保证生成内容准确、完整</li></ul></div>
+              <div><h3>它做</h3><ul><li>提供一个可以说说话的空间</li><li>帮助整理照片、声音与故事</li><li>在授权与素材清晰的前提下还原语气</li><li>把家庭记忆保存下来</li><li>在需要时明确建议寻求现实帮助</li></ul></div>
+            </div>
+            <p class="wp-note">具体使用步骤、素材要求、会员与账号操作，见 <a href="/faq/">常见问题</a>；产品页提供完整功能清单。</p>
+          </section>
+
+          <section id="roadmap" class="wp-section">
+            <p class="wp-kicker">08 / ROADMAP</p>
+            <h2>路线图</h2>
+            <p>以下方向是我们的工作重点，不构成对具体功能、时间或商业条款的承诺。</p>
+            <div class="wp-roadmap">
+              <div><span>01</span><h3>记忆质量</h3><p>提升结构化记忆的覆盖率、可核对性与长期一致性，减少无依据的生成。</p></div>
+              <div><span>02</span><h3>声音体验</h3><p>完善素材评估、授权确认、制作进度与删除链路，让声音服务更可被信任。</p></div>
+              <div><span>03</span><h3>安全与合规</h3><p>持续完善隐私、安全审计、AI 标识与高风险情形的应对能力。</p></div>
+              <div><span>04</span><h3>可访问性</h3><p>让不同年龄、不同设备与不同数字经验的用户，都能更轻松地使用与退出。</p></div>
+            </div>
+          </section>
+
+          <section id="citation" class="wp-section">
+            <p class="wp-kicker">09 / CITATION</p>
+            <h2>引用与版本</h2>
+            <p>引用本白皮书时，请注明：{{BRAND_COMPANY}}，《{{BRAND_NAME}}产品白皮书 v1.0》，{{UPDATED_AT}}，{{SITE_URL}}/whitepaper/。</p>
+            <dl class="wp-meta">
+              <div><dt>版本</dt><dd>v1.0 · 公开版</dd></div>
+              <div><dt>更新日期</dt><dd><time datetime="{{UPDATED_ISO}}">{{UPDATED_AT}}</time></dd></div>
+              <div><dt>运营主体</dt><dd>{{BRAND_COMPANY}}</dd></div>
+              <div><dt>联系</dt><dd><a href="mailto:{{BRAND_EMAIL}}">{{BRAND_EMAIL}}</a></dd></div>
+            </dl>
+            <p class="wp-note">本白皮书为产品与治理说明，不构成法律意见，也不替代产品内完整协议。如与完整协议不一致，以完整协议为准。</p>
+          </section>
+        </article>
+      </div>
+
+      <section class="corp-section corp-contact" aria-labelledby="wp-cta-title">
+        <div class="corp-wrap">
+          <p class="corp-section-label"><span>NEXT</span><span>CONTACT</span></p>
+          <h2 id="wp-cta-title" class="display">想进一步了解，<br>或讨论合作？</h2>
+          <div class="corp-actions">
+            <a class="btn btn--ink" href="mailto:{{BRAND_EMAIL}}">发送邮件<svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg></a>
+            <a class="btn btn--quiet" href="/about/#contact">联系我们</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "{{SITE_URL}}/#organization",
+            "name": "{{BRAND_NAME}}",
+            "legalName": "{{BRAND_COMPANY}}",
+            "url": "{{SITE_URL}}/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "{{SITE_URL}}/assets/icon-512.png",
+              "width": 512,
+              "height": 512
+            },
+            "email": "{{BRAND_EMAIL}}",
+            "telephone": "{{BRAND_PHONE}}"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "{{SITE_URL}}/#website",
+            "url": "{{SITE_URL}}/",
+            "name": "{{BRAND_NAME}}官网",
+            "inLanguage": "zh-CN",
+            "publisher": {
+              "@id": "{{SITE_URL}}/#organization"
+            }
+          },
+          {
+            "@type": "Service",
+            "@id": "{{SITE_URL}}/#service",
+            "name": "{{BRAND_NAME}} AI 纪念与情感陪伴服务",
+            "serviceType": "AI 纪念与情感陪伴",
+            "provider": {
+              "@id": "{{SITE_URL}}/#organization"
+            },
+            "description": "为逝去的亲人创建专属纪念对象，通过 AI 对话、声音与记忆整理，安放思念。",
+            "url": "{{SITE_URL}}/"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{SITE_URL}}/legal/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "首页",
+                "item": "{{SITE_URL}}/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "协议与隐私",
+                "item": "{{SITE_URL}}/legal/"
+              }
+            ]
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{SITE_URL}}/legal/#webpage",
+            "url": "{{SITE_URL}}/legal/",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": {
+              "@id": "{{SITE_URL}}/#website"
+            },
+            "about": {
+              "@id": "{{SITE_URL}}/#organization"
+            },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": {
+              "@id": "{{SITE_URL}}/legal/#breadcrumb"
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}}">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li aria-current="page">协议与隐私</li>
+        </ol>
+      </nav>
+
+      <section class="subpage-hero" aria-labelledby="legal-title">
+        <p class="eyebrow">Legal</p>
+        <h1 id="legal-title">服务协议与隐私政策</h1>
+        <p class="lead">本页是《{{AGREEMENT_SERVICE}}》《{{AGREEMENT_PRIVACY}}》与《{{AGREEMENT_MEMBER}}》的公开摘要，帮助你快速了解服务边界与数据规则。完整文本以产品内展示为准。</p>
+        <nav class="anchor-nav" aria-label="本页目录">
+          <a href="#service">服务性质</a>
+          <a href="#data-rights">你的权利</a>
+          <a href="#full-text">完整协议</a>
+          <a href="#legal-contact">联系我们</a>
+        </nav>
+      </section>
+
+      <aside class="callout callout-warm legal-callout" aria-label="摘要说明">
+        <svg class="icon" aria-hidden="true"><use href="#i-doc"></use></svg>
+        <p><strong>请先阅读这段说明：</strong>本页是摘要，不构成法律意见。如本页与完整协议不一致，以完整协议为准。服务协议版本更新于 2026 年 5 月 6 日；隐私政策与会员协议以产品内最新版本为准。</p>
+      </aside>
+
+      <section id="service" class="section" aria-labelledby="service-title">
+        <div class="section-heading">
+          <p class="eyebrow">一页看懂</p>
+          <h2 id="service-title">服务性质与使用边界</h2>
+        </div>
+        <div class="legal-grid">
+          <article class="legal-card">
+            <span class="legal-index">01</span>
+            <h3>服务性质</h3>
+            <p>服务依托第三方生成式人工智能模型，提供以“声音复刻”和“AI 互动交流”为载体的纪念服务，帮助你缅怀本人逝去的亲人。输出内容由算法生成，不代表逝者本人，也不应成为你作为或不作为的依据。</p>
+          </article>
+          <article class="legal-card">
+            <span class="legal-index">02</span>
+            <h3>适用人群与授权</h3>
+            <p>主要适用成年人；未满 18 周岁需在监护人陪同下阅读并同意，未满 14 周岁需监护人明确同意。你只能为本人逝去的亲人创建纪念对象，并需确保照片、声音、聊天记录等素材已获得必要授权。</p>
+          </article>
+          <article class="legal-card">
+            <span class="legal-index">03</span>
+            <h3>素材如何处理</h3>
+            <p>素材经安全加密后传输至第三方技术服务商，由受托处理方按约定目的、期限和方式处理；平台及受托方不得将素材用于训练或优化任何模型，也不得为自身目的处理。个人信息存储在中华人民共和国境内。</p>
+          </article>
+          <article class="legal-card">
+            <span class="legal-index">04</span>
+            <h3>内容规范</h3>
+            <p>你不得利用服务制作、发布、传播违法违规、侵权、虚假或误导性内容。发布或传播非真实音视频信息时，应显著标识；不得删除或误导性修改产品添加的 AI 标识。</p>
+          </article>
+          <article class="legal-card">
+            <span class="legal-index">05</span>
+            <h3>账号与数据</h3>
+            <p>账号仅限本人使用。你可以查阅、更正、删除个人信息，撤回授权，或申请注销账号。注销后，你创建的纪念对象、聊天记录、记忆、声音素材及声音模型将被删除或停止使用；订单等依法需要留存的信息除外。</p>
+          </article>
+          <article class="legal-card">
+            <span class="legal-index">06</span>
+            <h3>会员与支付</h3>
+            <p>会员套餐、价格、周期与权益以产品内会员中心为准。声音版涉及人工复刻音色，需要你提供可用素材并配合客服制作。支付、订单与退款问题按订单页、会员协议及适用法律法规处理。</p>
+          </article>
+          <article class="legal-card">
+            <span class="legal-index">07</span>
+            <h3>责任边界</h3>
+            <p>AI 生成内容受技术发展水平与素材质量限制，可能与你亲人的真实音色、语气或观点不一致，平台不保证完全一致。服务不提供心理治疗、医疗建议或危机干预；责任限制与免责条款以完整协议为准。</p>
+          </article>
+          <article class="legal-card">
+            <span class="legal-index">08</span>
+            <h3>未成年人保护</h3>
+            <p>未成年人应在监护人监护、指导下使用。监护人应了解 AI 互动系技术模拟，不构成真实人际交往或情感关系，并配合管理使用时长与内容发布。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="data-rights" class="section" aria-labelledby="rights-title">
+        <div class="section-heading">
+          <p class="eyebrow">你的权利</p>
+          <h2 id="rights-title">如何管理自己的数据</h2>
+          <p class="section-lead">你不需要通过客服才能完成最基本的操作。以下路径可以在产品内直接使用。</p>
+        </div>
+        <ol class="rights-list">
+          <li>
+            <span class="step-number">01</span>
+            <div>
+              <h3>查阅、更正、补充</h3>
+              <p>在产品内点击头像或账号区域，查看和修改账号信息；历史对话可在对话列表中查看。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <div>
+              <h3>删除单条内容</h3>
+              <p>进入对话，选择需要删除的对话或内容进行删除；也可以删除不再需要的纪念对象与素材。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <div>
+              <h3>撤回授权</h3>
+              <p>在设备系统中关闭麦克风、相册、存储等权限，或删除对应素材，即可停止后续收集与处理。撤回不影响此前基于授权进行的处理。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">04</span>
+            <div>
+              <h3>注销账号</h3>
+              <p>在产品内「我的」→「个人资料」→「注销账号」发起。注销前会校验支付、退款、声音制作等未完成业务；注销不可逆，会员及未使用权益不再保留。</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section id="full-text" class="section" aria-labelledby="full-title">
+        <div class="section-heading">
+          <p class="eyebrow">完整文本</p>
+          <h2 id="full-title">在哪里查看完整协议</h2>
+        </div>
+        <div class="prose">
+          <ol class="ordered-steps">
+            <li>打开微信小程序「{{BRAND_NAME}}」并登录。</li>
+            <li>进入「我的」页面，找到「服务协议」入口。</li>
+            <li>在协议页查看《{{AGREEMENT_SERVICE}}》与《{{AGREEMENT_PRIVACY}}》；会员相关规则见《{{AGREEMENT_MEMBER}}》。</li>
+            <li>如无法在产品内查看，可通过下方客服邮箱索取当前版本。</li>
+          </ol>
+          <p class="muted">官网仅提供摘要与入口说明，不提供注册、支付或协议签署功能。</p>
+        </div>
+      </section>
+
+      <section id="legal-contact" class="section contact-section" aria-labelledby="legal-contact-title">
+        <div class="section-heading">
+          <p class="eyebrow">联系我们</p>
+          <h2 id="legal-contact-title">数据权利与投诉举报</h2>
+        </div>
+        <div class="contact-grid contact-grid--legal">
+          <dl class="contact-facts">
+            <div><dt>运营主体</dt><dd>{{BRAND_COMPANY}}</dd></div>
+            <div><dt>客服电话</dt><dd><a href="{{BRAND_PHONE_HREF}}">{{BRAND_PHONE}}</a></dd></div>
+            <div><dt>客服邮箱</dt><dd><a href="mailto:{{BRAND_EMAIL}}">{{BRAND_EMAIL}}</a></dd></div>
+            <div><dt>官网</dt><dd><a href="{{SITE_URL}}/">{{BRAND_DOMAIN}}</a></dd></div>
+            {{ICP_FACT_ROW}}
+            <div><dt>内容更新</dt><dd><time datetime="{{UPDATED_ISO}}">{{UPDATED_AT}}</time></dd></div>
+          </dl>
+          <aside class="contact-aside">
+            <h3>我们如何回应</h3>
+            <p>你可以在邮件中说明诉求、相关账号与订单信息，便于我们核验身份。隐私政策承诺在核验身份后的十五个工作日内回复；涉及支付、退款或第三方处理的，我们会同步说明处理进度。</p>
+            <div class="contact-actions">
+              <a class="primary-button" href="mailto:{{BRAND_EMAIL}}"><svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg>发送邮件</a>
+              <a class="secondary-button" href="{{BRAND_PHONE_HREF}}"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg>拨打客服电话</a>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="cta-panel" aria-labelledby="legal-cta-title">
+        <div>
+          <p class="eyebrow">继续了解</p>
+          <h2 id="legal-cta-title">还有不清楚的地方？</h2>
+          <p>常见问题里整理了使用、素材、会员和删除数据的更多细节；你也可以直接联系客服。</p>
+        </div>
+        <div class="cta-actions">
+          <a class="primary-button" href="/faq/">查看常见问题<svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></a>
+          <a class="secondary-button" href="/about/#contact">联系我们</a>
+        </div>
+      </section>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

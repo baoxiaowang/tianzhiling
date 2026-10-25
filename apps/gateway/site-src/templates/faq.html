@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "{{SITE_URL}}/#organization",
+      "name": "{{BRAND_NAME}}",
+      "legalName": "{{BRAND_COMPANY}}",
+      "url": "{{SITE_URL}}/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "{{SITE_URL}}/assets/icon-512.png",
+        "width": 512,
+        "height": 512
+      },
+      "email": "{{BRAND_EMAIL}}",
+      "telephone": "{{BRAND_PHONE}}"
+    },
+    {
+      "@type": "WebSite",
+      "@id": "{{SITE_URL}}/#website",
+      "url": "{{SITE_URL}}/",
+      "name": "{{BRAND_NAME}}官网",
+      "inLanguage": "zh-CN",
+      "publisher": {
+        "@id": "{{SITE_URL}}/#organization"
+      }
+    },
+    {
+      "@type": "Service",
+      "@id": "{{SITE_URL}}/#service",
+      "name": "{{BRAND_NAME}} AI 纪念与情感陪伴服务",
+      "serviceType": "AI 纪念与情感陪伴",
+      "provider": {
+        "@id": "{{SITE_URL}}/#organization"
+      },
+      "description": "为逝去的亲人创建专属纪念对象，通过 AI 对话、声音与记忆整理，安放思念。",
+      "url": "{{SITE_URL}}/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "@id": "{{SITE_URL}}/faq/#breadcrumb",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "{{SITE_URL}}/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "常见问题",
+          "item": "{{SITE_URL}}/faq/"
+        }
+      ]
+    },
+    {
+      "@type": "WebPage",
+      "@id": "{{SITE_URL}}/faq/#webpage",
+      "url": "{{SITE_URL}}/faq/",
+      "name": "{{PAGE_TITLE}}",
+      "description": "{{PAGE_DESCRIPTION}}",
+      "inLanguage": "zh-CN",
+      "isPartOf": {
+        "@id": "{{SITE_URL}}/#website"
+      },
+      "about": {
+        "@id": "{{SITE_URL}}/#service"
+      },
+      "dateModified": "{{UPDATED_ISO}}",
+      "breadcrumb": {
+        "@id": "{{SITE_URL}}/faq/#breadcrumb"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "{{SITE_URL}}/faq/#faq",
+      "url": "{{SITE_URL}}/faq/",
+      "name": "{{BRAND_NAME}}常见问题",
+      "inLanguage": "zh-CN",
+      "isPartOf": {
+        "@id": "{{SITE_URL}}/#website"
+      },
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "如何开始使用{{BRAND_NAME}}？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "在微信中搜索小程序「{{BRAND_NAME}}」，跟随小使者的引导回答称呼、关系等问题，建立专属纪念对象；随后可以补充照片、语音和故事，在想念时进入聊天。官网只提供产品信息，不提供注册与支付。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "使用前需要准备什么？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "一个微信账号，你想纪念的亲人的称呼与关系，以及可选的文字、照片、语音和故事。素材需要你合法持有并有权使用。若选择声音版，还需要清晰、安静、没有多人同时说话的声音素材。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "可以上传哪些素材？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "可以上传文字、照片、语音和故事，也可以整理聊天记录。素材越清晰、越具体，记忆与回应越贴近你们的关系。请只上传你本人逝去亲人的素材，并确保已获得必要授权。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "声音版需要什么素材？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "需要能听清说话内容、环境安静、没有明显杂音或多人同时说话的声音素材。微信语音、通话录音、视频原声都可以。素材质量和方言口音会影响复刻效果，购买前建议先联系客服确认素材是否可用。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "{{BRAND_NAME}}怎么收费？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "产品提供基础版与声音版会员，具体套餐、周期、价格和活动以产品内会员中心实时展示为准。官网不展示实时价格，避免与产品内信息不一致。你可以先体验基础功能，再决定是否开通。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "基础版和声音版有什么区别？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "基础版包含无限聊天、记忆唤醒与完善、云端共享；声音版在基础版权益之外，提供人工复刻亲人音色，需要你提供清晰的声音素材并配合客服完成制作。具体权益以产品内会员中心为准。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "支付或退款遇到问题怎么办？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "可以通过客服电话或客服邮箱联系我们，并提供订单信息以便核对。具体退款规则以产品内订单页、会员协议及适用法律法规为准。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "我的素材会被用来训练模型吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不会。根据服务协议与隐私政策，平台及第三方技术服务商不会将你提交的素材用于训练或优化任何模型（含第三方自身模型）。素材仅用于提供声音合成与 AI 互动服务。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "我的数据存储在哪里？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "在境内运营中收集和产生的个人信息，存储在中华人民共和国境内。目前不会将上述信息传输至境外；如未来需要跨境传输，会依法另行告知并征得你的同意。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "如何删除数据或注销账号？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "可以在产品内「我的」→「个人资料」→「注销账号」发起注销，也可以先删除单条对话或素材。注销前会校验是否存在支付、退款、声音制作等未完成业务；注销后相关数据将被删除或停止使用，订单等依法需要留存的信息除外。你也可以通过客服邮箱请求协助。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "AI 生成内容有标识吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "有。产品会按法律法规要求对 AI 生成内容进行标识；发布或传播非真实音视频信息时，也应显著标识，不得删除或误导性修改标识。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "{{BRAND_NAME}}提供心理治疗或医疗建议吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不提供。{{BRAND_NAME}}是纪念与情感陪伴工具，不能替代专业心理咨询、医疗建议或紧急援助。如果你正经历难以承受的痛苦，请优先联系信任的家人朋友、当地医疗机构或心理援助热线。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "如何联系客服？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "客服电话：{{BRAND_PHONE}}；客服邮箱：{{BRAND_EMAIL}}。你也可以在产品内「我的」页面找到客服入口。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+  </head>
+  <body class="page-{{PAGE_KEY}}">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li aria-current="page">常见问题</li>
+        </ol>
+      </nav>
+
+      <section class="subpage-hero" aria-labelledby="faq-title">
+        <p class="eyebrow">FAQ</p>
+        <h1 id="faq-title">常见问题</h1>
+        <p class="lead">这里只回答使用、素材、费用、数据与支持问题。产品是什么、为什么不做“复活”、记忆与声音如何工作、边界在哪里，请阅读产品白皮书。</p>
+        <nav class="anchor-nav" aria-label="问题分类">
+          <a href="#usage">使用与素材</a>
+          <a href="#pricing">费用与会员</a>
+          <a href="#privacy">隐私与安全</a>
+          <a href="#support">边界与支持</a>
+        </nav>
+      </section>
+
+      <aside class="faq-bridge" aria-labelledby="faq-bridge-title">
+        <div class="corp-wrap">
+          <div class="faq-bridge__inner">
+            <p class="eyebrow">BEFORE YOU ASK</p>
+            <h2 id="faq-bridge-title">产品理念与边界，白皮书里已经讲完整了。</h2>
+            <p>为了避免两处重复，FAQ 只保留使用、费用、数据与支持类问题：怎么开始、素材怎么准备、会员怎么收费、数据怎么删除、遇到问题找谁。产品定义、记忆与声音、治理与边界，请直接看白皮书对应章节。</p>
+            <div class="faq-bridge__links">
+              <a href="/whitepaper/#definition">产品定义</a>
+              <a href="/whitepaper/#memory">记忆与声音</a>
+              <a href="/whitepaper/#governance">安全与数据治理</a>
+              <a href="/whitepaper/#boundary">服务边界</a>
+              <a href="/whitepaper/">阅读完整白皮书</a>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="faq-groups">
+        <section id="usage" class="faq-group" aria-labelledby="usage-title">
+          <h2 id="usage-title">使用与素材</h2>
+          <details class="faq-item">
+            <summary><span class="faq-index">01</span><span class="faq-question">如何开始使用{{BRAND_NAME}}？</span></summary>
+            <div class="faq-answer">
+              <p>在微信中搜索小程序「{{BRAND_NAME}}」，跟随小使者的引导回答称呼、关系等问题，建立专属纪念对象；随后可以补充照片、语音和故事，在想念时进入聊天。官网只提供产品信息，不提供注册与支付。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">02</span><span class="faq-question">使用前需要准备什么？</span></summary>
+            <div class="faq-answer">
+              <p>一个微信账号，你想纪念的亲人的称呼与关系，以及可选的文字、照片、语音和故事。素材需要你合法持有并有权使用。若选择声音版，还需要清晰、安静、没有多人同时说话的声音素材。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">03</span><span class="faq-question">可以上传哪些素材？</span></summary>
+            <div class="faq-answer">
+              <p>可以上传文字、照片、语音和故事，也可以整理聊天记录。素材越清晰、越具体，记忆与回应越贴近你们的关系。请只上传你本人逝去亲人的素材，并确保已获得必要授权。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">04</span><span class="faq-question">声音版需要什么素材？</span></summary>
+            <div class="faq-answer">
+              <p>需要能听清说话内容、环境安静、没有明显杂音或多人同时说话的声音素材。微信语音、通话录音、视频原声都可以。素材质量和方言口音会影响复刻效果，购买前建议先联系客服确认素材是否可用。</p>
+            </div>
+          </details>
+        </section>
+
+        <section id="pricing" class="faq-group" aria-labelledby="pricing-title">
+          <h2 id="pricing-title">费用与会员</h2>
+          <details class="faq-item">
+            <summary><span class="faq-index">05</span><span class="faq-question">{{BRAND_NAME}}怎么收费？</span></summary>
+            <div class="faq-answer">
+              <p>产品提供基础版与声音版会员，具体套餐、周期、价格和活动以产品内会员中心实时展示为准。官网不展示实时价格，避免与产品内信息不一致。你可以先体验基础功能，再决定是否开通。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">06</span><span class="faq-question">基础版和声音版有什么区别？</span></summary>
+            <div class="faq-answer">
+              <p>基础版包含无限聊天、记忆唤醒与完善、云端共享；声音版在基础版权益之外，提供人工复刻亲人音色，需要你提供清晰的声音素材并配合客服完成制作。具体权益以产品内会员中心为准。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">07</span><span class="faq-question">支付或退款遇到问题怎么办？</span></summary>
+            <div class="faq-answer">
+              <p>可以通过客服电话或客服邮箱联系我们，并提供订单信息以便核对。具体退款规则以产品内订单页、会员协议及适用法律法规为准。</p>
+            </div>
+          </details>
+        </section>
+
+        <section id="privacy" class="faq-group" aria-labelledby="privacy-title">
+          <h2 id="privacy-title">隐私与安全</h2>
+          <details class="faq-item">
+            <summary><span class="faq-index">08</span><span class="faq-question">我的素材会被用来训练模型吗？</span></summary>
+            <div class="faq-answer">
+              <p>不会。根据服务协议与隐私政策，平台及第三方技术服务商不会将你提交的素材用于训练或优化任何模型（含第三方自身模型）。素材仅用于提供声音合成与 AI 互动服务。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">09</span><span class="faq-question">我的数据存储在哪里？</span></summary>
+            <div class="faq-answer">
+              <p>在境内运营中收集和产生的个人信息，存储在中华人民共和国境内。目前不会将上述信息传输至境外；如未来需要跨境传输，会依法另行告知并征得你的同意。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">10</span><span class="faq-question">如何删除数据或注销账号？</span></summary>
+            <div class="faq-answer">
+              <p>可以在产品内「我的」→「个人资料」→「注销账号」发起注销，也可以先删除单条对话或素材。注销前会校验是否存在支付、退款、声音制作等未完成业务；注销后相关数据将被删除或停止使用，订单等依法需要留存的信息除外。你也可以通过客服邮箱请求协助。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">11</span><span class="faq-question">AI 生成内容有标识吗？</span></summary>
+            <div class="faq-answer">
+              <p>有。产品会按法律法规要求对 AI 生成内容进行标识；发布或传播非真实音视频信息时，也应显著标识，不得删除或误导性修改标识。</p>
+            </div>
+          </details>
+        </section>
+
+        <section id="support" class="faq-group" aria-labelledby="support-title">
+          <h2 id="support-title">边界与支持</h2>
+          <details class="faq-item">
+            <summary><span class="faq-index">12</span><span class="faq-question">{{BRAND_NAME}}提供心理治疗或医疗建议吗？</span></summary>
+            <div class="faq-answer">
+              <p>不提供。{{BRAND_NAME}}是纪念与情感陪伴工具，不能替代专业心理咨询、医疗建议或紧急援助。如果你正经历难以承受的痛苦，请优先联系信任的家人朋友、当地医疗机构或心理援助热线。</p>
+            </div>
+          </details>
+          <details class="faq-item">
+            <summary><span class="faq-index">13</span><span class="faq-question">如何联系客服？</span></summary>
+            <div class="faq-answer">
+              <p>客服电话：<a href="{{BRAND_PHONE_HREF}}">{{BRAND_PHONE}}</a>；客服邮箱：<a href="mailto:{{BRAND_EMAIL}}">{{BRAND_EMAIL}}</a>。你也可以在产品内「我的」页面找到客服入口。</p>
+            </div>
+          </details>
+        </section>
+      </div>
+
+      <section class="cta-panel" aria-labelledby="faq-cta-title">
+        <div>
+          <p class="eyebrow">下一步</p>
+          <h2 id="faq-cta-title">准备好时，再开始</h2>
+          <p>不必一次说完所有事情。你可以先了解产品边界，也可以在想念的时候，打开小程序说一句话。</p>
+        </div>
+        <div class="cta-actions">
+          <a class="primary-button" href="/product/start/">如何开始<svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></a>
+          <a class="secondary-button" href="/legal/">协议与隐私</a>
+        </div>
+      </section>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{SITE_URL}}/product/#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "产品", "item": "{{SITE_URL}}/product/" }
+            ]
+          },
+          {
+            "@type": "Service",
+            "@id": "{{SITE_URL}}/#service",
+            "name": "{{BRAND_NAME}} AI 纪念与情感陪伴服务",
+            "serviceType": "AI 纪念与情感陪伴",
+            "provider": { "@id": "{{SITE_URL}}/#organization" },
+            "areaServed": { "@type": "Country", "name": "中国" },
+            "audience": { "@type": "Audience", "audienceType": "成年人" },
+            "description": "围绕逝去的亲人，提供 AI 对话、记忆整理、照片与声音纪念服务。",
+            "url": "{{SITE_URL}}/product/",
+            "termsOfService": "{{SITE_URL}}/legal/"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "{{SITE_URL}}/product/#app",
+            "name": "{{BRAND_NAME}}",
+            "applicationCategory": "LifestyleApplication",
+            "operatingSystem": "微信小程序",
+            "url": "{{SITE_URL}}/product/",
+            "description": "{{BRAND_NAME}}是{{BRAND_POSITIONING}}——围绕逝去的亲人，提供 AI 对话、记忆整理、照片与声音纪念服务。",
+            "provider": { "@id": "{{SITE_URL}}/#organization" },
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "inLanguage": "zh-CN"
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{SITE_URL}}/product/#webpage",
+            "url": "{{SITE_URL}}/product/",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "about": { "@id": "{{SITE_URL}}/#service" },
+            "mainEntity": { "@id": "{{SITE_URL}}/product/#app" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": { "@id": "{{SITE_URL}}/product/#breadcrumb" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}}">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <section class="product-hero" aria-labelledby="product-hero-title">
+        <div class="product-hero__glow" aria-hidden="true"></div>
+        <div class="corp-wrap product-hero__inner">
+          <p class="page-kicker">PRODUCT / 产品</p>
+          <h1 id="product-hero-title">让每一次对话，<br>都有记忆作为回应。</h1>
+          <p class="page-lead">{{PAGE_LEAD}}</p>
+          <div class="corp-actions product-hero__actions">
+            <a class="btn btn--gold" href="/product/features/">查看核心能力<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
+            <a class="btn btn--ghost" href="/product/start/">开始使用</a>
+          </div>
+
+          <div class="product-console" aria-label="{{BRAND_NAME}}产品界面示意">
+            <div class="product-console__bar">
+              <span class="product-console__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>{{BRAND_NAME}} · 对话</span>
+              <span class="product-console__channel">微信小程序</span>
+            </div>
+            <div class="product-console__body">
+              <aside class="console-side" aria-label="纪念对象列表示意">
+                <p>我的{{BRAND_NAME}}</p>
+                <div class="console-person is-active"><strong>妈妈</strong><small>默认</small></div>
+                <div class="console-person"><strong>爷爷</strong><small>3 段记忆</small></div>
+                <div class="console-person"><strong>外婆</strong><small>12 张照片</small></div>
+              </aside>
+              <div class="console-chat">
+                <div class="console-chat__head"><strong>妈妈</strong><span>记忆花园 · 1998 年夏天</span></div>
+                <div class="console-bubble console-bubble--them">今天有点想你。</div>
+                <div class="console-bubble console-bubble--us">我在，慢慢说。</div>
+                <div class="console-bubble console-bubble--them">还记得那年夏天吗？</div>
+                <div class="console-memory-inline">
+                  <span>MEMORY / 1998 · 夏天</span>
+                  <strong>一起去看海</strong>
+                  <small>照片 · 语音 · 故事</small>
+                </div>
+                <div class="console-compose"><span>说点什么…</span><em>语音 / 图片</em></div>
+              </div>
+              <aside class="console-panel" aria-label="记忆卡片示意">
+                <span>MEMORY GARDEN</span>
+                <strong>1998 · 夏天</strong>
+                <p>一起去看海</p>
+                <div class="console-panel__lines" aria-hidden="true"><i></i><i></i><i></i></div>
+                <small>照片 · 语音 · 故事</small>
+              </aside>
+            </div>
+          </div>
+          <p class="product-console__caption">界面为产品示意，实际以小程序内为准。</p>
+        </div>
+      </section>
+
+      <div class="product-layout">
+        {{> product-side.html}}
+        <div class="product-main">
+
+      <section id="definition" class="corp-section" aria-labelledby="definition-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label"><span>01</span><p>DEFINITION</p></div>
+          <div class="corp-section-body">
+            <h2 id="definition-title" class="display">产品定义</h2>
+            <div class="corp-prose corp-prose--two">
+              <p>{{BRAND_NAME}}是 {{BRAND_POSITIONING}}——一款面向成年人的 AI 纪念与情感陪伴服务。你可以为逝去的亲人创建一个专属纪念对象，上传文字、照片、语音等素材，在想念的时候与它对话、整理记忆。</p>
+              <p>它基于第三方生成式人工智能技术生成内容，不是逝者本人，也不能替代真实的人际关系。产品希望提供的是一处安静的纪念空间：技术负责保存与回应，用户决定留下什么、何时打开、何时放下。</p>
+            </div>
+            <dl class="fact-grid">
+              <div><dt>产品类型</dt><dd>AI 纪念与情感陪伴</dd></div>
+              <div><dt>适用人群</dt><dd>成年人；未成年人需监护人同意</dd></div>
+              <div><dt>使用方式</dt><dd>微信小程序</dd></div>
+              <div><dt>内容边界</dt><dd>不冒充真人 · 不提供心理治疗</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+          <section class="corp-section product-index" aria-labelledby="product-index-title">
+            <div class="corp-wrap corp-split">
+              <div class="corp-section-label"><span>02</span><p>PRODUCT MAP</p></div>
+              <div class="corp-section-body">
+                <h2 id="product-index-title" class="display">按主题查看产品</h2>
+                <p class="corp-lead">产品页拆成七个主题，每个主题独立成页。你可以从左栏或下面的目录进入，不必在一条很长的页面里找。</p>
+              </div>
+            </div>
+            <div class="corp-wrap">
+              <div class="product-index__list">
+                <a class="product-index__item" href="/product/features/">
+                  <span class="product-index__num">01</span>
+                  <span class="product-index__title">功能矩阵</span>
+                  <span class="product-index__desc">六个核心能力与完整功能清单</span>
+                  <span class="product-index__arrow" aria-hidden="true">↗</span>
+                </a>
+                <a class="product-index__item" href="/product/usage/">
+                  <span class="product-index__num">02</span>
+                  <span class="product-index__title">使用说明</span>
+                  <span class="product-index__desc">第一次使用、日常操作与使用前准备</span>
+                  <span class="product-index__arrow" aria-hidden="true">↗</span>
+                </a>
+                <a class="product-index__item" href="/product/technology/">
+                  <span class="product-index__num">03</span>
+                  <span class="product-index__title">技术架构</span>
+                  <span class="product-index__desc">客户端、服务层、记忆与模型服务</span>
+                  <span class="product-index__arrow" aria-hidden="true">↗</span>
+                </a>
+                <a class="product-index__item" href="/product/security/">
+                  <span class="product-index__num">04</span>
+                  <span class="product-index__title">安全与数据</span>
+                  <span class="product-index__desc">加密、境内存储、删除与授权边界</span>
+                  <span class="product-index__arrow" aria-hidden="true">↗</span>
+                </a>
+                <a class="product-index__item" href="/product/membership/">
+                  <span class="product-index__num">05</span>
+                  <span class="product-index__title">会员与服务</span>
+                  <span class="product-index__desc">基础版、声音版与订单退款说明</span>
+                  <span class="product-index__arrow" aria-hidden="true">↗</span>
+                </a>
+                <a class="product-index__item" href="/product/boundary/">
+                  <span class="product-index__num">06</span>
+                  <span class="product-index__title">适用边界</span>
+                  <span class="product-index__desc">适合谁、不适合谁，以及为什么</span>
+                  <span class="product-index__arrow" aria-hidden="true">↗</span>
+                </a>
+                <a class="product-index__item" href="/product/start/">
+                  <span class="product-index__num">07</span>
+                  <span class="product-index__title">开始使用</span>
+                  <span class="product-index__desc">微信小程序入口与扫码进入</span>
+                  <span class="product-index__arrow" aria-hidden="true">↗</span>
+                </a>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "{{SITE_URL}}/#organization",
+            "name": "{{BRAND_NAME}}",
+            "alternateName": "{{BRAND_NAME}}官网",
+            "legalName": "{{BRAND_COMPANY}}",
+            "url": "{{SITE_URL}}/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "{{SITE_URL}}/assets/icon-512.png",
+              "width": 512,
+              "height": 512
+            },
+            "image": "{{OG_IMAGE}}",
+            "email": "{{BRAND_EMAIL}}",
+            "telephone": "{{BRAND_PHONE}}",
+            "slogan": "{{BRAND_TAGLINE}}",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "武汉市",
+              "addressRegion": "湖北省",
+              "addressCountry": "CN"
+            },
+            "areaServed": {
+              "@type": "Country",
+              "name": "中国"
+            },
+            "contactPoint": {
+              "@type": "ContactPoint",
+              "telephone": "{{BRAND_PHONE}}",
+              "email": "{{BRAND_EMAIL}}",
+              "contactType": "customer service",
+              "areaServed": "CN",
+              "availableLanguage": "zh-CN"
+            },
+            "description": "{{BRAND_NAME}}由{{BRAND_COMPANY}}运营，专注于生成式 AI 在纪念与情感陪伴场景的产品研发与服务运营。"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "{{SITE_URL}}/#website",
+            "url": "{{SITE_URL}}/",
+            "name": "{{BRAND_NAME}}",
+            "inLanguage": "zh-CN",
+            "publisher": {
+              "@id": "{{SITE_URL}}/#organization"
+            }
+          },
+          {
+            "@type": "Service",
+            "@id": "{{SITE_URL}}/#service",
+            "name": "{{BRAND_NAME}} AI 纪念与情感陪伴服务",
+            "serviceType": "AI 纪念与情感陪伴",
+            "provider": {
+              "@id": "{{SITE_URL}}/#organization"
+            },
+            "areaServed": {
+              "@type": "Country",
+              "name": "中国"
+            },
+            "audience": {
+              "@type": "Audience",
+              "audienceType": "成年人"
+            },
+            "description": "围绕逝去的亲人，提供 AI 对话、记忆整理、照片与声音纪念服务。",
+            "url": "{{SITE_URL}}/product/",
+            "termsOfService": "{{SITE_URL}}/legal/"
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{SITE_URL}}/#webpage",
+            "url": "{{SITE_URL}}/",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": {
+              "@id": "{{SITE_URL}}/#website"
+            },
+            "about": {
+              "@id": "{{SITE_URL}}/#service"
+            },
+            "publisher": {
+              "@id": "{{SITE_URL}}/#organization"
+            },
+            "dateModified": "{{UPDATED_ISO}}",
+            "primaryImageOfPage": {
+              "@type": "ImageObject",
+              "url": "{{OG_IMAGE}}",
+              "width": 1200,
+              "height": 630
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}}">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <section class="corp-hero" aria-labelledby="hero-title">
+        <div class="corp-hero__glow" aria-hidden="true"></div>
+        <div class="corp-hero__watermark" aria-hidden="true">念</div>
+        <div class="corp-wrap corp-hero__inner">
+          <div class="corp-hero__copy">
+            <p class="corp-kicker">AI MEMORY &amp; COMPANIONSHIP</p>
+            <h1 id="hero-title">{{BRAND_HERO_LINE1}}<span class="hero-dash">——</span><br>{{BRAND_HERO_LINE2}}<br><span>{{BRAND_HERO_LINE3}}</span></h1>
+            <p class="corp-hero__lead">我们以对话、记忆与声音为技术基底，为丧亲者提供克制、透明、可被信任的纪念空间。</p>
+            <div class="corp-actions">
+              <a class="btn btn--gold" href="/whitepaper/">阅读产品白皮书<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
+              <a class="btn btn--ghost" href="/about/">了解公司</a>
+            </div>
+          </div>
+          {{> qr-card.html}}
+        </div>
+        <div class="corp-wrap corp-hero__meta">
+          <div><span>运营主体</span><strong>{{BRAND_COMPANY}}</strong></div>
+          <div><span>产品形态</span><strong>微信小程序</strong></div>
+          <div><span>合规基线</span><strong>境内存储 · 不用于模型训练</strong></div>
+          <div><span>服务边界</span><strong>不冒充真人 · 不提供心理治疗</strong></div>
+        </div>
+      </section>
+
+      <section class="corp-visual" aria-labelledby="visual-title">
+        <img class="corp-visual__image" src="/assets/hero-art.webp" alt="夜色中的山脊、月光与暖色地平线" width="2400" height="1350" loading="lazy" decoding="async">
+        <div class="corp-visual__shade" aria-hidden="true"></div>
+        <div class="corp-wrap corp-visual__copy">
+          <p class="corp-visual__kicker">A QUIET PLACE FOR MEMORY</p>
+          <h2 id="visual-title" class="corp-visual__quote">把称呼、声音与记忆，留在身边。</h2>
+        </div>
+      </section>
+
+      <section id="project" class="corp-section corp-section--ink" aria-labelledby="project-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label">
+            <span>01</span>
+            <p>APPROACH</p>
+          </div>
+          <div class="corp-section-body">
+            <h2 id="project-title" class="display">不是让逝者“开口”，<br>而是让思念有处安放。</h2>
+            <p class="corp-lead">围绕丧亲者的真实处境，我们选择了一条更克制的产品路径。</p>
+          </div>
+        </div>
+        <div class="corp-wrap pillar-grid">
+          <article class="pillar">
+            <span class="pillar__index">01</span>
+            <h3>问题</h3>
+            <p>丧亲者需要一个可以说说话的地方，但“AI 复活”式的产品容易制造幻觉、消费悲伤，甚至侵犯逝者与家属的权利。</p>
+          </article>
+          <article class="pillar">
+            <span class="pillar__index">02</span>
+            <h3>方法</h3>
+            <p>以称呼、关系、照片、声音和记忆为中心，构建长期、克制、可删除的纪念空间，让回应有依据，也有边界。</p>
+          </article>
+          <article class="pillar">
+            <span class="pillar__index">03</span>
+            <h3>边界</h3>
+            <p>不冒充真人，不承诺复活，不提供心理治疗或医疗建议。技术负责保存与回应，人负责决定与告别。</p>
+          </article>
+        </div>
+        <div class="corp-wrap">
+        </div>
+      </section>
+
+      <section id="product" class="corp-section" aria-labelledby="product-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label">
+            <span>02</span>
+            <p>PRODUCT</p>
+          </div>
+          <div class="corp-section-body">
+            <h2 id="product-title" class="display">一套围绕“一个人”组织起来的产品。</h2>
+            <p class="corp-lead">不是通用聊天机器人，而是围绕称呼、关系、照片、声音与共同记忆设计的纪念空间。</p>
+          </div>
+        </div>
+        <div class="corp-wrap product-showcase">
+          <div class="product-ui" aria-label="{{BRAND_NAME}}产品界面示意">
+            <div class="product-ui__bar">
+              <span class="product-ui__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>{{BRAND_NAME}} · 记忆花园</span>
+              <span class="product-ui__status">在线</span>
+            </div>
+            <div class="product-ui__body">
+              <div class="bubble bubble--them">今天有点想你。</div>
+              <div class="bubble bubble--us">我在，慢慢说。</div>
+              <div class="bubble bubble--them">还记得那年夏天吗？</div>
+              <div class="memory-card">
+                <span>MEMORY / 1998 · 夏天</span>
+                <strong>一起去看海</strong>
+                <small>照片 · 语音 · 故事</small>
+              </div>
+              <div class="voice-line" aria-label="语音消息示意">
+                <span class="voice-line__bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <em>00:18</em>
+              </div>
+            </div>
+            <p class="product-ui__caption">界面为产品示意，实际以小程序内为准。</p>
+          </div>
+          <div class="product-copy">
+            <ol class="feature-list">
+              <li><span>01</span><div><strong>唤醒专属纪念对象</strong><p>通过对话式引导留下称呼、关系与基本资料。</p></div></li>
+              <li><span>02</span><div><strong>多轮 AI 对话</strong><p>支持文字、语音转文字与图片，围绕日常与回忆展开。</p></div></li>
+              <li><span>03</span><div><strong>结构化记忆</strong><p>把访谈、聊天与资料整理成可检索的记忆。</p></div></li>
+              <li><span>04</span><div><strong>照片与聊天相册</strong><p>保存纪念照片与聊天图片，按时间回看。</p></div></li>
+              <li><span>05</span><div><strong>声音与语气</strong><p>在合法授权与素材清晰的前提下，还原熟悉的语气。</p></div></li>
+              <li><span>06</span><div><strong>多对象管理</strong><p>为不同的亲人分别创建纪念对象与默认入口。</p></div></li>
+            </ol>
+            <a class="text-link" href="/product/">产品概览<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
+          </div>
+        </div>
+      </section>
+
+      <section id="whitepaper" class="corp-section corp-section--paper" aria-labelledby="whitepaper-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label">
+            <span>03</span>
+            <p>WHITEPAPER</p>
+          </div>
+          <div class="corp-section-body">
+            <h2 id="whitepaper-title" class="display">把产品讲清楚，也把边界讲清楚。</h2>
+            <p class="corp-lead">一份面向用户、合作伙伴与行业研究者的产品白皮书。</p>
+          </div>
+        </div>
+        <div class="corp-wrap whitepaper-showcase">
+          <div class="doc-cover" aria-label="{{BRAND_NAME}}产品白皮书封面">
+            <span class="doc-cover__mark">天</span>
+            <p>TIANZHILING<br>PRODUCT WHITEPAPER</p>
+            <strong>{{BRAND_NAME}}<br>产品白皮书</strong>
+            <span class="doc-cover__version">v1.0 · 2026 · 公开版</span>
+          </div>
+          <div class="whitepaper-copy">
+            <p>从问题判断、产品定义、系统架构，到记忆、声音、安全伦理与数据治理，完整说明我们如何理解“AI 纪念”，以及哪些事情我们选择不做。</p>
+            <ol class="toc">
+              <li><span>01</span>摘要</li>
+              <li><span>02</span>问题与判断</li>
+              <li><span>03</span>产品定义</li>
+              <li><span>04</span>系统架构</li>
+              <li><span>05</span>记忆与声音</li>
+              <li><span>06</span>安全、伦理与数据治理</li>
+              <li><span>07</span>服务边界与路线图</li>
+            </ol>
+            <div class="corp-actions">
+              <a class="btn btn--ink" href="/whitepaper/">阅读白皮书<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
+              <a class="btn btn--quiet" href="/whitepaper/#download">白皮书全文</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="team" class="corp-section corp-section--ink" aria-labelledby="team-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label">
+            <span>04</span>
+            <p>TEAM</p>
+          </div>
+          <div class="corp-section-body">
+            <h2 id="team-title" class="display">小团队，长链路，<br>把复杂留给自己。</h2>
+            <p class="corp-lead">核心团队来自产品、AI 工程、语音、记忆系统与安全合规等方向。我们保持小团队、短链路，让产品判断、技术实现与合规审查在同一条线上完成。</p>
+          </div>
+        </div>
+        <div class="corp-wrap team-grid">
+          <article class="team-card">
+            <span>01</span>
+            <h3>产品与体验</h3>
+            <p>产品定义、用户研究、服务设计与内容边界。</p>
+          </article>
+          <article class="team-card">
+            <span>02</span>
+            <h3>AI 与语音工程</h3>
+            <p>对话系统、模型接入、语音合成与质量评估。</p>
+          </article>
+          <article class="team-card">
+            <span>03</span>
+            <h3>记忆系统</h3>
+            <p>结构化记忆、检索、事实边界与长期一致性。</p>
+          </article>
+          <article class="team-card">
+            <span>04</span>
+            <h3>安全与合规</h3>
+            <p>隐私、授权、内容安全、数据生命周期与审计。</p>
+          </article>
+        </div>
+        <div class="corp-wrap team-foot">
+          <p>核心成员资料持续更新中。</p>
+          <a class="text-link text-link--light" href="/team/">团队介绍<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
+        </div>
+      </section>
+
+      <section id="company" class="corp-section" aria-labelledby="company-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label">
+            <span>05</span>
+            <p>COMPANY</p>
+          </div>
+          <div class="corp-section-body">
+            <h2 id="company-title" class="display">把“纪念”做成一件长期、可靠的事。</h2>
+            <div class="corp-prose">
+              <p>{{BRAND_COMPANY}}专注于生成式 AI 在纪念与情感陪伴场景的产品研发、服务运营与安全治理。我们想做的，是 {{BRAND_POSITIONING}}：不是复活，也不是替代，而是让称呼、声音与记忆有处安放。我们把对话、记忆与声音组织成一套可被信任的服务，让技术承担保存与回应的部分，让人保留决定与告别的权利。</p>
+              <p>我们不把“复活”当作卖点，也不把悲伤当作增长工具。产品从第一天起就围绕三个问题设计：什么应该被记住，什么应该被删除，什么永远不应该被模拟。</p>
+            </div>
+            <dl class="fact-grid">
+              <div><dt>公司主体</dt><dd>{{BRAND_COMPANY}}</dd></div>
+              <div><dt>业务方向</dt><dd>AI 纪念与情感陪伴</dd></div>
+              <div><dt>产品形态</dt><dd>微信小程序</dd></div>
+              <div><dt>合规基线</dt><dd>境内存储 · 不用于模型训练</dd></div>
+            </dl>
+            <a class="text-link" href="/about/">公司介绍<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
+          </div>
+        </div>
+      </section>
+
+      <section id="contact" class="corp-section corp-contact" aria-labelledby="contact-title">
+        <div class="corp-wrap">
+          <p class="corp-section-label"><span>06</span><span>CONTACT</span></p>
+          <h2 id="contact-title" class="display">如果你也在思考<br>技术与告别的边界，欢迎联系我们。</h2>
+          <div class="contact-grid">
+            <div class="contact-cell">
+              <span>商务与合作</span>
+              <a href="mailto:{{BRAND_EMAIL}}">{{BRAND_EMAIL}}</a>
+            </div>
+            <div class="contact-cell">
+              <span>客服与支持</span>
+              <a href="{{BRAND_PHONE_HREF}}">{{BRAND_PHONE}}</a>
+            </div>
+            <div class="contact-cell">
+              <span>公司主体</span>
+              <p>{{BRAND_COMPANY}}</p>
+            </div>
+            <div class="contact-cell">
+              <span>备案信息</span>
+              <p>{{ICP_LINK}}</p>
+            </div>
+          </div>
+          <div class="corp-actions">
+            <a class="btn btn--ink" href="mailto:{{BRAND_EMAIL}}">发送邮件<svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg></a>
+            <a class="btn btn--quiet" href="/about/#contact">查看联系方式</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

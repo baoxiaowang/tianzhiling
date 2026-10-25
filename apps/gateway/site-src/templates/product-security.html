@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> product-subpage-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} product-subpage">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/product/">产品</a></li>
+          <li aria-current="page">安全与数据</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <div class="product-layout">
+        {{> product-side.html}}
+        <div class="product-main">
+          <section class="corp-section corp-section--ink" aria-labelledby="page-title">
+            <div class="corp-wrap capability-grid capability-grid--trust">
+                      <article class="capability"><span>01</span><h3>素材加密传输</h3><p>上传的文字、照片、语音等素材，会经安全加密后传输至第三方技术服务商处理。</p></article>
+                      <article class="capability"><span>02</span><h3>不用于模型训练</h3><p>平台与受托处理方不会将素材用于训练或优化任何模型，包括第三方自身模型。</p></article>
+                      <article class="capability"><span>03</span><h3>境内存储</h3><p>在境内运营中收集和产生的个人信息，存储在中华人民共和国境内。</p></article>
+                      <article class="capability"><span>04</span><h3>可删除、可注销</h3><p>支持删除对话、记忆和素材；注销账号后，相关数据将被删除或停止使用，依法留存的数据除外。</p></article>
+                      <article class="capability"><span>05</span><h3>AI 生成有标识</h3><p>生成内容会按规范标识，避免被误认为逝者本人或真实音视频。</p></article>
+                      <article class="capability"><span>06</span><h3>授权边界清晰</h3><p>仅用于纪念本人逝去的亲人；平台可以要求提供必要授权证明，无法提供时有权拒绝服务。</p></article>
+                    </div>
+          </section>
+
+          <nav class="product-pager" aria-label="产品页翻页">
+            <a class="product-pager__link" href="/product/technology/">
+              <span>上一节</span>
+              <strong>技术架构</strong>
+            </a>
+            <a class="product-pager__link product-pager__link--next" href="/product/membership/">
+              <span>下一节</span>
+              <strong>会员与服务</strong>
+            </a>
+          </nav>
+        </div>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

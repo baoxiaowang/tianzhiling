@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> product-subpage-jsonld.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "HowTo",
+        "@id": "{{PAGE_URL}}#howto",
+        "name": "如何开始使用{{BRAND_NAME}}",
+        "description": "在微信中搜索小程序或扫码，跟随小使者建立纪念对象，补充资料后开始对话。",
+        "totalTime": "PT5M",
+        "tool": [{ "@type": "HowToTool", "name": "微信" }],
+        "step": [
+          { "@type": "HowToStep", "position": 1, "name": "找到入口", "text": "微信搜索小程序「{{BRAND_NAME}}」，或扫描官网首页的小程序码；首次进入按提示完成微信授权登录。" },
+          { "@type": "HowToStep", "position": 2, "name": "唤醒纪念对象", "text": "小使者会问“想纪念谁”“他怎么称呼你”等问题；按真实关系回答，建立专属对象。" },
+          { "@type": "HowToStep", "position": 3, "name": "补充资料", "text": "先填写称呼、关系与基本资料；照片、语音和故事可以以后再补。" },
+          { "@type": "HowToStep", "position": 4, "name": "开始对话", "text": "在聊天页输入文字、语音或图片；AI 回复会按规范标识，重要内容可以引用继续聊。" }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}} product-subpage">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/product/">产品</a></li>
+          <li aria-current="page">使用说明</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <div class="product-layout">
+        {{> product-side.html}}
+        <div class="product-main">
+          <section class="corp-section corp-section--paper" aria-labelledby="page-title">
+            <div class="corp-wrap">
+                      <h3 class="subheading">第一次使用</h3>
+                      <div class="stage-grid">
+                        <div class="stage"><span>01</span><h3>找到入口</h3><p>微信搜索小程序「{{BRAND_NAME}}」，或扫描官网首页的小程序码；首次进入按提示完成微信授权登录。</p></div>
+                        <div class="stage"><span>02</span><h3>唤醒纪念对象</h3><p>小使者会问“想纪念谁”“他怎么称呼你”等问题；按真实关系回答，建立专属对象。</p></div>
+                        <div class="stage"><span>03</span><h3>补充资料</h3><p>先填写称呼、关系与基本资料；照片、语音和故事可以以后再补，不必一次完成。</p></div>
+                        <div class="stage"><span>04</span><h3>开始对话</h3><p>在聊天页输入文字、语音或图片；AI 回复会按规范标识，重要内容可以引用继续聊。</p></div>
+                      </div>
+
+                      <h3 class="subheading">日常使用</h3>
+                      <div class="usage-grid">
+                        <article class="usage-card"><span>01</span><h3>想说话时</h3><p>选择纪念对象，发送文字、语音或图片。支持异步回复与历史消息，想继续时可以接着上次说。</p></article>
+                        <article class="usage-card"><span>02</span><h3>想补充记忆时</h3><p>进入资料或记忆页面，上传照片、语音和故事，也可以在对话中让产品“记住”一段内容。</p></article>
+                        <article class="usage-card"><span>03</span><h3>想回看时</h3><p>打开聊天相册或历史消息，按时间回看照片与共同片段；也可以随时删除某条内容。</p></article>
+                        <article class="usage-card"><span>04</span><h3>想整理或退出时</h3><p>删除单条内容、记忆或素材，撤回授权，或注销账号；不需要向任何人解释。</p></article>
+                      </div>
+
+                      <div class="usage-two">
+                        <div>
+                          <h3 class="subheading">使用前准备</h3>
+                          <ul class="single-list">
+                            <li>一个可正常登录的微信账号。</li>
+                            <li>你想纪念的亲人的称呼、关系与基本资料。</li>
+                            <li>可选：清晰照片、声音素材、故事与聊天记录。</li>
+                            <li>素材的合法授权；声音版需要安静、清晰、无多人同时说话的音频。</li>
+                            <li>了解产品边界：AI 不是逝者本人，不提供心理治疗或医疗建议。</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <h3 class="subheading">适合的场景</h3>
+                          <ul class="single-list">
+                            <li>想念突然涌上来，想说几句话的时候。</li>
+                            <li>生日、节日或家庭聚会前，回看照片与故事。</li>
+                            <li>整理长辈的口述、照片与聊天记录，留给家人。</li>
+                            <li>写下那些来不及说的话，在安全的节奏里整理情绪。</li>
+                          </ul>
+                        </div>
+                      </div>
+
+                      <p class="content-note">使用中如遇到内容不适、事实错误或隐私问题，可通过产品内客服入口或官网客服联系方式反馈；我们支持删除与注销。</p>
+                    </div>
+          </section>
+
+          <nav class="product-pager" aria-label="产品页翻页">
+            <a class="product-pager__link" href="/product/features/">
+              <span>上一节</span>
+              <strong>功能矩阵</strong>
+            </a>
+            <a class="product-pager__link product-pager__link--next" href="/product/technology/">
+              <span>下一节</span>
+              <strong>技术架构</strong>
+            </a>
+          </nav>
+        </div>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

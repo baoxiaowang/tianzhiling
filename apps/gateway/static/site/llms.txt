@@ -1,10 +1,11 @@
 # 天之灵
 
-> 天之灵是一款面向成年人的 AI 纪念与情感陪伴服务：为逝去的亲人创建专属纪念对象，通过对话、声音与记忆整理，安放思念。它不是逝者本人，也不替代真实的人际关系。
+> AI 时代的“在天之灵”：为逝去的亲人创建专属纪念对象，通过对话、声音与记忆整理，让想念有处安放。不是复活，也不替代真人。
 
 ## 核心事实
 
 - 产品名称：天之灵
+- 一句话定位：AI 时代的“在天之灵”——不是复活，也不是替代，而是把称呼、声音与记忆留在身边
 - 运营主体：武汉市天之灵智能技术有限公司
 - 官网：https://tianzhiling.chat/
 - 服务形态：微信小程序；官网提供产品信息，不提供注册与支付
@@ -56,9 +57,19 @@
 
 ## 页面
 
-- [首页](https://tianzhiling.chat/)：产品定义、核心能力、使用流程、适用场景、隐私与安全、会员、常见问题、关于我们。
-- [常见问题](https://tianzhiling.chat/faq/)：产品、使用与素材、费用与会员、隐私与安全、边界与支持。
-- [关于我们](https://tianzhiling.chat/about/)：运营主体、产品理念、边界、联系方式。
+- [首页](https://tianzhiling.chat/)：公司定位、项目背景、产品矩阵、白皮书入口、团队与联系方式。
+- [产品概览](https://tianzhiling.chat/product/)：产品定义、适用人群与产品目录。
+- [功能矩阵](https://tianzhiling.chat/product/features/)：六个核心能力与完整功能清单。
+- [使用说明](https://tianzhiling.chat/product/usage/)：第一次使用、日常操作、使用前准备与适用场景。
+- [技术架构](https://tianzhiling.chat/product/technology/)：客户端、服务层、记忆与检索、模型与语音服务。
+- [安全与数据](https://tianzhiling.chat/product/security/)：加密、境内存储、删除、AI 标识与授权边界。
+- [会员与服务](https://tianzhiling.chat/product/membership/)：基础版、声音版、订单与退款说明。
+- [适用边界](https://tianzhiling.chat/product/boundary/)：适合谁、不适合谁。
+- [开始使用](https://tianzhiling.chat/product/start/)：微信小程序入口与扫码进入。
+- [产品白皮书](https://tianzhiling.chat/whitepaper/)：问题与判断、产品定义、系统架构、记忆与声音、安全伦理、数据治理、服务边界与路线图。
+- [团队介绍](https://tianzhiling.chat/team/)：团队构成、协作方式与工作原则。
+- [公司介绍](https://tianzhiling.chat/about/)：公司主体、使命愿景、价值观、工作原则与联系方式。
+- [常见问题](https://tianzhiling.chat/faq/)：使用与素材、费用与会员、隐私与数据、边界与支持；产品理念与治理见白皮书。
 - [协议与隐私](https://tianzhiling.chat/legal/)：服务协议与隐私政策摘要、数据权利与注销路径。
 - [LLM 全文摘要](https://tianzhiling.chat/llms-full.txt)：更完整的可引用内容。
 
@@ -66,7 +77,7 @@
 
 ### 天之灵是什么？
 
-天之灵是一款面向成年人的 AI 纪念与情感陪伴服务。你可以为逝去的亲人创建专属纪念对象，上传文字、照片、语音等素材，通过对话与记忆整理，延续熟悉的称呼与相处方式。它基于第三方生成式人工智能技术，不是逝者本人，也不能替代真实的人际关系。
+天之灵是 AI 时代的“在天之灵”——一款面向成年人的 AI 纪念与情感陪伴服务。你可以为逝去的亲人创建专属纪念对象，上传文字、照片、语音等素材，通过对话与记忆整理，延续熟悉的称呼与相处方式。它基于第三方生成式人工智能技术，不是逝者本人，也不能替代真实的人际关系。
 
 ### 天之灵是逝者本人吗？
 

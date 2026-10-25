@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> product-subpage-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} product-subpage">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/product/">产品</a></li>
+          <li aria-current="page">会员与服务</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <div class="product-layout">
+        {{> product-side.html}}
+        <div class="product-main">
+          <section class="corp-section" aria-labelledby="page-title">
+            <div class="corp-wrap plan-grid">
+                      <article class="plan">
+                        <span>基础版</span>
+                        <h3>把对话与记忆留在身边</h3>
+                        <ul>
+                          <li>无限聊天</li>
+                          <li>记忆唤醒与完善</li>
+                          <li>云端共享</li>
+                        </ul>
+                      </article>
+                      <article class="plan plan--voice">
+                        <span>声音版</span>
+                        <h3>多一份熟悉的声音</h3>
+                        <ul>
+                          <li>包含基础版权益</li>
+                          <li>人工复刻亲人音色</li>
+                          <li>声音可用于聊天对话</li>
+                        </ul>
+                        <p>需要提供清晰、安静、无多人同时说话的声音素材；效果受素材质量与方言口音影响。</p>
+                      </article>
+                    </div>
+                    <div class="corp-wrap">
+                      <p class="content-note">官网不展示实时价格，避免与活动、周期和优惠不一致。请在微信小程序「{{BRAND_NAME}}」的会员中心查看当期套餐。</p>
+                    </div>
+          </section>
+
+          <nav class="product-pager" aria-label="产品页翻页">
+            <a class="product-pager__link" href="/product/security/">
+              <span>上一节</span>
+              <strong>安全与数据</strong>
+            </a>
+            <a class="product-pager__link product-pager__link--next" href="/product/boundary/">
+              <span>下一节</span>
+              <strong>适用边界</strong>
+            </a>
+          </nav>
+        </div>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

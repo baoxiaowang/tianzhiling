@@ -1,0 +1,28 @@
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{PAGE_URL}}#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "产品", "item": "{{SITE_URL}}/product/" },
+              { "@type": "ListItem", "position": 3, "name": "{{PAGE_H1}}", "item": "{{PAGE_URL}}" }
+            ]
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{PAGE_URL}}#webpage",
+            "url": "{{PAGE_URL}}",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "about": { "@id": "{{SITE_URL}}/#service" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": { "@id": "{{PAGE_URL}}#breadcrumb" }
+          }
+        ]
+      }
+    </script>

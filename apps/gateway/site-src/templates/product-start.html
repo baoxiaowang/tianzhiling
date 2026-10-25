@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> product-subpage-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} product-subpage">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/product/">产品</a></li>
+          <li aria-current="page">开始使用</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <div class="product-layout">
+        {{> product-side.html}}
+        <div class="product-main">
+          <section class="corp-section corp-contact" aria-labelledby="page-title">
+            <div class="corp-wrap product-cta">
+              <div>
+                <p class="corp-section-label"><span>08</span><span>START</span></p>
+                <h2 class="display">在微信里，<br>搜索「{{BRAND_NAME}}」。</h2>
+                <p class="corp-lead">打开小程序，跟随小使者的引导，为想念的人留下一处安静的位置。</p>
+              </div>
+              {{> qr-card.html}}
+            </div>
+          </section>
+
+          <nav class="product-pager" aria-label="产品页翻页">
+            <a class="product-pager__link" href="/product/boundary/">
+              <span>上一节</span>
+              <strong>适用边界</strong>
+            </a>
+            <a class="product-pager__link product-pager__link--next" href="/product/">
+              <span>下一节</span>
+              <strong>产品概览</strong>
+            </a>
+          </nav>
+        </div>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

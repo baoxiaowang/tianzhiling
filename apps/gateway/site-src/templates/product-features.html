@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> product-subpage-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} product-subpage">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/product/">产品</a></li>
+          <li aria-current="page">功能矩阵</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <div class="product-layout">
+        {{> product-side.html}}
+        <div class="product-main">
+          <section class="corp-section corp-section--ink" aria-labelledby="page-title">
+            <div class="corp-wrap capability-grid">
+                      <article class="capability">
+                        <span>01</span>
+                        <h3>唤醒专属纪念对象</h3>
+                        <p>通过小使者的对话式引导，留下称呼、关系与基本资料，创建一个只属于你的纪念对象。</p>
+                      </article>
+                      <article class="capability">
+                        <span>02</span>
+                        <h3>多轮 AI 对话</h3>
+                        <p>支持文字、语音转文字与图片，围绕日常问候、回忆片段和想说的话，慢慢聊下去。</p>
+                      </article>
+                      <article class="capability">
+                        <span>03</span>
+                        <h3>结构化记忆</h3>
+                        <p>把访谈、聊天和资料整理成可检索的记忆，让回应更贴近你们的关系与共同经历。</p>
+                      </article>
+                      <article class="capability">
+                        <span>04</span>
+                        <h3>照片与聊天相册</h3>
+                        <p>保存纪念照片和聊天里的图片，按时间回看那些一起走过的瞬间。</p>
+                      </article>
+                      <article class="capability">
+                        <span>05</span>
+                        <h3>声音与语气</h3>
+                        <p>在合法授权、素材清晰的前提下，逐步还原熟悉的语气与声音特征；具体开放范围以产品内为准。</p>
+                      </article>
+                      <article class="capability">
+                        <span>06</span>
+                        <h3>多对象管理</h3>
+                        <p>为不同的亲人分别创建纪念对象，设置默认聊天对象，让每段关系都有自己的位置。</p>
+                      </article>
+                    </div>
+                    <div class="corp-wrap product-feature-details">
+                      <details class="feature-disclosure feature-disclosure--panel">
+                        <summary>
+                          <span>完整功能清单</span>
+                          <small>10 项能力、使用方式与边界</small>
+                          <i aria-hidden="true"></i>
+                        </summary>
+                      <div class="feature-table-wrap">
+                        <table class="feature-table">
+                          <thead>
+                            <tr><th>功能</th><th>你能做什么</th><th>使用方式与说明</th></tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td data-label="功能">唤醒与建档</td>
+                              <td data-label="你能做什么">创建专属纪念对象，填写称呼、关系与基本资料。</td>
+                              <td data-label="使用方式与说明">通过小使者的对话式引导完成；创建前请确认纪念的是本人逝去的亲人，并拥有素材的合法授权。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">AI 对话</td>
+                              <td data-label="你能做什么">用文字、语音转文字或图片，围绕日常问候、回忆片段与想说的话交流。</td>
+                              <td data-label="使用方式与说明">选择纪念对象进入聊天；可引用消息继续聊，可对消息执行记住、忘记或删除（以产品内入口为准）。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">记忆整理</td>
+                              <td data-label="你能做什么">把访谈、聊天与资料整理成结构化记忆，让后续回应更有依据。</td>
+                              <td data-label="使用方式与说明">通过小使者访谈、补充资料或对话中的“记住”完成；记忆可查看、补充、修改与删除。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">照片与聊天相册</td>
+                              <td data-label="你能做什么">保存纪念照片与聊天图片，按时间回看共同瞬间。</td>
+                              <td data-label="使用方式与说明">上传或发送照片后在相册中管理；支持删除。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">声音与语气</td>
+                              <td data-label="你能做什么">声音版支持人工复刻亲人音色，并用于聊天对话。</td>
+                              <td data-label="使用方式与说明">需要清晰、安静、无多人同时说话的声音素材；素材质量与方言口音会影响效果，购买前建议先联系客服确认。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">多对象管理</td>
+                              <td data-label="你能做什么">为不同的亲人分别创建纪念对象，设置默认聊天对象。</td>
+                              <td data-label="使用方式与说明">在「我的」或联系人列表中切换与管理；每个对象有独立的资料与记忆。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">聊天记录导入</td>
+                              <td data-label="你能做什么">整理聊天记录，减少重复讲述。</td>
+                              <td data-label="使用方式与说明">以产品内实际入口为准；导入前请确认你有权使用相关记录。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">会员与额度</td>
+                              <td data-label="你能做什么">基础版与声音版会员，提供不同对话与记忆权益。</td>
+                              <td data-label="使用方式与说明">具体套餐、价格、额度与活动以产品内会员中心实时展示为准；支付、订单与退款可联系客服。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">数据管理</td>
+                              <td data-label="你能做什么">删除对话、记忆与素材；撤回授权；注销账号。</td>
+                              <td data-label="使用方式与说明">在「我的」相关入口操作；注销前会校验支付、退款、声音制作等未完成业务，注销后相关数据删除或停止使用，依法留存除外。</td>
+                            </tr>
+                            <tr>
+                              <td data-label="功能">客服与反馈</td>
+                              <td data-label="你能做什么">反馈问题、内容纠错、订单与数据权利。</td>
+                              <td data-label="使用方式与说明">产品内客服入口，或官网公布客服电话与邮箱。</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      </details>
+                      <p class="content-note content-note--light">功能与入口以产品内实际版本为准；会员权益、价格与额度以会员中心为准。</p>
+                    </div>
+          </section>
+
+          <nav class="product-pager" aria-label="产品页翻页">
+            <a class="product-pager__link" href="/product/">
+              <span>上一节</span>
+              <strong>产品概览</strong>
+            </a>
+            <a class="product-pager__link product-pager__link--next" href="/product/usage/">
+              <span>下一节</span>
+              <strong>使用说明</strong>
+            </a>
+          </nav>
+        </div>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>
