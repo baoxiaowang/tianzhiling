@@ -272,6 +272,18 @@ export class AdminFfmpegService {
         );
       }
 
+      // 输出固定为 24kHz / 单声道 / 16bit PCM：每秒钟 48000 字节（去掉 44 字节头部）。
+      // 太短说明素材里没有可用的语音（例如视频没有音轨、取音失败），
+      // 直接给出可读错误，避免提交到厂商后只拿到 audio preprocess server error。
+      const seconds = Math.max(0, buffer.length - 44) / 48000;
+      if (seconds < 3) {
+        throw new AppError(
+          'FFMPEG_MERGE_AUDIO_TOO_SHORT',
+          `训练音频只有 ${seconds.toFixed(1)} 秒，素材里可能没有可用人声（视频请确认包含音轨），请换一段包含说话的素材重试`,
+          400
+        );
+      }
+
       return {
         buffer,
         fileName: 'voice-training.wav',
@@ -286,13 +298,19 @@ export class AdminFfmpegService {
     buffer: Buffer,
     outputPath: string
   ): Promise<void> {
-    await this.runFfmpeg(
-      [
+    // 必须先落盘再转码：mp4/mov 的 moov 原子通常在文件尾部，从管道（pipe:0）读
+    // 无法 seek，ffmpeg 会「成功退出但只写出 78 字节空 wav」，最终训练音频为空，
+    // 复刻接口报 audio preprocess server error（2026-10-25 管理端上传 mp4 即此问题）。
+    const sourcePath = `${outputPath}.src`;
+    await writeFile(sourcePath, buffer);
+
+    try {
+      await this.runFfmpeg([
         '-hide_banner',
         '-loglevel',
         'error',
         '-i',
-        'pipe:0',
+        sourcePath,
         '-vn',
         '-acodec',
         'pcm_s16le',
@@ -303,9 +321,10 @@ export class AdminFfmpegService {
         '-f',
         'wav',
         outputPath,
-      ],
-      buffer
-    );
+      ]);
+    } finally {
+      await rm(sourcePath, { force: true });
+    }
   }
 
   private async createSilenceWav(outputPath: string): Promise<void> {
