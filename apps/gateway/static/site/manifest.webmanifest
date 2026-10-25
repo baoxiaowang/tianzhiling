@@ -1,0 +1,32 @@
+{
+  "name": "天之灵官网",
+  "short_name": "天之灵",
+  "description": "天之灵是一款面向成年人的 AI 纪念与情感陪伴服务。为逝去的亲人创建专属纪念对象，用对话、声音与记忆整理安放思念。了解产品能力、使用方式、会员权益与隐私保护。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "background_color": "#fff9ec",
+  "theme_color": "#fff9ec",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

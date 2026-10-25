@@ -1,0 +1,57 @@
+# 天之灵官网 robots.txt
+# 内容更新：2026年10月25日
+# 欢迎 AI 搜索与问答产品在注明来源并链接回原文的前提下引用本站公开内容。
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /public/
+
+# 传统搜索引擎
+User-agent: Baiduspider
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Sogou web spider
+Allow: /
+
+User-agent: 360Spider
+Allow: /
+
+# AI 搜索 / 答案引擎 / 检索型爬虫
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+Sitemap: https://tianzhiling.chat/sitemap.xml
