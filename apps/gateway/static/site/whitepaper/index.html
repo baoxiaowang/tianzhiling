@@ -216,6 +216,17 @@
 </section>
 
 
+      <section class="wp-print-cover" aria-hidden="true">
+        <div>
+          <p class="wp-print-cover__kicker">TIANZHILING · PRODUCT WHITEPAPER</p>
+          <p class="wp-print-cover__title">天之灵<br>产品白皮书</p>
+        </div>
+        <div>
+          <p class="wp-print-cover__positioning">AI 时代的“在天之灵”</p>
+          <p class="wp-print-cover__meta">v1.0 · 2026 · 公开版</p>
+        </div>
+      </section>
+
       <div class="corp-wrap whitepaper-layout">
         <aside class="whitepaper-aside" aria-label="白皮书目录">
           <p class="whitepaper-aside__label">CONTENTS</p>
@@ -231,7 +242,10 @@
             <a href="#roadmap"><span>08</span>路线图</a>
             <a href="#citation"><span>09</span>引用与版本</a>
           </nav>
-          <button class="print-button" type="button" onclick="window.print()"><svg class="icon" aria-hidden="true"><use href="#i-print"></use></svg>打印 / 另存为 PDF</button>
+          <div class="print-actions">
+            <button class="print-button" type="button" onclick="window.print()"><svg class="icon" aria-hidden="true"><use href="#i-print"></use></svg>打印 / 另存为 PDF</button>
+            <a class="print-button" href="/assets/tianzhiling-whitepaper-v1.0.pdf" download>下载 PDF</a>
+          </div>
           <p class="whitepaper-aside__version">v1.0 · 2026 · 公开版</p>
         </aside>
 
@@ -416,6 +430,7 @@
 
     <div class="corp-footer__col" aria-label="资源与联系">
       <h2>资源</h2>
+      <a href="/guides/">AI 纪念指南</a>
       <a href="/sitemap.xml">网站地图</a>
       <a href="/llms.txt">LLM 摘要</a>
       <a href="/llms-full.txt">LLM 全文</a>

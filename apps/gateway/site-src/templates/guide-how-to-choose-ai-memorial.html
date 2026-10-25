@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> guide-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} guide-page">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/guides/">指南</a></li>
+          <li aria-current="page">{{PAGE_H1}}</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <article class="guide-article">
+<div class="guide-summary">
+          <span>一句话答案</span>
+          <p>选择 AI 纪念产品，不要只看“像不像”，先看主体是否清楚、素材授权是否明确、数据是否用于训练、能不能删除和注销、AI 内容有没有标识、边界有没有说清楚。</p>
+        </div>
+        <div class="guide-body">
+          <h2>先看主体和备案</h2>
+          <p>一个可以被核对的官网，应该写清楚运营主体、备案号、客服渠道和服务协议。不要只在社交平台留下一个二维码或客服微信。</p>
+          <p>{{BRAND_NAME}}由{{BRAND_COMPANY}}运营，官网展示备案信息、服务协议与隐私政策摘要，并提供客服电话与邮箱。</p>
+
+          <h2>再看素材授权</h2>
+          <p>纪念产品处理的不是普通照片，而是逝者的脸部、声音、聊天记录和家庭故事。产品应该说明：谁可以创建纪念对象、需要什么授权、平台会不会要求授权证明、家属之间有争议时怎么处理。</p>
+
+          <h2>数据用途和存储</h2>
+          <p>重点问三件事：素材会不会用于训练模型？数据存储在哪里？第三方服务商是谁、用来做什么？如果这些问题回答含糊，建议不要上传敏感素材。</p>
+          <div class="guide-callout">
+            <strong>一个底线</strong>
+            <p>不接受“上传即授权我们用于改进产品”这类模糊条款。纪念素材应该只用于提供服务，而不是成为训练数据。</p>
+          </div>
+
+          <h2>删除和注销</h2>
+          <p>产品应该让用户能删除单条对话、记忆和素材，撤回授权，并注销账号。删除路径不应该藏在客服后面，也不应该要求用户解释原因。</p>
+
+          <h2>AI 标识和边界</h2>
+          <p>AI 生成内容应该被标识，避免被误认为逝者本人或真实音视频。产品也应该明确：不提供心理治疗、医疗建议或危机干预；不承诺“复活”；不保证生成内容完全准确。</p>
+
+          <h2>价格和会员透明度</h2>
+          <p>官网可以不写实时价格，但应该说明会员类型、权益差异和“以产品内会员中心为准”。如果价格、额度和退款规则都说不清，后续争议成本会很高。</p>
+
+          <h2>可以直接问的 8 个问题</h2>
+          <ol>
+            <li>运营主体和备案号是什么？</li>
+            <li>谁能授权创建纪念对象？</li>
+            <li>素材会不会用于训练模型？</li>
+            <li>数据存储在哪里，第三方是谁？</li>
+            <li>AI 生成内容有没有标识？</li>
+            <li>怎么删除全部素材并注销？</li>
+            <li>声音复刻需要什么素材，效果有保证吗？</li>
+            <li>出现心理危机时，产品会怎么处理？</li>
+          </ol>
+
+          <h2>几个危险信号</h2>
+          <ul>
+            <li>把“复活亲人”“数字永生”作为主要卖点，却不谈授权和删除。</li>
+            <li>要求上传大量人脸、声音和聊天记录，却不说明用途。</li>
+            <li>没有明确主体、备案、协议和客服渠道。</li>
+            <li>承诺“和真人一模一样”“永远不会离开”。</li>
+            <li>删除和退款只能通过私人微信，缺少可追溯流程。</li>
+          </ul>
+
+          <h2>{{BRAND_NAME}}怎么对应</h2>
+          <p>{{BRAND_NAME}}把边界写在产品结构里：不冒充真人、不承诺复活、素材不用于训练、境内存储、支持删除与注销、AI 生成内容标识。具体功能、会员与价格以产品内展示为准。</p>
+
+          <div class="guide-related">
+            <a href="/guides/ai-memorial-vs-ai-resurrection/">AI 纪念与 AI 复活</a>
+            <a href="/guides/voice-cloning-consent/">声音复刻授权</a>
+            <a href="/product/security/">安全与数据</a>
+            <a href="/legal/">协议与隐私</a>
+          </div>
+          <p class="guide-source">本文是选择产品时的检查清单，不构成法律意见。涉及授权、继承或纠纷时，请咨询专业律师。</p>
+        </div>
+      </article>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

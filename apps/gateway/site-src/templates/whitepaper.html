@@ -54,6 +54,17 @@
     <main id="main">
       {{> page-hero.html}}
 
+      <section class="wp-print-cover" aria-hidden="true">
+        <div>
+          <p class="wp-print-cover__kicker">TIANZHILING · PRODUCT WHITEPAPER</p>
+          <p class="wp-print-cover__title">{{BRAND_NAME}}<br>产品白皮书</p>
+        </div>
+        <div>
+          <p class="wp-print-cover__positioning">{{BRAND_POSITIONING}}</p>
+          <p class="wp-print-cover__meta">v1.0 · 2026 · 公开版</p>
+        </div>
+      </section>
+
       <div class="corp-wrap whitepaper-layout">
         <aside class="whitepaper-aside" aria-label="白皮书目录">
           <p class="whitepaper-aside__label">CONTENTS</p>
@@ -69,7 +80,10 @@
             <a href="#roadmap"><span>08</span>路线图</a>
             <a href="#citation"><span>09</span>引用与版本</a>
           </nav>
-          <button class="print-button" type="button" onclick="window.print()"><svg class="icon" aria-hidden="true"><use href="#i-print"></use></svg>打印 / 另存为 PDF</button>
+          <div class="print-actions">
+            <button class="print-button" type="button" onclick="window.print()"><svg class="icon" aria-hidden="true"><use href="#i-print"></use></svg>打印 / 另存为 PDF</button>
+            <a class="print-button" href="/assets/tianzhiling-whitepaper-v1.0.pdf" download>下载 PDF</a>
+          </div>
           <p class="whitepaper-aside__version">v1.0 · 2026 · 公开版</p>
         </aside>
 

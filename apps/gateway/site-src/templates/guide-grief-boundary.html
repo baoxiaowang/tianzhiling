@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> guide-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} guide-page">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/guides/">指南</a></li>
+          <li aria-current="page">{{PAGE_H1}}</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <article class="guide-article">
+<div class="guide-summary">
+          <span>一句话答案</span>
+          <p>AI 陪伴可以是一个说话、整理和表达的地方，但它不是心理治疗、医疗建议或危机干预。痛苦超出承受范围时，应优先寻求现实中的专业帮助。</p>
+        </div>
+        <div class="guide-body">
+          <h2>它适合什么</h2>
+          <ul>
+            <li>想念突然涌上来，想安静地说几句话。</li>
+            <li>整理长辈的照片、声音、故事和聊天记录。</li>
+            <li>在纪念日或家庭时刻，回看共同记忆。</li>
+            <li>把来不及说的话写下来，在安全的节奏里整理情绪。</li>
+          </ul>
+
+          <h2>它不适合什么</h2>
+          <ul>
+            <li>替代专业心理咨询、哀伤治疗或精神科诊疗。</li>
+            <li>提供医疗建议、诊断、用药建议或危机干预。</li>
+            <li>替代真实的人际关系、家人陪伴或现实支持。</li>
+            <li>承诺“复活”逝者，或让用户相信 AI 就是本人。</li>
+          </ul>
+
+          <h2>什么时候应该寻求现实帮助</h2>
+          <p>如果你持续失眠、无法正常生活、出现自伤或伤人念头、严重抑郁或焦虑，或者感到自己无法承受，请优先联系信任的家人朋友、当地医疗机构、心理援助热线或紧急服务。不要只依赖一个 AI 产品。</p>
+          <div class="guide-callout">
+            <strong>一个简单判断</strong>
+            <p>如果使用后你更孤立、更依赖、更分不清 AI 与真人，或者它让你推迟寻求现实帮助，这就是需要停下来和真人谈谈的信号。</p>
+          </div>
+
+          <h2>如何更安全地使用</h2>
+          <ul>
+            <li>给自己设定使用边界：什么时候用、用多久、什么时候停。</li>
+            <li>把产品当作“整理和表达的工具”，而不是“替代某个人”。</li>
+            <li>保留现实中的支持系统：家人、朋友、咨询师或支持小组。</li>
+            <li>如果内容让你不适，使用删除、反馈和退出功能。</li>
+            <li>重要决定不要只依据 AI 生成内容。</li>
+          </ul>
+
+          <h2>{{BRAND_NAME}}的边界</h2>
+          <p>{{BRAND_NAME}}不提供心理治疗、医疗建议或危机干预，不冒充真人，也不承诺复活。它希望提供的是一处安静的纪念空间：技术负责保存与回应，用户保留决定与告别的权利。</p>
+
+          <div class="guide-related">
+            <a href="/product/boundary/">适用边界</a>
+            <a href="/guides/ai-memorial-vs-ai-resurrection/">AI 纪念与 AI 复活</a>
+            <a href="/faq/#support">常见问题：边界与支持</a>
+            <a href="/product/start/">开始使用</a>
+          </div>
+          <p class="guide-source">本文不是心理治疗或医疗建议。如果你正处于危机中，请优先联系当地紧急服务、医疗机构或可信任的家人朋友。</p>
+        </div>
+      </article>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

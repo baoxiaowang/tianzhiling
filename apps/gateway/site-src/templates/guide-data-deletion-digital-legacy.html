@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> guide-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} guide-page">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/guides/">指南</a></li>
+          <li aria-current="page">{{PAGE_H1}}</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <article class="guide-article">
+<div class="guide-summary">
+          <span>一句话答案</span>
+          <p>开始使用前就应该知道怎么退出：能删除对话、记忆和素材，能撤回授权，能注销账号；注销前会校验未完成业务，依法需要留存的数据除外。</p>
+        </div>
+        <div class="guide-body">
+          <h2>你可以删除什么</h2>
+          <ul>
+            <li>单条对话或聊天中的图片。</li>
+            <li>某段记忆、故事或补充资料。</li>
+            <li>上传的照片、语音和其他素材。</li>
+            <li>整个纪念对象，以及账号本身。</li>
+          </ul>
+          <p>删除路径应该在产品内可见，不需要向客服解释原因，也不应该被设置不必要的障碍。</p>
+
+          <h2>注销账号会发生什么</h2>
+          <p>注销前，产品会校验是否存在支付、退款、声音制作等未完成业务。注销后，相关数据会被删除或停止使用；订单等依法需要留存的信息除外。不同数据类型的删除时间可能不同，建议在注销前导出你希望保留的内容。</p>
+
+          <h2>为什么“删除”不等于“所有备份立刻消失”</h2>
+          <p>真实系统通常有备份、日志和第三方处理链路。合规的做法是：停止使用、删除主数据、按期限清理备份，并告知哪些数据因法律要求必须留存。任何承诺“所有副本瞬间彻底消失”的说法，都值得追问。</p>
+
+          <h2>数字遗产，可以提前整理什么</h2>
+          <ul>
+            <li>列出重要账号、设备、照片和声音素材的存放位置。</li>
+            <li>和信任的家人沟通：哪些内容希望被保存，哪些希望被删除。</li>
+            <li>区分“纪念素材”和“可公开内容”，不要把所有私人素材混在一起。</li>
+            <li>为声音、照片和聊天记录保留授权说明，避免家人后续使用产生争议。</li>
+            <li>把密码、密钥和账号恢复方式放在安全的地方，不要只写在聊天记录里。</li>
+          </ul>
+
+          <h2>常见问题</h2>
+          <h3>注销后还能恢复吗？</h3>
+          <p>通常不能。注销是不可逆操作，建议先删除或导出需要保留的内容，再发起注销。</p>
+          <h3>家人可以替我删除吗？</h3>
+          <p>涉及账号和数据权利时，建议通过官方客服渠道沟通，并按要求提供必要证明；不要通过非官方个人账号处理。</p>
+          <h3>删除后还会被用于训练吗？</h3>
+          <p>{{BRAND_NAME}}不会将素材用于训练或优化任何模型；删除与注销按协议和适用法律处理，依法留存的数据除外。</p>
+
+          <div class="guide-related">
+            <a href="/product/security/">安全与数据</a>
+            <a href="/faq/#privacy">常见问题：隐私与安全</a>
+            <a href="/guides/voice-cloning-consent/">声音复刻授权</a>
+            <a href="/legal/">协议与隐私</a>
+          </div>
+          <p class="guide-source">本文是产品使用与数字遗产整理建议，不构成法律意见。涉及继承、遗嘱或数据权利时，请咨询专业律师。</p>
+        </div>
+      </article>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

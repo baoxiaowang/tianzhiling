@@ -2894,6 +2894,21 @@ body.page-faq .nav-faq::after {
   color: var(--text);
 }
 
+.print-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.print-actions .print-button {
+  margin-top: 0;
+}
+
+.wp-print-cover {
+  display: none;
+}
+
 .print-button {
   display: inline-flex;
   align-items: center;
@@ -4591,6 +4606,196 @@ body.page-faq .nav-faq::after {
   content: attr(data-label);
 }
 
+/* ---------- GEO guide pages ---------- */
+
+.guide-article {
+  width: min(860px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 72px 0 96px;
+}
+
+.guide-summary {
+  padding: 24px 28px;
+  margin-bottom: 46px;
+  background: var(--paper-2);
+  border-left: 3px solid var(--gold-3);
+}
+
+.guide-summary span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--gold-3);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.guide-summary p {
+  color: var(--text);
+  font-family: var(--serif);
+  font-size: clamp(20px, 2.2vw, 25px);
+  font-weight: 600;
+  line-height: 1.65;
+}
+
+.guide-body h2 {
+  margin: 48px 0 14px;
+  font-family: var(--serif);
+  font-size: clamp(26px, 3vw, 32px);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.guide-body h3 {
+  margin: 32px 0 10px;
+  font-family: var(--serif);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.guide-body p,
+.guide-body li {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.95;
+}
+
+.guide-body p + p {
+  margin-top: 12px;
+}
+
+.guide-body ul,
+.guide-body ol {
+  padding-left: 22px;
+  margin: 12px 0 18px;
+}
+
+.guide-body li {
+  margin: 7px 0;
+}
+
+.guide-callout {
+  padding: 18px 22px;
+  margin: 28px 0;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+}
+
+.guide-callout strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.guide-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 24px;
+  margin-top: 56px;
+  border-top: 1px solid var(--line);
+}
+
+.guide-related a {
+  padding: 8px 12px;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  font-size: 11.5px;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.guide-related a:hover {
+  color: var(--gold-3);
+  background: rgba(198, 161, 91, 0.06);
+  border-color: var(--gold-3);
+}
+
+.guide-source {
+  margin-top: 26px;
+  color: var(--muted-2);
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+.guide-index {
+  border-top: 1px solid var(--line);
+}
+
+.guide-index__item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 24px;
+  gap: 16px;
+  align-items: start;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  transition:
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.guide-index__item:hover {
+  color: var(--gold-3);
+  background: rgba(198, 161, 91, 0.04);
+}
+
+.guide-index__num {
+  padding-top: 5px;
+  color: var(--gold-3);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.guide-index__item h2 {
+  margin: 0 0 6px;
+  font-family: var(--serif);
+  font-size: clamp(21px, 2.4vw, 27px);
+  font-weight: 600;
+}
+
+.guide-index__item p {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.85;
+}
+
+.guide-index__arrow {
+  justify-self: end;
+  color: var(--gold-3);
+}
+
+@media (max-width: 680px) {
+  .guide-article {
+    width: calc(100% - 32px);
+    padding: 48px 0 64px;
+  }
+
+  .guide-summary {
+    padding: 20px;
+    margin-bottom: 34px;
+  }
+
+  .guide-summary p {
+    font-size: 20px;
+  }
+
+  .guide-body h2 {
+    margin-top: 36px;
+  }
+
+  .guide-index__item {
+    grid-template-columns: 30px minmax(0, 1fr) 18px;
+    gap: 10px;
+    padding: 18px 0;
+  }
+}
+
 /* ---------- product breadcrumb / pager ---------- */
 
 .product-subpage .breadcrumbs {
@@ -4821,7 +5026,60 @@ body.page-faq .nav-faq::after {
   }
 }
 
+@page {
+  size: A4;
+  margin: 16mm;
+}
+
+@page cover {
+  size: A4;
+  margin: 0;
+}
+
 @media print {
+  .wp-print-cover {
+    display: flex;
+    page: cover;
+    box-sizing: border-box;
+    height: 297mm;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 240mm;
+    padding: 24mm 18mm;
+    color: #171a20;
+    background: #f7f2e8;
+    break-after: page;
+  }
+
+  .wp-print-cover__kicker {
+    color: #8e6f36;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+  }
+
+  .wp-print-cover__title {
+    margin-top: 18mm;
+    font-family: var(--serif);
+    font-size: 48px;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  .wp-print-cover__positioning {
+    max-width: 150mm;
+    margin-bottom: 10mm;
+    color: #5f5a50;
+    font-family: var(--serif);
+    font-size: 18px;
+    line-height: 1.7;
+  }
+
+  .wp-print-cover__meta {
+    color: #8e6f36;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+  }
+
   body {
     background: #fff;
     color: #000;

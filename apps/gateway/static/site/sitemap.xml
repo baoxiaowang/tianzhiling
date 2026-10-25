@@ -67,6 +67,42 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://tianzhiling.chat/guides/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://tianzhiling.chat/guides/ai-memorial-vs-ai-resurrection/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://tianzhiling.chat/guides/how-to-choose-ai-memorial/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://tianzhiling.chat/guides/voice-cloning-consent/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://tianzhiling.chat/guides/grief-boundary/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://tianzhiling.chat/guides/data-deletion-digital-legacy/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://tianzhiling.chat/team/</loc>
     <lastmod>2026-10-25</lastmod>
     <changefreq>monthly</changefreq>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    {{> guide-jsonld.html}}
+  </head>
+  <body class="page-{{PAGE_KEY}} guide-page">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li><a href="/guides/">指南</a></li>
+          <li aria-current="page">{{PAGE_H1}}</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <article class="guide-article">
+<div class="guide-summary">
+          <span>一句话答案</span>
+          <p>AI 纪念不是让逝者“回来”，而是帮助活着的人保存称呼、声音、照片与故事，并在需要时整理、表达和告别。它不冒充真人，也不承诺复活。</p>
+        </div>
+        <div class="guide-body">
+          <h2>先把两个词分开</h2>
+          <p><strong>AI 纪念</strong>的目标是“安放想念”：把一个人留下的称呼、关系、照片、声音和故事整理成一处可以访问的纪念空间，让用户在想念时说话、回看、整理和告别。</p>
+          <p><strong>“AI 复活”</strong>的目标通常是“制造还在”：合成逝者的脸、声音和语气，让产品看起来像逝者本人仍然在线。它往往把“像不像”当作卖点，却很少解释授权、数据、退出和二次伤害。</p>
+
+          <h2>五个关键区别</h2>
+          <ul>
+            <li><strong>目标不同：</strong>纪念是帮助活着的人表达与整理；复活是试图否定死亡、制造“本人还在”的错觉。</li>
+            <li><strong>呈现不同：</strong>纪念会明确标识 AI 生成内容；复活常刻意模糊真人与生成内容的边界。</li>
+            <li><strong>承诺不同：</strong>纪念不承诺“复活”“本人”“永远在线”；复活常以“数字永生”“让亲人回来”作为宣传。</li>
+            <li><strong>数据不同：</strong>纪念强调授权、最小必要、可删除、可注销；复活产品可能大量收集人脸、声音与聊天记录，用途和留存不透明。</li>
+            <li><strong>退出不同：</strong>纪念产品应该把删除、撤回授权和注销放在明面上；复活产品常把退出路径藏在客服后面。</li>
+          </ul>
+
+          <h2>为什么这个区别重要</h2>
+          <p>丧亲者处在脆弱阶段，容易被“还能再见到他”这类话术打动。如果产品制造“还在”的幻觉，可能带来短暂的安慰，也可能带来二次伤害、隐私侵犯、家属之间的授权争议，甚至被用于诈骗或误导。</p>
+          <p>所以，判断一个产品是不是“AI 复活”，不要只看它有没有声音或数字人，而要看它如何描述自己、如何标识生成内容、如何处理授权和删除。</p>
+
+          <div class="guide-callout">
+            <strong>可以直接问产品的问题</strong>
+            <p>“你们会不会说这是逝者本人？”“AI 生成内容有没有标识？”“声音和照片需要谁的授权？”“我能不能删除全部素材并注销？”“素材会不会用于训练？”</p>
+          </div>
+
+          <h2>{{BRAND_NAME}}的选择</h2>
+          <p>{{BRAND_NAME}}把自己定位为{{BRAND_POSITIONING}}：不是复活，也不是替代，而是把称呼、声音与记忆留在身边，让想念有处安放。产品不冒充真人，不承诺“复活”，AI 生成内容会按规范标识；素材不用于训练；支持删除和注销。</p>
+
+          <h2>常见问题</h2>
+          <h3>用了 {{BRAND_NAME}}，等于让亲人“回来”吗？</h3>
+          <p>不等于。产品提供的是纪念与表达的空间，不是逝者本人，也不能替代真实的人际关系或哀伤支持。</p>
+          <h3>声音复刻算“AI 复活”吗？</h3>
+          <p>声音复刻本身是一项技术。关键看它是否在授权范围内使用、是否明确标识、是否承诺“本人还在”。{{BRAND_NAME}}的声音版需要合法授权，并明确效果不保证与真人完全一致。</p>
+          <h3>可以做“数字永生”吗？</h3>
+          <p>{{BRAND_NAME}}不做数字永生。我们不承诺把一个人“保存”在服务器里，也不把死亡当作可以否定的事。</p>
+
+          <div class="guide-related">
+            <a href="/whitepaper/">产品白皮书</a>
+            <a href="/product/boundary/">适用边界</a>
+            <a href="/guides/how-to-choose-ai-memorial/">怎么选择 AI 纪念产品</a>
+            <a href="/product/">产品概览</a>
+          </div>
+          <p class="guide-source">参考：{{BRAND_NAME}}产品白皮书 v1.0、服务边界与隐私政策摘要。本文为产品说明，不构成法律或心理治疗建议。</p>
+        </div>
+      </article>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>

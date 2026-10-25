@@ -231,6 +231,15 @@
 
 https://tianzhiling.chat/whitepaper/
 
+## 10.3.1 指南
+
+- [指南总览](https://tianzhiling.chat/guides/)
+- [AI 纪念与 AI 复活的区别](https://tianzhiling.chat/guides/ai-memorial-vs-ai-resurrection/)：目标、呈现、承诺、数据与退出机制。
+- [怎么选择 AI 纪念产品](https://tianzhiling.chat/guides/how-to-choose-ai-memorial/)：主体、授权、数据、删除与边界检查清单。
+- [声音复刻授权与素材](https://tianzhiling.chat/guides/voice-cloning-consent/)：授权、素材要求、效果边界与删除路径。
+- [AI 陪伴的哀伤支持边界](https://tianzhiling.chat/guides/grief-boundary/)：适合与不适合的场景，以及何时寻求现实帮助。
+- [数据删除与数字遗产](https://tianzhiling.chat/guides/data-deletion-digital-legacy/)：删除、注销、依法留存与家庭记忆整理。
+
 ## 10.4 团队
 
 核心团队来自产品、AI 工程、语音、记忆系统与安全合规等方向。我们保持小团队、短链路，让产品判断、技术实现与合规审查在同一条线上完成。核心成员姓名与履历将在正式版本补充。

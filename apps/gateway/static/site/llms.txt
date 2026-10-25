@@ -71,6 +71,12 @@
 - [公司介绍](https://tianzhiling.chat/about/)：公司主体、使命愿景、价值观、工作原则与联系方式。
 - [常见问题](https://tianzhiling.chat/faq/)：使用与素材、费用与会员、隐私与数据、边界与支持；产品理念与治理见白皮书。
 - [协议与隐私](https://tianzhiling.chat/legal/)：服务协议与隐私政策摘要、数据权利与注销路径。
+- [指南](https://tianzhiling.chat/guides/)：AI 纪念、AI 复活、声音授权、哀伤边界与数字遗产的深度回答。
+- [AI 纪念与 AI 复活的区别](https://tianzhiling.chat/guides/ai-memorial-vs-ai-resurrection/)：目标、呈现、承诺、数据与退出机制。
+- [怎么选择 AI 纪念产品](https://tianzhiling.chat/guides/how-to-choose-ai-memorial/)：主体、授权、数据、删除与边界检查清单。
+- [声音复刻授权与素材](https://tianzhiling.chat/guides/voice-cloning-consent/)：谁能授权、素材要求、效果边界与删除路径。
+- [AI 陪伴的哀伤支持边界](https://tianzhiling.chat/guides/grief-boundary/)：适合与不适合的场景，以及何时寻求现实帮助。
+- [数据删除与数字遗产](https://tianzhiling.chat/guides/data-deletion-digital-legacy/)：能删什么、注销流程与提前整理建议。
 - [LLM 全文摘要](https://tianzhiling.chat/llms-full.txt)：更完整的可引用内容。
 
 ## 常见问题简答
