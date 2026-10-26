@@ -15,6 +15,14 @@ export class SiteMessageController {
     return this.siteMessageService.listPublished(query?.page, query?.pageSize);
   }
 
+  private getClientIp(): string {
+    const realIp = (this.ctx.get('x-real-ip') || '').trim();
+    const forwarded = (this.ctx.get('x-forwarded-for') || '')
+      .split(',')[0]
+      .trim();
+    return realIp || forwarded || this.ctx.ip;
+  }
+
   @Post('/')
   async create(
     @Body()
@@ -27,7 +35,7 @@ export class SiteMessageController {
     }
   ) {
     return this.siteMessageService.create(body, {
-      ip: this.ctx.ip,
+      ip: this.getClientIp(),
       userAgent: this.ctx.get('user-agent') || '',
     });
   }

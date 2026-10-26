@@ -169,7 +169,18 @@
     }
   });
 
-  if (logout) logout.addEventListener('click', function () { showLogin(); });
+  if (logout) logout.addEventListener('click', async function () {
+    var token = getToken();
+    if (token) {
+      try {
+        await fetch('/api/site-moderation/logout', {
+          method: 'POST',
+          headers: { 'x-moderation-token': token }
+        });
+      } catch (error) {}
+    }
+    showLogin();
+  });
   tabs.forEach(function (tab) {
     tab.addEventListener('click', function () {
       tabs.forEach(function (item) { item.classList.remove('is-active'); });

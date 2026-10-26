@@ -18,11 +18,19 @@ export class SiteModerationController {
   @Inject()
   ctx: Context;
 
+  private getClientIp(): string {
+    const realIp = (this.ctx.get('x-real-ip') || '').trim();
+    const forwarded = (this.ctx.get('x-forwarded-for') || '')
+      .split(',')[0]
+      .trim();
+    return realIp || forwarded || this.ctx.ip;
+  }
+
   @Post('/login')
   async login(@Body() body: { password?: string }) {
     return this.siteMessageService.loginModerator(
       String(body?.password || ''),
-      this.ctx.ip
+      this.getClientIp()
     );
   }
 
