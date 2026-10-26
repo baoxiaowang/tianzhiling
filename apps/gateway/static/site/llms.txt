@@ -71,6 +71,10 @@
 - [公司介绍](https://tianzhiling.chat/about/)：公司主体、使命愿景、价值观、工作原则与联系方式。
 - [常见问题](https://tianzhiling.chat/faq/)：使用与素材、费用与会员、隐私与数据、边界与支持；产品理念与治理见白皮书。
 - [协议与隐私](https://tianzhiling.chat/legal/)：服务协议与隐私政策摘要、数据权利与注销路径。
+- [洞察](https://tianzhiling.chat/insights/)：关于 AI 纪念、数字遗产与产品边界的长期写作。
+- [AI 纪念的 2026：从“像不像”到“能不能退出”](https://tianzhiling.chat/insights/ai-memorial-2026-exit/)：AI 纪念产品正在从生成效果竞争，转向授权、删除与退出机制。本文给出四个判断标准，帮助家庭判断一个产品是否值得信任。
+- [一份家庭数字遗产整理清单：先整理，再决定保存什么](https://tianzhiling.chat/insights/family-digital-legacy-checklist/)：数字遗产整理不是把所有东西都留下来。本文给出一张家庭清单：先盘点账号、照片、声音与故事，再决定保存、删除和交给谁。
+- [为什么我们不做“数字永生”](https://tianzhiling.chat/insights/why-not-digital-immortality/)：“数字永生”把死亡当作可以否定的东西，AI 纪念的目标却是帮助活着的人整理、表达和告别。本文说明两者的区别与我们主动放弃的边界。
 - [指南](https://tianzhiling.chat/guides/)：AI 纪念、AI 复活、声音授权、哀伤边界与数字遗产的深度回答。
 - [AI 纪念与 AI 复活的区别](https://tianzhiling.chat/guides/ai-memorial-vs-ai-resurrection/)：目标、呈现、承诺、数据与退出机制。
 - [怎么选择 AI 纪念产品](https://tianzhiling.chat/guides/how-to-choose-ai-memorial/)：主体、授权、数据、删除与边界检查清单。

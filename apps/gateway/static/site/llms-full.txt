@@ -240,6 +240,13 @@ https://tianzhiling.chat/whitepaper/
 - [AI 陪伴的哀伤支持边界](https://tianzhiling.chat/guides/grief-boundary/)：适合与不适合的场景，以及何时寻求现实帮助。
 - [数据删除与数字遗产](https://tianzhiling.chat/guides/data-deletion-digital-legacy/)：删除、注销、依法留存与家庭记忆整理。
 
+## 10.3.2 洞察
+
+- [洞察总览](https://tianzhiling.chat/insights/)
+- [AI 纪念的 2026：从“像不像”到“能不能退出”](https://tianzhiling.chat/insights/ai-memorial-2026-exit/)：AI 纪念产品正在从生成效果竞争，转向授权、删除与退出机制。本文给出四个判断标准，帮助家庭判断一个产品是否值得信任。
+- [一份家庭数字遗产整理清单：先整理，再决定保存什么](https://tianzhiling.chat/insights/family-digital-legacy-checklist/)：数字遗产整理不是把所有东西都留下来。本文给出一张家庭清单：先盘点账号、照片、声音与故事，再决定保存、删除和交给谁。
+- [为什么我们不做“数字永生”](https://tianzhiling.chat/insights/why-not-digital-immortality/)：“数字永生”把死亡当作可以否定的东西，AI 纪念的目标却是帮助活着的人整理、表达和告别。本文说明两者的区别与我们主动放弃的边界。
+
 ## 10.4 团队
 
 核心团队来自产品、AI 工程、语音、记忆系统与安全合规等方向。我们保持小团队、短链路，让产品判断、技术实现与合规审查在同一条线上完成。核心成员姓名与履历将在正式版本补充。

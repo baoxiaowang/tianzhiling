@@ -71,6 +71,8 @@
 - [公司介绍]({{SITE_URL}}/about/)：公司主体、使命愿景、价值观、工作原则与联系方式。
 - [常见问题]({{SITE_URL}}/faq/)：使用与素材、费用与会员、隐私与数据、边界与支持；产品理念与治理见白皮书。
 - [协议与隐私]({{SITE_URL}}/legal/)：服务协议与隐私政策摘要、数据权利与注销路径。
+- [洞察]({{SITE_URL}}/insights/)：关于 AI 纪念、数字遗产与产品边界的长期写作。
+{{INSIGHTS_LLMS_LIST}}
 - [指南]({{SITE_URL}}/guides/)：AI 纪念、AI 复活、声音授权、哀伤边界与数字遗产的深度回答。
 - [AI 纪念与 AI 复活的区别]({{SITE_URL}}/guides/ai-memorial-vs-ai-resurrection/)：目标、呈现、承诺、数据与退出机制。
 - [怎么选择 AI 纪念产品]({{SITE_URL}}/guides/how-to-choose-ai-memorial/)：主体、授权、数据、删除与边界检查清单。

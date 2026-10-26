@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>天之灵洞察</title>
+    <link>https://tianzhiling.chat/insights/</link>
+    <description>关于 AI 纪念、数字遗产与产品边界的长期写作。</description>
+    <language>zh-CN</language>
+    <item>
+      <title>AI 纪念的 2026：从“像不像”到“能不能退出”</title>
+      <link>https://tianzhiling.chat/insights/ai-memorial-2026-exit/</link>
+      <guid isPermaLink="true">https://tianzhiling.chat/insights/ai-memorial-2026-exit/</guid>
+      <pubDate>Sun, 25 Oct 2026 16:00:00 GMT</pubDate>
+      <description>AI 纪念产品正在从生成效果竞争，转向授权、删除与退出机制。本文给出四个判断标准，帮助家庭判断一个产品是否值得信任。</description>
+    </item>
+    <item>
+      <title>一份家庭数字遗产整理清单：先整理，再决定保存什么</title>
+      <link>https://tianzhiling.chat/insights/family-digital-legacy-checklist/</link>
+      <guid isPermaLink="true">https://tianzhiling.chat/insights/family-digital-legacy-checklist/</guid>
+      <pubDate>Sun, 25 Oct 2026 16:00:00 GMT</pubDate>
+      <description>数字遗产整理不是把所有东西都留下来。本文给出一张家庭清单：先盘点账号、照片、声音与故事，再决定保存、删除和交给谁。</description>
+    </item>
+    <item>
+      <title>为什么我们不做“数字永生”</title>
+      <link>https://tianzhiling.chat/insights/why-not-digital-immortality/</link>
+      <guid isPermaLink="true">https://tianzhiling.chat/insights/why-not-digital-immortality/</guid>
+      <pubDate>Sun, 25 Oct 2026 16:00:00 GMT</pubDate>
+      <description>“数字永生”把死亡当作可以否定的东西，AI 纪念的目标却是帮助活着的人整理、表达和告别。本文说明两者的区别与我们主动放弃的边界。</description>
+    </item>
+  </channel>
+</rss>

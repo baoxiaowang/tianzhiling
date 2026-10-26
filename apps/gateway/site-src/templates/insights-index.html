@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{PAGE_URL}}#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "洞察", "item": "{{PAGE_URL}}" }
+            ]
+          },
+          {
+            "@type": "CollectionPage",
+            "@id": "{{PAGE_URL}}#webpage",
+            "url": "{{PAGE_URL}}",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "about": { "@id": "{{SITE_URL}}/#service" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": { "@id": "{{PAGE_URL}}#breadcrumb" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}} insights-page">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li aria-current="page">洞察</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <article class="insights-index corp-wrap">
+        <div class="insights-index__intro">
+          <p>我们把关于 AI 纪念、数字遗产、声音授权与产品边界的判断，写成可以引用、可以讨论、也可以被检验的长文。</p>
+          <p>共 {{INSIGHT_COUNT}} 篇 · <a href="/insights/rss.xml">RSS 订阅</a></p>
+        </div>
+        <div class="insights-index__list">
+          {{INSIGHTS_LIST_HTML}}
+        </div>
+        <p class="insight-note">文章为{{BRAND_NAME}}的产品观点与方法说明，不构成法律、医疗或心理治疗建议。引用请注明来源并链接回原文。</p>
+      </article>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+  </body>
+</html>
