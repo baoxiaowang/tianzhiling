@@ -53,6 +53,7 @@ import {
   VoiceTrainingTaskEntity,
 } from '@tzl/entities';
 import { MessageUserCountSubscriber } from '../subscriber/message-user-count.subscriber';
+import { SiteMessageEntity } from '../entity/site-message.entity';
 
 const PROJECT_ROOT = resolve(__dirname, '../../../..');
 
@@ -1225,6 +1226,7 @@ export default {
           VoiceServiceSessionEntity,
           VoiceTimbreEntity,
           VoiceTrainingTaskEntity,
+          SiteMessageEntity,
         ],
         subscribers: [MessageUserCountSubscriber],
       },

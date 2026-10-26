@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{PAGE_URL}}#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "留言板", "item": "{{PAGE_URL}}" }
+            ]
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{PAGE_URL}}#webpage",
+            "url": "{{PAGE_URL}}",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "about": { "@id": "{{SITE_URL}}/#service" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": { "@id": "{{PAGE_URL}}#breadcrumb" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}} messages-page">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <nav class="breadcrumbs" aria-label="面包屑">
+        <ol>
+          <li><a href="/">首页</a></li>
+          <li aria-current="page">留言板</li>
+        </ol>
+      </nav>
+
+      {{> page-hero.html}}
+
+      <div class="messages-shell">
+        <section class="message-form-panel" aria-labelledby="message-form-title">
+          <div class="messages-section-head">
+            <p class="messages-kicker">LEAVE A MESSAGE</p>
+            <h2 id="message-form-title">写下想说的话</h2>
+            <p>不需要注册。留言会先进入审核，通过后才会公开显示；联系方式不会公开。提交时会记录必要的安全信息（如 IP 哈希）用于防滥用。</p>
+          </div>
+          <form id="message-form" class="message-form" novalidate>
+            <div class="message-form__row">
+              <label for="message-author">怎么称呼你</label>
+              <input id="message-author" name="authorName" type="text" maxlength="20" placeholder="可以留空，默认显示“匿名”">
+            </div>
+            <div class="message-form__row">
+              <label for="message-content">留言内容 <span>必填</span></label>
+              <textarea id="message-content" name="content" rows="6" minlength="5" maxlength="800" required placeholder="写下你想说的话。请不要填写逝者的真实姓名、电话、地址等敏感信息。"></textarea>
+              <small>5–800 字。请勿发布他人隐私、广告、攻击性内容或违法信息。</small>
+            </div>
+            <div class="message-form__row">
+              <label for="message-contact">联系邮箱 <span>选填，不公开</span></label>
+              <input id="message-contact" name="contact" type="email" maxlength="120" placeholder="如果希望我们回复你，可以留下邮箱">
+            </div>
+            <div class="message-form__trap" aria-hidden="true">
+              <label for="message-website">网站</label>
+              <input id="message-website" name="website" type="text" tabindex="-1" autocomplete="off">
+            </div>
+            <label class="message-form__agreement">
+              <input id="message-agreement" name="agreementAccepted" type="checkbox" required>
+              <span>我确认留言不包含他人隐私、违法或侵权内容，并同意按<a href="/legal/">隐私政策</a>处理。</span>
+            </label>
+            <div class="message-form__actions">
+              <button class="btn btn--gold" type="submit">提交留言</button>
+              <p id="message-status" class="message-status" role="status" aria-live="polite"></p>
+            </div>
+          </form>
+        </section>
+
+        <section class="message-list-panel" aria-labelledby="message-list-title">
+          <div class="messages-section-head">
+            <p class="messages-kicker">MESSAGES</p>
+            <h2 id="message-list-title">大家的留言</h2>
+            <p>这里只显示已通过审核的公开留言。</p>
+          </div>
+          <div id="message-list" class="message-list">
+            <p class="message-empty">正在加载留言…</p>
+          </div>
+          <button id="message-load-more" class="message-load-more" type="button" hidden>加载更多</button>
+        </section>
+      </div>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+    <script src="/assets/site-messages.js" defer></script>
+  </body>
+</html>

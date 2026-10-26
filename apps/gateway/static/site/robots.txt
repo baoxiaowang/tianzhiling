@@ -6,6 +6,7 @@ User-agent: *
 Allow: /
 Disallow: /api/
 Disallow: /public/
+Disallow: /moderation/
 
 # 传统搜索引擎
 User-agent: Baiduspider

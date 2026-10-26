@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    {{> head.html}}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BreadcrumbList",
+            "@id": "{{PAGE_URL}}#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+              { "@type": "ListItem", "position": 2, "name": "留言审核", "item": "{{PAGE_URL}}" }
+            ]
+          },
+          {
+            "@type": "WebPage",
+            "@id": "{{PAGE_URL}}#webpage",
+            "url": "{{PAGE_URL}}",
+            "name": "{{PAGE_TITLE}}",
+            "description": "{{PAGE_DESCRIPTION}}",
+            "inLanguage": "zh-CN",
+            "isPartOf": { "@id": "{{SITE_URL}}/#website" },
+            "dateModified": "{{UPDATED_ISO}}",
+            "breadcrumb": { "@id": "{{PAGE_URL}}#breadcrumb" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="page-{{PAGE_KEY}} moderation-page">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    {{> icons.html}}
+    {{> header.html}}
+
+    <main id="main">
+      <section class="moderation-shell" aria-labelledby="page-title">
+        <div class="moderation-login" id="moderation-login">
+          <p class="messages-kicker">MODERATION</p>
+          <h1 id="page-title">留言审核</h1>
+          <p>仅限站点管理员。审核通过后留言才会公开显示。</p>
+          <form id="moderation-login-form" class="moderation-login-form">
+            <label for="moderation-password">审核密码</label>
+            <input id="moderation-password" name="password" type="password" autocomplete="current-password" required>
+            <button class="btn btn--ink" type="submit">进入审核台</button>
+            <p id="moderation-login-status" class="message-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <div class="moderation-console" id="moderation-console" hidden>
+          <div class="moderation-console__head">
+            <div>
+              <p class="messages-kicker">MODERATION</p>
+              <h2>留言审核</h2>
+            </div>
+            <button id="moderation-logout" class="moderation-logout" type="button">退出</button>
+          </div>
+          <div class="moderation-tabs" role="tablist" aria-label="留言状态">
+            <button class="is-active" type="button" data-status="pending">待审核</button>
+            <button type="button" data-status="published">已公开</button>
+            <button type="button" data-status="rejected">已拒绝</button>
+            <button type="button" data-status="all">全部</button>
+          </div>
+          <p id="moderation-status" class="message-status" role="status" aria-live="polite"></p>
+          <div id="moderation-list" class="moderation-list"></div>
+        </div>
+      </section>
+    </main>
+
+    {{> footer.html}}
+    {{> scripts.html}}
+    <script src="/assets/site-moderation.js" defer></script>
+  </body>
+</html>
