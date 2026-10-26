@@ -202,6 +202,17 @@ export interface VoiceServiceMaterialDTO {
 
 export const VOICE_SERVICE_MAX_TRAINING_SECONDS = 60;
 
+/**
+ * 送去厂商复刻的音频最长时长（秒）。
+ *
+ * 2026-10-26 实测：59.93 秒的训练音频用 qwen-audio-3.0-tts-plus 复刻后，
+ * 音色能创建、预览能生成，但之后合成报
+ * `[cosyvoice]Engine error [411]: TTS speak operation failed`；
+ * 同一段音频截到 45 秒（30/20 秒同样正常）复刻后合成正常。
+ * 因此实际送厂的音频截到 45 秒，素材选取仍按 {@link VOICE_SERVICE_MAX_TRAINING_SECONDS}。
+ */
+export const VOICE_SERVICE_MAX_ENROLL_AUDIO_SECONDS = 45;
+
 export interface VoiceServiceReviewClipDTO {
   id: string;
   sourceMaterialId?: string;

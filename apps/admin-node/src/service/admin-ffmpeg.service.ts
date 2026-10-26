@@ -2,7 +2,7 @@ import { Config, Provide } from '@midwayjs/core';
 import {
   AppError,
   buildSpeechOutputFfmpegFilter,
-  VOICE_SERVICE_MAX_TRAINING_SECONDS,
+  VOICE_SERVICE_MAX_ENROLL_AUDIO_SECONDS,
 } from '@tzl/shared';
 import { spawn } from 'child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
@@ -250,7 +250,7 @@ export class AdminFfmpegService {
         '-i',
         listPath,
         '-t',
-        String(VOICE_SERVICE_MAX_TRAINING_SECONDS),
+        String(VOICE_SERVICE_MAX_ENROLL_AUDIO_SECONDS),
         '-af',
         'highpass=f=80,lowpass=f=8000,loudnorm=I=-18:TP=-2:LRA=11',
         '-ac',
