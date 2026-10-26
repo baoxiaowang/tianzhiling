@@ -3,6 +3,7 @@ import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
+import { ObjectId } from 'mongodb';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { AppError } from '../common/errors';
 import {
@@ -261,7 +262,11 @@ export class SiteMessageService {
     if (!/^[a-f0-9]{24}$/i.test(String(id || ''))) {
       throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
     }
-    const found = await this.messageModel.findOne({ where: { id: id as never } });
+    const found =
+      (await this.messageModel.findOne({
+        where: { _id: new ObjectId(id) } as never,
+      })) ||
+      (await this.messageModel.findOne({ where: { id: id as never } }));
     if (!found) throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
     return found;
   }
