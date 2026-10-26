@@ -30,7 +30,7 @@
 <link rel="icon" href="/assets/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/assets/styles.css?v=7a8ea1d396">
+<link rel="stylesheet" href="/assets/styles.css?v=ab2ea97589">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="天之灵">
 <meta property="og:locale" content="zh_CN">
@@ -277,27 +277,94 @@
         <div class="corp-hero__watermark" aria-hidden="true">念</div>
         <div class="corp-wrap corp-hero__inner">
           <div class="corp-hero__copy">
-            <p class="corp-kicker">AI MEMORY &amp; COMPANIONSHIP</p>
+            <p class="corp-kicker"><span class="kicker-dot" aria-hidden="true"></span>AI MEMORY SYSTEM / 数字亲人</p>
             <h1 id="hero-title">
               <span class="hero-title__main">AI 时代的“在天之灵”</span>
               <span class="hero-title__sub">让想念有处安放。</span>
             </h1>
-            <p class="corp-hero__lead">我们以对话、记忆与声音为技术基底，为丧亲者提供克制、透明、可被信任的纪念空间。</p>
+            <p class="corp-hero__lead">我们以对话、记忆与声音为技术基底，把“数字亲人”<span class="nowrap">做成</span>一处克制、透明、<span class="nowrap">可被信任</span><span class="nowrap">的纪念空间</span>。</p>
             <div class="corp-actions">
               <a class="btn btn--gold" href="/whitepaper/">阅读产品白皮书<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
               <a class="btn btn--ghost" href="/about/">了解公司</a>
             </div>
+            <div class="hero-techline" aria-hidden="true">
+              <span>MEMORY GRAPH</span>
+              <span>VOICE SYNTHESIS</span>
+              <span>RELATION MODEL</span>
+            </div>
           </div>
-          <aside class="qr-card" aria-label="天之灵微信小程序入口">
-  <div class="qr-card__head">
-    <span class="qr-card__badge">微信小程序</span>
-    <span class="qr-card__brand">天之灵</span>
+          <aside class="memory-console" aria-label="数字亲人记忆界面示意">
+  <div class="memory-console__top">
+    <span>MEMORY CORE / 01</span>
+    <span class="memory-console__live"><i aria-hidden="true"></i>SYNCED</span>
   </div>
-  <div class="qr-card__frame">
-    <img class="qr-card__image" src="/assets/miniprogram-code-tianzhiling.png" width="430" height="430" alt="天之灵微信小程序码">
+
+  <div class="memory-console__stage">
+    <svg class="digital-relative" viewBox="0 0 640 640" role="img" aria-label="数字亲人记忆界面示意：由线条、节点和扫描线组成的抽象人物轮廓">
+  <g class="dr-rings" fill="none">
+    <circle cx="320" cy="310" r="252" stroke="#c6a15b" stroke-opacity=".16" stroke-dasharray="1 11"/>
+    <circle cx="320" cy="310" r="214" stroke="#7fd8d2" stroke-opacity=".14" stroke-dasharray="2 18"/>
+    <circle cx="320" cy="310" r="176" stroke="#c6a15b" stroke-opacity=".1"/>
+  </g>
+
+  <g class="dr-ticks" stroke="#c6a15b" stroke-opacity=".45">
+    <path d="M320 36v18M320 586v18M46 310h18M576 310h18"/>
+    <path d="M120 120l12 12M508 496l12 12M520 120l-12 12M132 496l-12 12" stroke-opacity=".25"/>
+  </g>
+
+  <g class="dr-bust" fill="none" stroke="#e3cf9b" stroke-opacity=".72">
+    <path d="M320 118c58 0 98 44 98 108 0 52-25 91-64 110v34c68 18 116 63 132 128" stroke-width="1.3"/>
+    <path d="M320 118c-58 0-98 44-98 108 0 52 25 91 64 110v34c-68 18-116 63-132 128" stroke-width="1.3"/>
+    <path d="M320 118c-34 0-62 25-70 62M320 118c34 0 62 25 70 62" stroke-opacity=".35"/>
+    <path d="M224 236c22 27 57 42 96 42s74-15 96-42" stroke-opacity=".35"/>
+    <path d="M256 340c18 14 39 21 64 21s46-7 64-21" stroke-opacity=".28"/>
+    <path d="M188 498c70 34 194 34 264 0" stroke-opacity=".42"/>
+    <path d="M170 520c82 40 218 40 300 0" stroke-opacity=".18"/>
+  </g>
+
+  <g class="dr-mesh" fill="none" stroke="#7fd8d2" stroke-opacity=".22">
+    <path d="M270 150c-10 58-8 117 8 170"/>
+    <path d="M370 150c10 58 8 117-8 170"/>
+    <path d="M246 202c42 18 106 18 148 0"/>
+    <path d="M238 258c50 20 114 20 164 0"/>
+    <path d="M242 314c48 16 108 16 156 0"/>
+    <path d="M220 450c64 26 136 26 200 0"/>
+    <path d="M200 482c78 30 162 30 240 0"/>
+  </g>
+
+  <g class="dr-nodes" fill="#7fd8d2">
+    <circle cx="320" cy="118" r="2.4"/>
+    <circle cx="418" cy="226" r="2.1"/>
+    <circle cx="222" cy="226" r="2.1"/>
+    <circle cx="320" cy="336" r="2.4"/>
+    <circle cx="452" cy="490" r="2"/>
+    <circle cx="188" cy="490" r="2"/>
+    <circle cx="320" cy="510" r="2.2"/>
+    <circle cx="320" cy="310" r="4.5" fill="#e6c982"/>
+  </g>
+
+  <line class="dr-scan" x1="320" y1="96" x2="320" y2="548" stroke="#7fd8d2" stroke-opacity=".5"/>
+  <path class="dr-base" d="M150 552h340" stroke="#c6a15b" stroke-opacity=".25"/>
+</svg>
+
+    <div class="memory-console__chip memory-console__chip--voice"><span>VOICE</span><strong>98.2%</strong></div>
+    <div class="memory-console__chip memory-console__chip--memory"><span>MEMORY</span><strong>12,480</strong></div>
+    <div class="memory-console__chip memory-console__chip--relation"><span>RELATION</span><strong>女儿</strong></div>
   </div>
-  <p class="qr-card__title">扫码进入天之灵</p>
-  <p class="qr-card__hint">或微信搜索「天之灵」</p>
+
+  <div class="memory-console__prompt">
+    <span>AI MEMORY RESPONSE / 示意</span>
+    <p>“我记得，你上次说想再听一次那首歌。”</p>
+  </div>
+
+  <div class="memory-console__foot">
+    <img class="memory-console__qr" src="/assets/miniprogram-code-tianzhiling.png" width="74" height="74" alt="天之灵微信小程序码" loading="lazy">
+    <div>
+      <strong>扫码进入天之灵</strong>
+      <small>微信小程序 · 数字亲人记忆空间</small>
+    </div>
+  </div>
+  <p class="memory-console__caption">界面为产品示意，非真人；实际以小程序内为准。</p>
 </aside>
 
         </div>
@@ -318,10 +385,102 @@
         </div>
       </section>
 
-      <section id="project" class="corp-section corp-section--ink" aria-labelledby="project-title">
+      <section id="digital-relative" class="corp-section corp-section--ink digital-relative-section" aria-labelledby="digital-relative-title">
         <div class="corp-wrap corp-split">
           <div class="corp-section-label">
             <span>01</span>
+            <p>DIGITAL RELATIVE</p>
+          </div>
+          <div class="corp-section-body">
+            <h2 id="digital-relative-title" class="display">AI 亲人，<br>不是一个“数字替身”。</h2>
+            <p class="corp-lead">我们把“数字亲人”理解为一个可以进入的记忆界面：保存称呼、声音、照片和故事，但<span class="nowrap">不冒充本人</span>，也<span class="nowrap">不承诺复活</span>。</p>
+          </div>
+        </div>
+
+        <div class="corp-wrap digital-relative-stage">
+          <div class="dr-hud dr-hud--top"><span>DIGITAL RELATIVE</span><strong>MEMORY LAYERS / 01</strong></div>
+          <div class="dr-hud dr-hud--left"><span>VOICE MODEL</span><strong>SYNTHESIS 98.2%</strong></div>
+          <div class="dr-hud dr-hud--right"><span>RELATION GRAPH</span><strong>DAUGHTER / 01</strong></div>
+          <div class="dr-hud dr-hud--bottom"><span>DATA BOUNDARY</span><strong>DELETABLE · NOT FOR TRAINING</strong></div>
+          <svg class="digital-relative" viewBox="0 0 640 640" role="img" aria-label="数字亲人记忆界面示意：由线条、节点和扫描线组成的抽象人物轮廓">
+  <g class="dr-rings" fill="none">
+    <circle cx="320" cy="310" r="252" stroke="#c6a15b" stroke-opacity=".16" stroke-dasharray="1 11"/>
+    <circle cx="320" cy="310" r="214" stroke="#7fd8d2" stroke-opacity=".14" stroke-dasharray="2 18"/>
+    <circle cx="320" cy="310" r="176" stroke="#c6a15b" stroke-opacity=".1"/>
+  </g>
+
+  <g class="dr-ticks" stroke="#c6a15b" stroke-opacity=".45">
+    <path d="M320 36v18M320 586v18M46 310h18M576 310h18"/>
+    <path d="M120 120l12 12M508 496l12 12M520 120l-12 12M132 496l-12 12" stroke-opacity=".25"/>
+  </g>
+
+  <g class="dr-bust" fill="none" stroke="#e3cf9b" stroke-opacity=".72">
+    <path d="M320 118c58 0 98 44 98 108 0 52-25 91-64 110v34c68 18 116 63 132 128" stroke-width="1.3"/>
+    <path d="M320 118c-58 0-98 44-98 108 0 52 25 91 64 110v34c-68 18-116 63-132 128" stroke-width="1.3"/>
+    <path d="M320 118c-34 0-62 25-70 62M320 118c34 0 62 25 70 62" stroke-opacity=".35"/>
+    <path d="M224 236c22 27 57 42 96 42s74-15 96-42" stroke-opacity=".35"/>
+    <path d="M256 340c18 14 39 21 64 21s46-7 64-21" stroke-opacity=".28"/>
+    <path d="M188 498c70 34 194 34 264 0" stroke-opacity=".42"/>
+    <path d="M170 520c82 40 218 40 300 0" stroke-opacity=".18"/>
+  </g>
+
+  <g class="dr-mesh" fill="none" stroke="#7fd8d2" stroke-opacity=".22">
+    <path d="M270 150c-10 58-8 117 8 170"/>
+    <path d="M370 150c10 58 8 117-8 170"/>
+    <path d="M246 202c42 18 106 18 148 0"/>
+    <path d="M238 258c50 20 114 20 164 0"/>
+    <path d="M242 314c48 16 108 16 156 0"/>
+    <path d="M220 450c64 26 136 26 200 0"/>
+    <path d="M200 482c78 30 162 30 240 0"/>
+  </g>
+
+  <g class="dr-nodes" fill="#7fd8d2">
+    <circle cx="320" cy="118" r="2.4"/>
+    <circle cx="418" cy="226" r="2.1"/>
+    <circle cx="222" cy="226" r="2.1"/>
+    <circle cx="320" cy="336" r="2.4"/>
+    <circle cx="452" cy="490" r="2"/>
+    <circle cx="188" cy="490" r="2"/>
+    <circle cx="320" cy="510" r="2.2"/>
+    <circle cx="320" cy="310" r="4.5" fill="#e6c982"/>
+  </g>
+
+  <line class="dr-scan" x1="320" y1="96" x2="320" y2="548" stroke="#7fd8d2" stroke-opacity=".5"/>
+  <path class="dr-base" d="M150 552h340" stroke="#c6a15b" stroke-opacity=".25"/>
+</svg>
+
+          <div class="dr-scan-label" aria-hidden="true">SCANNING MEMORY / 12,480 MOMENTS</div>
+        </div>
+        <p class="digital-relative-note">抽象视觉示意，非真人形象；实际产品以小程序内为准。</p>
+
+        <div class="corp-wrap digital-relative-grid">
+          <article class="digital-fact">
+            <span>01</span>
+            <h3>称呼与关系</h3>
+            <p>先记住你怎么称呼他，也记住你们是什么关系。回应从关系里长出来，而不是从通用话术里。</p>
+          </article>
+          <article class="digital-fact">
+            <span>02</span>
+            <h3>声音与语气</h3>
+            <p>在合法授权与素材清晰的前提下，保留熟悉的语气。不是模仿秀，也不承诺与真人完全一致。</p>
+          </article>
+          <article class="digital-fact">
+            <span>03</span>
+            <h3>照片与故事</h3>
+            <p>把散落的照片、语音和家庭故事整理成可回看的记忆，让对话有依据，让回忆有入口。</p>
+          </article>
+          <article class="digital-fact">
+            <span>04</span>
+            <h3>边界与退出</h3>
+            <p>不冒充真人，不承诺复活；支持删除、撤回授权与注销。技术负责保存与回应，人保留决定与告别。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="project" class="corp-section corp-section--ink" aria-labelledby="project-title">
+        <div class="corp-wrap corp-split">
+          <div class="corp-section-label">
+            <span>02</span>
             <p>APPROACH</p>
           </div>
           <div class="corp-section-body">
@@ -353,12 +512,12 @@
       <section id="product" class="corp-section" aria-labelledby="product-title">
         <div class="corp-wrap corp-split">
           <div class="corp-section-label">
-            <span>02</span>
+            <span>03</span>
             <p>PRODUCT</p>
           </div>
           <div class="corp-section-body">
             <h2 id="product-title" class="display">一套围绕“一个人”组织起来的产品。</h2>
-            <p class="corp-lead">不是通用聊天机器人，而是围绕称呼、关系、照片、声音与共同记忆设计的纪念空间。</p>
+            <p class="corp-lead">不是通用聊天机器人，而是围绕称呼、关系、照片、声音与共同记忆设计<span class="nowrap">的纪念空间</span>。</p>
           </div>
         </div>
         <div class="corp-wrap product-showcase">
@@ -401,7 +560,7 @@
       <section id="whitepaper" class="corp-section corp-section--paper" aria-labelledby="whitepaper-title">
         <div class="corp-wrap corp-split">
           <div class="corp-section-label">
-            <span>03</span>
+            <span>04</span>
             <p>WHITEPAPER</p>
           </div>
           <div class="corp-section-body">
@@ -411,7 +570,12 @@
         </div>
         <div class="corp-wrap whitepaper-showcase">
           <div class="doc-cover" aria-label="天之灵产品白皮书封面">
-            <span class="doc-cover__mark">天</span>
+            <span class="doc-cover__mark"><svg class="corp-brand__symbol" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+  <path d="M32 8.5 37.2 26.8 55.5 32 37.2 37.2 32 55.5 26.8 37.2 8.5 32 26.8 26.8Z" fill="currentColor"/>
+  <circle cx="50" cy="14" r="2.1" fill="currentColor" opacity=".7"/>
+  <circle cx="14" cy="50" r="1.5" fill="currentColor" opacity=".55"/>
+</svg>
+</span>
             <p>TIANZHILING<br>PRODUCT WHITEPAPER</p>
             <strong>天之灵<br>产品白皮书</strong>
             <span class="doc-cover__version">v1.0 · 2026 · 公开版</span>
@@ -438,7 +602,7 @@
       <section id="team" class="corp-section corp-section--ink" aria-labelledby="team-title">
         <div class="corp-wrap corp-split">
           <div class="corp-section-label">
-            <span>04</span>
+            <span>05</span>
             <p>TEAM</p>
           </div>
           <div class="corp-section-body">
@@ -477,7 +641,7 @@
       <section id="company" class="corp-section" aria-labelledby="company-title">
         <div class="corp-wrap corp-split">
           <div class="corp-section-label">
-            <span>05</span>
+            <span>06</span>
             <p>COMPANY</p>
           </div>
           <div class="corp-section-body">
@@ -499,7 +663,7 @@
 
       <section id="contact" class="corp-section corp-contact" aria-labelledby="contact-title">
         <div class="corp-wrap">
-          <p class="corp-section-label"><span>06</span><span>CONTACT</span></p>
+          <p class="corp-section-label"><span>07</span><span>CONTACT</span></p>
           <h2 id="contact-title" class="display">如果你也在思考<br>技术与告别的边界，欢迎联系我们。</h2>
           <div class="contact-grid">
             <div class="contact-cell">
