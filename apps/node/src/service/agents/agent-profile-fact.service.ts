@@ -459,6 +459,85 @@ export function detectDurableExpressionPreference(
   return dimension ? { dimension, instruction: clause } : undefined;
 }
 
+export interface FamilyCorrectionArchive {
+  archiveKeys: string[];
+  reason: string;
+}
+
+/**
+ * 用户明确“只有一个儿子/女儿/孩子”“没有女儿/没生女儿”时，除了写正向事实，
+ * 还要归档对立的旧事实。只在明确陈述时触发，愿望/假设不触发。
+ */
+export function detectFamilyCorrectionArchive(
+  text: string
+): FamilyCorrectionArchive | undefined {
+  const t = (text || '').replace(/\s+/g, '');
+  if (!t) return undefined;
+  if (
+    /(?:如果|要是|假如|希望|想|梦想|幻想).{0,8}(?:只有|就)(?:一个|个)?(?:儿子|女儿|孩子|娃)/.test(
+      t
+    ) ||
+    /(?:就好了|就行|该多好)/.test(t)
+  ) {
+    return undefined;
+  }
+
+  const only = t.match(/(?:只有一个|只有个|就一个)(儿子|女儿|孩子|娃)/);
+  if (only) {
+    const child = only[1];
+    const archiveKeys =
+      child === '儿子'
+        ? ['family.newborn.daughter', 'family.daughter']
+        : child === '女儿'
+        ? ['family.newborn.son', 'family.son']
+        : [
+            'family.newborn.son',
+            'family.newborn.daughter',
+            'family.son',
+            'family.daughter',
+          ];
+    return {
+      archiveKeys,
+      reason:
+        child === '儿子'
+          ? 'only_son'
+          : child === '女儿'
+          ? 'only_daughter'
+          : 'only_child',
+    };
+  }
+
+  if (/(?:没有|没生|不是)(?:一个|个)?女儿/.test(t)) {
+    return {
+      archiveKeys: ['family.newborn.daughter', 'family.daughter'],
+      reason: 'no_daughter',
+    };
+  }
+  if (/(?:没有|没生|不是)(?:一个|个)?儿子/.test(t)) {
+    return {
+      archiveKeys: ['family.newborn.son', 'family.son'],
+      reason: 'no_son',
+    };
+  }
+  return undefined;
+}
+
+/** 愿望/梦境来源不应给“已出生”事实增加支持。 */
+export function isBirthWishText(text: string): boolean {
+  return /(?:想|梦见|梦到|如果|要是|希望|来不及|没能|可惜).{0,12}(?:生|添|有).{0,6}(?:女儿|儿子|孩子|孙子|孙女|外孙|外孙女)/.test(
+    text || ''
+  );
+}
+
+function isFamilyCorrectionSource(text: string): boolean {
+  return (
+    /(?:只有一个|只有个|就一个|没有|没生|不是).{0,6}(?:儿子|女儿|孩子|娃)/.test(
+      text || ''
+    ) ||
+    /(?:儿子|女儿|孩子|娃).{0,6}(?:只有一个|没有|不是)/.test(text || '')
+  );
+}
+
 @Provide()
 export class AgentProfileFactService {
   @Logger()
@@ -578,6 +657,12 @@ export class AgentProfileFactService {
     extractedFacts: ExtractedProfileFact[];
     explicitlyConfirmed?: boolean;
   }): Promise<AgentProfileFactSummary[]> {
+    await this.applyFamilyCorrectionArchives({
+      userId: params.message.userId,
+      agentId: params.message.agentId,
+      sourceText: params.sourceText,
+    });
+
     let userIdentityWriteSucceeded = false;
     try {
       if (this.userIdentityMemoryService) {
@@ -616,6 +701,13 @@ export class AgentProfileFactService {
         forceCandidate: extracted.forceCandidate,
       });
     }
+
+    // 同一条消息里模型/规则可能又写回错误事实，写完后按纠正语义再归档一次。
+    await this.applyFamilyCorrectionArchives({
+      userId: params.message.userId,
+      agentId: params.message.agentId,
+      sourceText: params.sourceText,
+    });
 
     return params.extractedFacts.map(item => item.fact);
   }
@@ -2679,6 +2771,40 @@ export class AgentProfileFactService {
     });
   }
 
+  private async applyFamilyCorrectionArchives(input: {
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
+    sourceText: string;
+  }): Promise<void> {
+    const correction = detectFamilyCorrectionArchive(input.sourceText);
+    if (!correction) return;
+
+    const facts = await this.factModel.find({
+      where: {
+        userId: input.userId,
+        agentId: input.agentId,
+        status: AgentProfileFactStatus.active,
+      } as never,
+    });
+    const targets = facts.filter(fact =>
+      correction.archiveKeys.includes(fact.key)
+    );
+    if (!targets.length) return;
+
+    const now = new Date();
+    for (const fact of targets) {
+      fact.status = AgentProfileFactStatus.archived;
+      fact.updatedAt = now;
+      await this.factModel.save(fact);
+    }
+    this.logger?.info?.(
+      '[family-correction] archived=%s keys=%s reason=%s',
+      targets.length,
+      targets.map(fact => fact.key).join(','),
+      correction.reason
+    );
+  }
+
   private async upsertFact(
     input: UpsertProfileFactInput,
     retryAttempt = 0
@@ -2717,8 +2843,11 @@ export class AgentProfileFactService {
           this.stringifyObjectId(id) === nextSourceIdStr &&
           id !== input.sourceMessageId
       );
+    const nonSupportSource =
+      isFamilyCorrectionSource(input.sourceText || '') ||
+      isBirthWishText(input.sourceText || '');
     const shouldIncrementSupport =
-      sameValue && existing && !sourceAlreadyExists;
+      sameValue && existing && !sourceAlreadyExists && !nonSupportSource;
     const nextSupportCount = sameValue
       ? Math.max(existing?.supportCount ?? 1, 1) +
         (shouldIncrementSupport ? 1 : 0)
@@ -2728,6 +2857,7 @@ export class AgentProfileFactService {
     const userReconfirmsValue =
       sameValue &&
       existing &&
+      !nonSupportSource &&
       (input.trustedSource || this.isCorrectionText(input.sourceText || ''));
     const effectiveTrustedSource = input.trustedSource || userReconfirmsValue;
     const isCanonicalName =

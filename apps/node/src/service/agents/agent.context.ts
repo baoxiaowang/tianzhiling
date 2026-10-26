@@ -632,6 +632,7 @@ export function memoryEvidenceCore(text: string): string {
 const SELF_HARM_SIGNAL_PATTERN =
   /(?:去找(?:你|您|他|她|妈|爸|奶奶|爷爷|你们|他们)|想去找(?:你|您)|不想活|活不下去|活够了|自杀|轻生|带我走|陪你(?:一起)?走|去陪(?:你|您)|了结)/u;
 
+import { filterFamilyFactsByContinuitySummary } from './family-consistency';
 import { buildMemoryRetrievalQuery } from '../memory/memory-retrieval-keys';
 import {
   buildElapsedFeelingInstruction,
@@ -909,7 +910,7 @@ export class AgentContextService {
       pinnedMessageIds: options.pinnedHistoryMessageIds,
     }).messages;
     const [
-      profileFacts,
+      rawProfileFacts,
       userIdentity,
       knownPeople,
       relatives,
@@ -963,6 +964,14 @@ export class AgentContextService {
             ) || Promise.resolve([])
         ),
       ]);
+    const familyFilter = filterFamilyFactsByContinuitySummary(
+      rawProfileFacts || [],
+      options.conversation.continuitySummary
+    );
+    for (const log of familyFilter.logs) {
+      this.logger?.warn?.('[family-consistency] %s', log);
+    }
+    const profileFacts = familyFilter.facts;
     const temporalProfiles =
       (await this.personTemporalMemoryService?.listProfilesForPrompt({
         userId: options.conversation.userId,
