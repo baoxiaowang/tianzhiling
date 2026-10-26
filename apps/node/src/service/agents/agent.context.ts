@@ -633,6 +633,10 @@ const SELF_HARM_SIGNAL_PATTERN =
   /(?:去找(?:你|您|他|她|妈|爸|奶奶|爷爷|你们|他们)|想去找(?:你|您)|不想活|活不下去|活够了|自杀|轻生|带我走|陪你(?:一起)?走|去陪(?:你|您)|了结)/u;
 
 import { filterFamilyFactsByContinuitySummary } from './family-consistency';
+import {
+  buildTestModePromptLines,
+  detectTestModeSignal,
+} from './test-mode-signal';
 import { buildMemoryRetrievalQuery } from '../memory/memory-retrieval-keys';
 import {
   buildElapsedFeelingInstruction,
@@ -1543,6 +1547,28 @@ export class AgentContextService {
       profileFacts,
       { query: options.currentQuery || '' }
     );
+    const currentUserText = (
+      options.currentUserText ||
+      options.currentQuery ||
+      ''
+    ).trim();
+    const recentUserTexts = routingHistoryMessages
+      .filter(message => message.role === MessageRole.user)
+      .map(message => message.content || '')
+      .slice(-5);
+    const testModeSignal = detectTestModeSignal(
+      currentUserText,
+      recentUserTexts
+    );
+    const testModePromptLines = buildTestModePromptLines(testModeSignal);
+    if (testModeSignal.matched) {
+      this.logger?.info?.(
+        '[test-mode] pressure=%s reasons=%s cueTurns=%s',
+        testModeSignal.pressure,
+        testModeSignal.reasons.join(','),
+        testModeSignal.cueTurnCount
+      );
+    }
     const systemLayer = await this.withTraceSpan(
       ChatTraceStage.promptBuild,
       'prompt.build_layers',
@@ -1562,7 +1588,8 @@ export class AgentContextService {
           recentHistoryMessages.map(message => memoryEvidenceCore(message.content || '').toLowerCase()).filter(Boolean),
           effectiveLocalCandidates,
           historyCoverageNote,
-          userPreferencePrompt
+          userPreferencePrompt,
+          testModePromptLines
         ),
       {
         evidenceCount: evidence.length,
@@ -1902,7 +1929,8 @@ export class AgentContextService {
     localCandidateVisibleTexts?: string[],
     localCandidates?: LocalMemoryCandidateInput[],
     historyCoveragePrompt = '',
-    userPreferencePrompt: UserPreferencePromptSection = { stable: '', task: '' }
+    userPreferencePrompt: UserPreferencePromptSection = { stable: '', task: '' },
+    testModePromptLines: string[] = []
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -2048,6 +2076,7 @@ export class AgentContextService {
     );
     const taskParts = [
       // 条件规则随本轮信号出现/消失，放在任务层，稳定段因此逐字不变。
+      testModePromptLines.length ? testModePromptLines.join('\n') : '',
       mainModelConditionalPrompt,
       // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
       // 证据与本地候选、本轮简要），统一后置，保证稳定段逐字不变。

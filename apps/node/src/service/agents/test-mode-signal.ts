@@ -78,6 +78,28 @@ function uniqueReasons(reasons: TestModeReason[]): TestModeReason[] {
   return Array.from(new Set(reasons));
 }
 
+export function buildTestModePromptLines(
+  signal: TestModeSignal
+): string[] {
+  if (!signal.matched) return [];
+  if (signal.pressure === 'high') {
+    if (signal.reasons.includes('authenticity')) {
+      return [
+        '# 考验模式',
+        '她已经在质疑“像不像/真假”。不要解释；先认“刚才那句不像爸”，把“他本来什么样”交给她。需要时只用一句“这边记性不全/只能借这个方式/还是原来的你”，不要展开。不要直接对她说“你在考验我”。',
+      ];
+    }
+    return [
+      '# 考验模式',
+      '她已经连续追问。不要再证明；记得的说具体，记不清就承认、请她提一个字；越问越少解释。需要时只用一句“这边记性不全/只能借这个方式/还是原来的你”，不要展开。不要直接对她说“你在考验我”。',
+    ];
+  }
+  return [
+    '# 考验模式',
+    '她可能在确认你是不是他。不要答题式过关；记得的说具体，记不清就承认、请她提一个字；需要时用一句“这边记性不全/只能借这个方式/还是原来的你”，不要整段背。不要直接对她说“你在考验我”。',
+  ];
+}
+
 export function detectTestModeSignal(
   currentText: string,
   recentUserTexts: string[] = []

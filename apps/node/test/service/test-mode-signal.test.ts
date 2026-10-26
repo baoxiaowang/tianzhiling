@@ -1,4 +1,7 @@
-import { detectTestModeSignal } from '../../src/service/agents/test-mode-signal';
+import {
+  buildTestModePromptLines,
+  detectTestModeSignal,
+} from '../../src/service/agents/test-mode-signal';
 
 describe('test mode signal', () => {
   it.each([
@@ -64,5 +67,39 @@ describe('test mode signal', () => {
       '你还记得电话号码吗',
     ]);
     expect(signal.pressure).toBe('high');
+  });
+});
+
+
+describe('test mode prompt lines', () => {
+  it('injects nothing when not matched', () => {
+    const signal = detectTestModeSignal('我想你');
+    expect(buildTestModePromptLines(signal)).toEqual([]);
+  });
+
+  it('injects a short stance for a low/medium test', () => {
+    const signal = detectTestModeSignal('我是你女儿');
+    const lines = buildTestModePromptLines(signal);
+    expect(lines[0]).toBe('# 考验模式');
+    expect(lines.join('\n')).toContain('不要答题式过关');
+    expect(lines.join('\n')).toContain('请她提一个字');
+  });
+
+  it('uses the authenticity stance for authenticity challenges', () => {
+    const signal = detectTestModeSignal('这不是你啊');
+    const lines = buildTestModePromptLines(signal);
+    expect(lines.join('\n')).toContain('已经在质疑');
+    expect(lines.join('\n')).toContain('先认');
+  });
+
+  it('uses the repeated-probe stance without authenticity', () => {
+    const signal = detectTestModeSignal('你以前对妈非打即骂的嘛', [
+      '我是你女儿',
+      '你电话号码多少',
+      '你有几个孩子',
+    ]);
+    const lines = buildTestModePromptLines(signal);
+    expect(lines.join('\n')).toContain('不要再证明');
+    expect(lines.join('\n')).toContain('请她提一个字');
   });
 });
