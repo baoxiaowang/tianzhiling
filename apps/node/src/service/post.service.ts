@@ -1396,7 +1396,7 @@ export class PostService {
       return;
     }
 
-    await this.saveAgentReplyComment(post, agent, content);
+    await this.saveAgentReplyBubbles(post, agent, content);
     this.logger.info(
       '[post-remind-reply] created agent comment, postId=%s, agentId=%s',
       postId,
@@ -1477,7 +1477,7 @@ export class PostService {
       return;
     }
 
-    await this.saveAgentReplyComment(post, agent, content, triggerComment);
+    await this.saveAgentReplyBubbles(post, agent, content, triggerComment);
     this.logger.info(
       '[post-remind-reply] created agent comment reply, postId=%s, agentId=%s, triggerCommentId=%s',
       postId,
@@ -1490,7 +1490,8 @@ export class PostService {
     post: PostEntity,
     agent: AgentEntity,
     content: string,
-    triggerComment?: PostCommentEntity
+    triggerComment?: PostCommentEntity,
+    options: { notify?: boolean } = {}
   ): Promise<PostCommentEntity> {
     const now = new Date();
     const comment = new PostCommentEntity();
@@ -1505,11 +1506,56 @@ export class PostService {
 
     const savedComment = await this.commentModel.save(comment);
 
+    if (options.notify === false) {
+      return savedComment;
+    }
+
     try {
       await this.createCommentNotification(post, savedComment, null, agent);
       return savedComment;
     } catch (error) {
       await this.rollbackCreatedComment(savedComment);
+      throw error;
+    }
+  }
+
+  private async saveAgentReplyBubbles(
+    post: PostEntity,
+    agent: AgentEntity,
+    content: string,
+    triggerComment?: PostCommentEntity
+  ): Promise<PostCommentEntity[]> {
+    const bubbles = content
+      .split(/\n{2,}/)
+      .map(bubble => bubble.trim())
+      .filter(Boolean)
+      .slice(0, 2);
+    if (!bubbles.length) {
+      return [];
+    }
+
+    const saved: PostCommentEntity[] = [];
+    try {
+      for (const bubble of bubbles) {
+        saved.push(
+          await this.saveAgentReplyComment(post, agent, bubble, triggerComment, {
+            notify: false,
+          })
+        );
+      }
+      // 两条评论只发一条通知，预览合并两泡，避免重复打扰。
+      await this.createCommentNotification(
+        post,
+        saved[0],
+        null,
+        agent,
+        bubbles.join(' ')
+      );
+      return saved;
+    } catch (error) {
+      for (const comment of saved.reverse()) {
+        await this.rollbackCreatedComment(comment).catch(() => undefined);
+      }
       throw error;
     }
   }
@@ -2483,7 +2529,8 @@ export class PostService {
     post: PostEntity,
     comment: PostCommentEntity,
     user?: UserEntity | null,
-    agent?: AgentEntity | null
+    agent?: AgentEntity | null,
+    contentOverride?: string
   ): Promise<void> {
     const ownerId = this.stringifyObjectId(post.userId);
     const actorUserId = comment.userId
@@ -2506,7 +2553,11 @@ export class PostService {
     notification.actorAvatar = this.postImageService.resolveUserAvatarForResponse(
       agent?.avatar?.trim() || user?.avatar?.trim()
     );
-    notification.commentPreview = (comment.content?.trim() || '').slice(0, 120);
+    notification.commentPreview = (
+      contentOverride?.trim() ||
+      comment.content?.trim() ||
+      ''
+    ).slice(0, 120);
     notification.replyToUserName = await this.resolveCommentReplyName(comment);
     notification.postThumbnail =
       Array.isArray(post.images) && post.images.length > 0

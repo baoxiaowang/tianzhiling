@@ -2751,3 +2751,51 @@ describe('PostService dynamic output guard', () => {
     expect(reply).not.toContain('看着你');
   });
 });
+
+describe('PostService agent comment bubbles', () => {
+  it('saves at most two agent comments from one generated reply and notifies once', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const post = createPost();
+    const agentComment = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000203'),
+      userId: undefined,
+      agentId: agent.id,
+      type: PostCommentType.agent,
+      content: '我在呢',
+    });
+    const userReply = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000204'),
+      parentCommentId: agentComment.id,
+      replyToAgentId: agent.id,
+      content: '奶奶你听得到吗',
+      createdAt: new Date('2026-05-13T08:01:00.000Z'),
+      updatedAt: new Date('2026-05-13T08:01:00.000Z'),
+    });
+    const { service, comments, notifications } = createService([agent], {
+      posts: [post],
+      comments: [agentComment, userReply],
+      memberships: [createMembership({ lifetime: true, expiredAt: undefined })],
+    });
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '第一泡\n\n第二泡',
+      reasoning: [],
+      response: {},
+    });
+
+    await service.processRemindReplyJob({
+      postId: POST_ID,
+      agentId: AGENT_A_ID,
+      triggerCommentId: userReply.id?.toString(),
+    });
+
+    const agentReplies = comments.filter(
+      comment => comment.type === PostCommentType.agent && comment.id !== agentComment.id
+    );
+    expect(agentReplies.map(comment => comment.content)).toEqual([
+      '第一泡',
+      '第二泡',
+    ]);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].commentPreview).toBe('第一泡 第二泡');
+  });
+});
