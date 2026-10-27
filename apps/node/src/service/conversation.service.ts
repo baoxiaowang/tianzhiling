@@ -159,6 +159,7 @@ import { TencentAsrService } from './tencent-asr.service';
 import { MilvusService } from './rag/milvus.service';
 import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
+import { ConversationEntityLedgerService } from './agents/conversation-entity-ledger.service';
 import { isSearchableDialogueEvidence } from './agents/memory-value';
 import { MemoryModuleService } from './memory/memory-module.service';
 import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
@@ -874,6 +875,9 @@ export class ConversationService {
 
   @Inject()
   userIdentityMemoryService: UserIdentityMemoryService;
+
+  @Inject()
+  conversationEntityLedgerService: ConversationEntityLedgerService;
 
   @Inject()
   relativeMemoryExtractorService: RelativeMemoryExtractorService;
@@ -3370,6 +3374,20 @@ export class ConversationService {
       createdAt: now,
       updatedAt: now,
     });
+
+    try {
+      await this.conversationEntityLedgerService?.ingestUserMessage(
+        userMessage,
+        searchableText
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[entity-ledger] ingest failed, conversationId=%s messageId=%s reason=%s',
+        this.stringifyObjectId(runtime.conversation.id),
+        this.stringifyObjectId(userMessage.id),
+        this.describeReplyError(error)
+      );
+    }
 
     // Save quota trigger decision on user message
     if (chatQuota?.triggerDecision) {

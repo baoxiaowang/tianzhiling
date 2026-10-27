@@ -65,6 +65,10 @@ import { UserIdentityMemoryService } from './user-identity-memory.service';
 import { UserRelativeProfileService } from './user-relative-profile.service';
 import { UserSelfMemoryService } from './user-self-memory.service';
 import {
+  ConversationEntityLedgerService,
+  renderConversationEntityPrompt,
+} from './conversation-entity-ledger.service';
+import {
   PersonTemporalMemoryService,
   PersonTemporalPromptFact,
 } from './person-temporal-memory.service';
@@ -858,6 +862,9 @@ export class AgentContextService {
   agentEmotionStateService: AgentEmotionStateService;
 
   @Inject()
+  conversationEntityLedgerService: ConversationEntityLedgerService;
+
+  @Inject()
   replyIntentClassifierService: ReplyIntentClassifierService;
 
   @Inject()
@@ -881,13 +888,36 @@ export class AgentContextService {
   async buildConversationContext(
     options: BuildConversationContextOptions
   ): Promise<AgentConversationContext> {
+    let entityLedgerPrompt = '';
+    let entityPinnedMessageIds: string[] = [];
+    try {
+      const entityLedger =
+        (await this.conversationEntityLedgerService?.loadForPrompt({
+          conversationId: options.conversation.id,
+        })) || [];
+      entityLedgerPrompt = renderConversationEntityPrompt(entityLedger);
+      const currentTurnIds = new Set(options.currentTurnMessageIds || []);
+      entityPinnedMessageIds = entityLedger
+        .map(entry => entry.sourceMessageId)
+        .filter((id): id is string => Boolean(id) && !currentTurnIds.has(id))
+        .slice(0, 6);
+    } catch {
+      entityLedgerPrompt = '';
+      entityPinnedMessageIds = [];
+    }
+    const pinnedHistoryMessageIds = Array.from(
+      new Set([
+        ...(options.pinnedHistoryMessageIds || []),
+        ...entityPinnedMessageIds,
+      ])
+    );
     const conversationMessages = await this.withTraceSpan(
       ChatTraceStage.contextLoad,
       'context.messages',
       () =>
         this.listConversationMessages(options.conversation, [
           ...(options.currentTurnMessageIds || []),
-          ...(options.pinnedHistoryMessageIds || []),
+          ...pinnedHistoryMessageIds,
         ])
     );
     const currentTurnMessages = this.selectCurrentTurnMessages(
@@ -912,7 +942,7 @@ export class AgentContextService {
       turnLimit: RECENT_HISTORY_TURNS,
       messageCap: RECENT_HISTORY_MESSAGE_CAP,
       stringifyId: message => this.stringifyObjectId(message.id),
-      pinnedMessageIds: options.pinnedHistoryMessageIds,
+      pinnedMessageIds: pinnedHistoryMessageIds,
     }).messages;
     const [
       rawProfileFacts,
@@ -1591,7 +1621,8 @@ export class AgentContextService {
           effectiveLocalCandidates,
           historyCoverageNote,
           userPreferencePrompt,
-          testModePromptLines
+          testModePromptLines,
+          entityLedgerPrompt
         ),
       {
         evidenceCount: evidence.length,
@@ -1932,7 +1963,8 @@ export class AgentContextService {
     localCandidates?: LocalMemoryCandidateInput[],
     historyCoveragePrompt = '',
     userPreferencePrompt: UserPreferencePromptSection = { stable: '', task: '' },
-    testModePromptLines: string[] = []
+    testModePromptLines: string[] = [],
+    entityLedgerPrompt = ''
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -1996,6 +2028,7 @@ export class AgentContextService {
       // 让更少的后续内容重新计费。
       buildTemporalProfilePromptSection(temporalProfiles),
       plan.includeContinuity ? continuitySummaryPrompt : '',
+      entityLedgerPrompt,
     ];
 
     const conversationReadingPrompt =

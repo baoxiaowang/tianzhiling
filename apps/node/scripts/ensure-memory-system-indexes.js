@@ -7,6 +7,16 @@ const {
 } = require('./ensure-conversation-reply-turn-indexes');
 
 const INDEXES = {
+  conversation_entity_ledger: [
+    [
+      { conversationId: 1, normalizedName: 1 },
+      { name: 'uniq_conversation_entity_ledger_name', unique: true },
+    ],
+    [
+      { conversationId: 1, status: 1, lastMentionedAt: -1 },
+      { name: 'idx_conversation_entity_ledger_active' },
+    ],
+  ],
   user_identity_profile: [
     [{ userId: 1 }, { name: 'uniq_user_identity_profile_user', unique: true }],
   ],
