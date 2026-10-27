@@ -43,6 +43,19 @@ const USER_BIRTH_ASSERTION =
   /我(?:的)?生日(?:是|在|为)?\s*(?:(\d{4})\s*年)?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)|我(?:是|于)?\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)?\s*出生/u;
 const QUESTION_OR_NEGATION = /[？?]|吗|是不是|不是|没(?:有)?|不记得|忘了/u;
 
+function collectMatches(text: string, pattern: RegExp): RegExpExecArray[] {
+  const matches: RegExpExecArray[] = [];
+  pattern.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    matches.push(match);
+    if (match.index === pattern.lastIndex) {
+      pattern.lastIndex += 1;
+    }
+  }
+  return matches;
+}
+
 export interface ExtractedRelativeMemory {
   referenceName?: string;
   realName?: string;
@@ -136,6 +149,16 @@ export class RelativeMemoryExtractorService {
     const text = sourceText?.trim();
     if (!text) return 0;
     let written = await this.captureExplicitUserBirthday(message, text);
+    const appositive = this.extractExplicitFamilyAppositions(text);
+    if (appositive.length) {
+      const writtenByRule = await this.writeExtracted(
+        message,
+        text,
+        appositive,
+        { ...context }
+      );
+      return written + writtenByRule;
+    }
     if (!this.shouldExtractRelative(text, context)) return written;
     if (!this.openAIService?.isEnabled?.()) return written;
 
@@ -500,6 +523,60 @@ export class RelativeMemoryExtractorService {
         rawText: sourceText,
       });
     return profile ? 1 : 0;
+  }
+
+  private extractExplicitFamilyAppositions(
+    sourceText: string
+  ): ExtractedRelativeMemory[] {
+    const text = (sourceText || '').replace(/\s+/g, '').trim();
+    if (!text || QUESTION_OR_NEGATION.test(text)) return [];
+
+    const relation =
+      '儿子|女儿|闺女|孩子|宝宝|宝贝|孙子|孙女|外孙|外孙女|哥哥|姐姐|弟弟|妹妹|爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|丈夫|妻子|老公|老婆';
+    const namePattern = '[\u4e00-\u9fa5A-Za-z·]{1,12}';
+    const patterns = [
+      new RegExp(
+        `(?:^|[，,。；;])(${namePattern})[，,]?(?:是|就是)?你(?:的)?(${relation})(?=$|[，,。；;])`,
+        'g'
+      ),
+      new RegExp(
+        `你(?:的)?(${relation})(?:叫|名叫|是)(${namePattern})(?=$|[，,。；;])`,
+        'g'
+      ),
+      new RegExp(
+        `(?:^|[，,。；;])(${namePattern})[，,]?(?:是|就是)?我(?:的)?(${relation})(?=$|[，,。；;])`,
+        'g'
+      ),
+    ];
+
+    const out: ExtractedRelativeMemory[] = [];
+    const seen = new Set<string>();
+    for (let index = 0; index < patterns.length; index += 1) {
+      for (const match of collectMatches(text, patterns[index])) {
+        const name = (index === 1 ? match[2] : match[1])?.trim();
+        const relationToUser = (index === 1 ? match[1] : match[2])?.trim();
+        if (!name || !relationToUser) continue;
+        if (
+          name.length > 12 ||
+          /^(?:我|你|他|她|我们|你们|他们|她们|什么|谁|哪个)$/.test(name)
+        ) {
+          continue;
+        }
+        const key = `${name}|${relationToUser}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          referenceName: name,
+          realName: name,
+          aliases: [],
+          relationToUser,
+          lifeStage: 'unknown',
+          sex: 'unknown',
+          facts: [],
+        });
+      }
+    }
+    return out;
   }
 
   private async extract(

@@ -501,3 +501,48 @@ describe('RelativeMemoryExtractorService', () => {
     expect(isParent({ referenceName: '二奶奶', relation: '奶奶' })).toBe(false);
   });
 });
+
+describe('RelativeMemoryExtractorService terse family apposition', () => {
+  it('records "豆丁，你的儿子" without guessing or calling the model', async () => {
+    const service = new RelativeMemoryExtractorService();
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000521'),
+    });
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateMemoryText: jest.fn(),
+    } as never;
+    service.personTemporalMemoryService = {
+      recordExplicitPersonDate: jest.fn(),
+    } as never;
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue(null),
+      upsertKnownPersonDeclaration: jest.fn().mockResolvedValue(person),
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn().mockResolvedValue({}),
+      recordFact: jest.fn().mockResolvedValue({}),
+    } as never;
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000522'),
+      userId: new MongoObjectId('665000000000000000000523'),
+      agentId: new MongoObjectId('665000000000000000000524'),
+      content: '豆丁，你的儿子',
+      createdAt: new Date('2026-10-27T15:29:12.000Z'),
+    });
+
+    await service.captureFromUserMessage(message, message.content);
+    expect(service.openAIService.generateMemoryText).not.toHaveBeenCalled();
+    expect(
+      service.userIdentityMemoryService.upsertKnownPersonDeclaration
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        declaration: expect.objectContaining({
+          realName: '豆丁',
+          relationToUser: '儿子',
+        }),
+      })
+    );
+  });
+});
