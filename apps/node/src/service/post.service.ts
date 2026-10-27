@@ -43,6 +43,7 @@ import {
 import { PostImageService } from './post-image.service';
 import { detectTestModeSignal } from './agents/test-mode-signal';
 import { isImmediateGriefCrisisIntent } from './agents/reply-intent';
+import { containsUnsafeAssistantMessageContent } from '../common/message-content-safety';
 import { WechatPayService } from './wechat-pay.service';
 
 export const POST_REMIND_REPLY_QUEUE = 'post-remind-reply';
@@ -3477,9 +3478,27 @@ export class PostService {
       existingComments,
       latestUserComment
     );
-    return (
-      selected || this.buildFallbackMomentReply(post, agent, latestUserComment)
+    return this.guardMomentReply(
+      selected || this.buildFallbackMomentReply(post, agent, latestUserComment),
+      post,
+      agent,
+      latestUserComment
     );
+  }
+
+  private guardMomentReply(
+    reply: string,
+    post: PostEntity,
+    agent: AgentEntity,
+    latestUserComment?: MomentCommentContext | null
+  ): string {
+    const content = reply.trim();
+    const unsafePresence =
+      /(?:我|爸|妈妈|妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆|哥哥|姐姐|弟弟|妹妹)[^。！？!?]{0,12}(?:就|一直|会|能|正)?(?:在|守|陪)(?:着)?你?(?:身边|床边|房间|旁边|身后|看着你|盯着你)/;
+    if (!content || unsafePresence.test(content) || containsUnsafeAssistantMessageContent(content)) {
+      return this.buildFallbackMomentReply(post, agent, latestUserComment);
+    }
+    return content;
   }
 
   private normalizeGeneratedPostReply(result: {

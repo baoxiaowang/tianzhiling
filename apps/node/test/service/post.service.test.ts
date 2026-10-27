@@ -2729,3 +2729,25 @@ describe('PostService dynamic fact assertability', () => {
     ]);
   });
 });
+
+describe('PostService dynamic output guard', () => {
+  it('replaces unsafe real-world presence claims with the fallback reply', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const post = createPost({ content: '爸爸，我想你了' });
+    const { service } = createService([agent], { posts: [post] });
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '我就在你床边看着你，别怕。',
+      reasoning: [],
+      response: {},
+    });
+
+    const reply = await (service as any).generateAgentPostReply(
+      post,
+      createUser(),
+      agent
+    );
+
+    expect(reply).not.toContain('床边');
+    expect(reply).not.toContain('看着你');
+  });
+});
