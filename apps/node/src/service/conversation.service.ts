@@ -285,6 +285,31 @@ const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
 const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
+const SLOW_REPLY_TIMING_THRESHOLD_MS = 30 * 1000;
+
+interface ReplyTiming {
+  conversationId: string;
+  startedAt: number;
+  marks: Array<{ stage: string; at: number }>;
+  logged: boolean;
+}
+
+function createReplyTiming(conversationId: string): ReplyTiming {
+  return {
+    conversationId,
+    startedAt: Date.now(),
+    marks: [],
+    logged: false,
+  };
+}
+
+function markReplyTiming(
+  timing: ReplyTiming | undefined,
+  stage: string
+): void {
+  if (!timing || timing.logged) return;
+  timing.marks.push({ stage, at: Date.now() });
+}
 const CONVERSATION_REPLY_LOCK_RENEW_INTERVAL_MS = Math.floor(
   CONVERSATION_REPLY_LOCK_TTL_MS / 3
 );
@@ -1681,6 +1706,8 @@ export class ConversationService {
       conversationId,
       lock.token
     );
+    const replyTiming = createReplyTiming(conversationId);
+    markReplyTiming(replyTiming, 'lock_acquired');
     try {
       if (!data.afterUserCreatedAt) {
         await this.clearConversationReplyDebounce(conversationId);
@@ -1696,6 +1723,7 @@ export class ConversationService {
           )
       );
 
+      markReplyTiming(replyTiming, 'conversation_loaded');
       if (!conversation) {
         this.logger.error(
           '[conversation-reply] conversation not found, conversationId=%s, userId=%s',
@@ -1785,9 +1813,11 @@ export class ConversationService {
         return;
       }
       const before = this.buildQueuedBeforeReplyResult(pendingUserMessages);
+      markReplyTiming(replyTiming, 'before_built');
 
       try {
-        const processed = await this.processReply(runtime, before);
+        const processed = await this.processReply(runtime, before, replyTiming);
+        markReplyTiming(replyTiming, 'process_done');
         if (
           await this.permanentAgentSilenceService.suppressReplyIfPermanentlySilent(
             runtime.agent,
@@ -1848,6 +1878,7 @@ export class ConversationService {
           'persist.reply',
           () => this.afterReply(runtime, before, processed)
         );
+        markReplyTiming(replyTiming, 'after_done');
         await this.completeChatReplyTrace(
           data.traceId
             ? {
@@ -1908,6 +1939,7 @@ export class ConversationService {
       if (lockRenewal) {
         clearInterval(lockRenewal);
       }
+      this.logReplyTiming(replyTiming);
       await this.releaseConversationReplyLock(conversationId, lock.token);
     }
   }
@@ -5077,9 +5109,11 @@ export class ConversationService {
 
   private async processReply(
     runtime: ReplyRuntime,
-    before: BeforeReplyResult
+    before: BeforeReplyResult,
+    timing?: ReplyTiming
   ): Promise<ProcessReplyResult> {
     let context;
+    markReplyTiming(timing, 'reply_start');
     const currentTurnMessages = this.resolveCurrentTurnMessages(before);
     const containsImage = currentTurnMessages.some(
       message => message.type === MessageType.image
@@ -5272,7 +5306,9 @@ export class ConversationService {
             conversationReturnContext,
           })
       );
+      markReplyTiming(timing, 'context_built');
     } catch (error) {
+      markReplyTiming(timing, 'context_failed');
       const fallbackRoute = routeReplyScene({
         currentQuery: before.searchableText,
       });
@@ -5395,6 +5431,7 @@ export class ConversationService {
     const generationAttemptTraces: AssistantGenerationAttemptTrace[] = [];
 
     try {
+      markReplyTiming(timing, 'generation_start');
       const primaryCompletion = await this.createPrimaryAssistantCompletion({
         runtime,
         before,
@@ -5445,6 +5482,7 @@ export class ConversationService {
         plannedSegments,
         before.searchableText
       );
+      markReplyTiming(timing, 'generation_done');
     } catch (initialError) {
       generationRecoveryAttempted = true;
       if (!generationAttemptTraces.some(item => item.attempt === 'initial')) {
@@ -5963,6 +6001,7 @@ export class ConversationService {
         });
       }
     }
+    markReplyTiming(timing, 'review_done');
     return this.attachTurnStatePlans(
       {
         replySegments: participationResult.segments,
@@ -8819,6 +8858,27 @@ export class ConversationService {
       acquired: result === 'OK',
       token,
     };
+  }
+
+  private logReplyTiming(timing?: ReplyTiming): void {
+    if (!timing || timing.logged) return;
+    const totalMs = Date.now() - timing.startedAt;
+    if (totalMs < SLOW_REPLY_TIMING_THRESHOLD_MS) return;
+    timing.logged = true;
+    const stages = timing.marks
+      .map((mark, index) => {
+        const previous = index
+          ? timing.marks[index - 1].at
+          : timing.startedAt;
+        return `${mark.stage}=${mark.at - previous}ms`;
+      })
+      .join(',');
+    this.logger?.warn?.(
+      '[reply-timing] conversationId=%s totalMs=%s stages=%s',
+      timing.conversationId,
+      totalMs,
+      stages || '-'
+    );
   }
 
   private startConversationReplyLockRenewal(

@@ -2117,11 +2117,6 @@ export class AgentContextService {
         { id: 'ritual', priority: 45, text: ritualTriggerPrompt },
         { id: 'festival', priority: 45, text: festivalTriggerPrompt },
         {
-          id: 'conversation_return_context',
-          priority: 40,
-          text: conversationReturnContextPrompt,
-        },
-        {
           id: 'return_turn_proof',
           priority: 40,
           text: returnTurnPrompt,
@@ -2161,6 +2156,9 @@ export class AgentContextService {
       // 条件规则随本轮信号出现/消失，放在任务层，稳定段因此逐字不变。
       // 低频条件统一走编译器：优先级、抑制关系、块数/字符预算。
       conditionalCompiled.prompt,
+      // 回归轮上下文是时间事实，不是可选话术；它可能单独超过 300 字，
+      // 因此作为硬块放在预算外，避免被整块裁掉。
+      conversationReturnContextPrompt,
       // 证据、输出合同和边界是硬块，不进预算；考验模式也不能压掉。
       replyBriefPrompt,
     ];
