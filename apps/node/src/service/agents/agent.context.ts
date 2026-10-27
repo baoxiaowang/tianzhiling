@@ -637,6 +637,7 @@ import {
   buildTestModePromptLines,
   detectTestModeSignal,
 } from './test-mode-signal';
+import { compileConditionalPrompts } from './conditional-prompt';
 import { buildMemoryRetrievalQuery } from '../memory/memory-retrieval-keys';
 import {
   buildElapsedFeelingInstruction,
@@ -2036,6 +2037,10 @@ export class AgentContextService {
       options.deliberateLongReplyCandidate,
       plan.includeEvidence ? systemActionEvidence : []
     );
+    const directAnswerPrompt =
+      replyBrief?.understanding?.questions?.length
+        ? '用户这轮有明确问题：先正面回答，再补关系回应；不知道就明确说记不清，不要绕。'
+        : '';
     const deliberateLongReplyPrompt = options.deliberateLongReplyExecutionPrompt
       ? options.deliberateLongReplyExecutionPrompt
       : options.deliberateLongReplyCandidate?.eligible
@@ -2075,30 +2080,89 @@ export class AgentContextService {
         now: ritualNow,
       })
     );
+    const returnTurnPrompt = returnTurnRequired
+      ? [
+          returnTurnMaterialPrompt,
+          '# 本轮必须用上的一件事（在上面「你记得的事」里）',
+          '这些是用户以前说过、还没了结的事。请从上面挑一件，在这条回复里自然用上：先接住他这句话，再顺口带出来，像家里人聊天。',
+          '不要只用一句客套回应；除非他这轮正在说极重的痛苦或有危险的话，那就先接住他。',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : returnTurnMaterialPrompt;
+    const conditionalCompiled = compileConditionalPrompts(
+      [
+        {
+          id: 'test_mode',
+          priority: 70,
+          text: testModePromptLines.join('\n'),
+          // 考验模式压掉“直接回答/必须用旧事”，但不压安全、纠正和证据边界。
+          suppresses: ['direct_answer', 'return_turn_proof'],
+        },
+        {
+          id: 'main_model_conditional',
+          priority: 65,
+          text: mainModelConditionalPrompt,
+        },
+        {
+          id: 'direct_answer',
+          priority: 50,
+          text: directAnswerPrompt,
+        },
+        {
+          id: 'local_memory_candidate',
+          priority: 45,
+          text: localMemoryCandidatePrompt,
+        },
+        { id: 'ritual', priority: 45, text: ritualTriggerPrompt },
+        { id: 'festival', priority: 45, text: festivalTriggerPrompt },
+        {
+          id: 'conversation_return_context',
+          priority: 40,
+          text: conversationReturnContextPrompt,
+        },
+        {
+          id: 'return_turn_proof',
+          priority: 40,
+          text: returnTurnPrompt,
+        },
+        {
+          id: 'conversation_reading',
+          priority: 35,
+          text: conversationReadingPrompt,
+        },
+        {
+          id: 'user_preference_task',
+          priority: 30,
+          text: userPreferencePrompt.task,
+        },
+        { id: 'initiative', priority: 30, text: initiativeResource.prompt },
+        {
+          id: 'deliberate_long_reply',
+          priority: 25,
+          text: deliberateLongReplyPrompt,
+        },
+      ],
+      { maxBlocks: 3, maxChars: 300 }
+    );
+    if (
+      conditionalCompiled.dropped.length > 0 ||
+      conditionalCompiled.fired.length >= 2
+    ) {
+      this.logger?.info?.(
+        '[conditional-prompt] fired=%s dropped=%s suppressed=%s chars=%s',
+        conditionalCompiled.fired.join(','),
+        conditionalCompiled.dropped.join(','),
+        conditionalCompiled.suppressed.join(','),
+        conditionalCompiled.chars
+      );
+    }
     const taskParts = [
       // 条件规则随本轮信号出现/消失，放在任务层，稳定段因此逐字不变。
-      testModePromptLines.length ? testModePromptLines.join('\n') : '',
-      mainModelConditionalPrompt,
-      // 前缀缓存：以下块每轮都会变化（时间戳/联系间隔、回归轮材料、场景指导、
-      // 证据与本地候选、本轮简要），统一后置，保证稳定段逐字不变。
-      conversationReturnContextPrompt,
-      ritualTriggerPrompt,
-      festivalTriggerPrompt,
-      userPreferencePrompt.task,
-      returnTurnMaterialPrompt,
-      conversationReadingPrompt,
-      initiativeResource.prompt,
-      deliberateLongReplyPrompt,
-      localMemoryCandidatePrompt,
+      // 低频条件统一走编译器：优先级、抑制关系、块数/字符预算。
+      conditionalCompiled.prompt,
+      // 证据、输出合同和边界是硬块，不进预算；考验模式也不能压掉。
       replyBriefPrompt,
-      // 回归轮清单非空时，把"必须用上一件"放到靠后的任务层，避免埋在系统层里被忽略。
-      returnTurnRequired
-        ? [
-            '# 本轮必须用上的一件事（在上面「你记得的事」里）',
-            '这些是用户以前说过、还没了结的事。请从上面挑一件，在这条回复里自然用上：先接住他这句话，再顺口带出来，像家里人聊天。',
-            '不要只用一句客套回应；除非他这轮正在说极重的痛苦或有危险的话，那就先接住他。',
-          ].join('\n')
-        : '',
     ];
     const compiled = this.replyPromptCompilerService
       ? this.replyPromptCompilerService.compile({
