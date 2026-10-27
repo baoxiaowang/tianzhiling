@@ -13,6 +13,10 @@ import { primaryCallName } from '../common/call-name';
 import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
 import {
   AgentEntity,
+  AgentProfileFactEntity,
+  AgentProfileFactStatus,
+  AgentProfileFactType,
+  ConversationEntity,
   MongoObjectId,
   PostCommentEntity,
   PostCommentNotificationEntity,
@@ -34,8 +38,10 @@ import {
   buildMomentsSystemPrompt,
   MomentCommentContext,
   MomentImageContext,
+  MomentRelationshipContext,
 } from '../prompt/moments';
 import { PostImageService } from './post-image.service';
+import { detectTestModeSignal } from './agents/test-mode-signal';
 import { WechatPayService } from './wechat-pay.service';
 
 export const POST_REMIND_REPLY_QUEUE = 'post-remind-reply';
@@ -249,6 +255,12 @@ export class PostService {
 
   @InjectEntityModel(UserAccountEntity)
   userAccountModel: MongoRepository<UserAccountEntity>;
+
+  @InjectEntityModel(AgentProfileFactEntity)
+  profileFactModel: MongoRepository<AgentProfileFactEntity>;
+
+  @InjectEntityModel(ConversationEntity)
+  conversationModel: MongoRepository<ConversationEntity>;
 
   async listPosts(
     auth?: AuthenticatedUserPayload,
@@ -3283,6 +3295,74 @@ export class PostService {
     );
   }
 
+  private async buildMomentRelationshipContext(
+    post: PostEntity,
+    user: UserEntity,
+    agent: AgentEntity
+  ): Promise<MomentRelationshipContext | undefined> {
+    if (!this.profileFactModel && !this.conversationModel) {
+      return undefined;
+    }
+    const isPrivate = post.visibility === PostVisibility.private;
+    let conversation: ConversationEntity | null = null;
+    if (this.conversationModel) {
+      try {
+        conversation = await this.conversationModel.findOne({
+          where: {
+            userId: post.userId,
+            agentId: agent.id,
+          } as never,
+          order: { updatedAt: 'DESC' } as never,
+        });
+      } catch {
+        conversation = null;
+      }
+    }
+
+    let facts: AgentProfileFactEntity[] = [];
+    if (this.profileFactModel) {
+      try {
+        facts = await this.profileFactModel.find({
+          where: {
+            userId: post.userId,
+            agentId: agent.id,
+            status: AgentProfileFactStatus.active,
+          } as never,
+          order: { priority: 'DESC', updatedAt: 'DESC' } as never,
+          take: isPrivate ? 12 : 6,
+        });
+      } catch {
+        facts = [];
+      }
+    }
+
+    const publicTypes = new Set<AgentProfileFactType>([
+      AgentProfileFactType.relationship,
+      AgentProfileFactType.style,
+    ]);
+    const visibleFacts = facts
+      .filter(fact => isPrivate || publicTypes.has(fact.type))
+      .slice(0, isPrivate ? 8 : 4);
+
+    return {
+      visibility: isPrivate ? 'private' : 'public',
+      userCallName: isPrivate
+        ? conversation?.agentCallsUser || agent.agentCallMe || user.name
+        : user.name,
+      agentCallName: isPrivate
+        ? conversation?.userCallsAgent || agent.iCallAgent || agent.name
+        : agent.name,
+      facts: visibleFacts.map(fact => ({
+        key: fact.key,
+        value: fact.value,
+        type: fact.type,
+      })),
+      continuitySummary: isPrivate
+        ? conversation?.continuitySummary?.trim().slice(0, 800)
+        : undefined,
+    };
+  }
+
   private async generateAgentPostReply(
     post: PostEntity,
     user: UserEntity,
@@ -3309,10 +3389,28 @@ export class PostService {
         .reverse()
         .find(comment => comment.type === PostCommentType.user);
     const isFollowUpReply = Boolean(triggerCommentId && latestUserComment);
+    const relationshipContext = await this.buildMomentRelationshipContext(
+      post,
+      user,
+      agent
+    );
+    const userCommentTexts = commentContext
+      .filter(comment => comment.type === PostCommentType.user)
+      .map(comment => comment.content);
+    const testModeSignal = latestUserComment
+      ? detectTestModeSignal(
+          latestUserComment.content,
+          userCommentTexts
+            .filter(text => text !== latestUserComment.content)
+            .slice(-5)
+        )
+      : undefined;
     const systemPrompt = buildMomentsSystemPrompt({
       userId: this.stringifyObjectId(post.userId),
       agentId: this.stringifyObjectId(agent.id),
       agent,
+      relationshipContext,
+      testModeSignal,
       context: {
         moment: {
           id: this.stringifyObjectId(post.id),
@@ -3344,7 +3442,7 @@ export class PostService {
       topP: isFollowUpReply ? 0.85 : 0.95,
       presencePenalty: isFollowUpReply ? 0.1 : 0.6,
       frequencyPenalty: isFollowUpReply ? 0.1 : 0.35,
-      maxTokens: 120,
+      maxTokens: isFollowUpReply ? 180 : 160,
       reasoningSplit: false,
     });
 

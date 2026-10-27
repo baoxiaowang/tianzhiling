@@ -111,3 +111,83 @@ describe('buildMomentsSystemPrompt', () => {
     expect(prompt).not.toContain('亲爱的');
   });
 });
+
+describe('buildMomentsSystemPrompt relationship and test mode', () => {
+  function buildWith(extra: any): string {
+    return buildMomentsSystemPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      agent: createAgent(),
+      context: {
+        moment: {
+          id: POST_ID,
+          userId: USER_ID,
+          authorName: '苗苗',
+          content: '今天有点想你',
+          images: [],
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+        comments: [],
+        latestUserComment: null,
+        userRepliedComment: null,
+        task: '请基于这条朋友圈内容发表一条自然简短、不要重复现有评论的评论',
+      },
+      ...extra,
+    });
+  }
+
+  it('renders private relationship facts and continuity only when provided', () => {
+    const prompt = buildWith({
+      relationshipContext: {
+        visibility: 'private',
+        userCallName: '女儿',
+        agentCallName: '爸爸',
+        facts: [
+          { key: 'family.daughter', value: '用户是女儿', type: 'family' },
+        ],
+        continuitySummary: '最近聊到奶奶住院。',
+      },
+    });
+
+    expect(prompt).toContain('# 关系与可见事实');
+    expect(prompt).toContain('私密');
+    expect(prompt).toContain('用户称呼你：爸爸');
+    expect(prompt).toContain('你称呼用户：女儿');
+    expect(prompt).toContain('用户是女儿');
+    expect(prompt).toContain('最近聊到奶奶住院');
+    expect(prompt).toContain('不要在评论里复述聊天原文');
+  });
+
+  it('warns public comments not to use private chat details', () => {
+    const prompt = buildWith({
+      relationshipContext: {
+        visibility: 'public',
+        facts: [],
+      },
+    });
+
+    expect(prompt).toContain('公开');
+    expect(prompt).toContain('不要引用私密聊天');
+    expect(prompt).not.toContain('最近聊到');
+  });
+
+  it('adds a short test-mode stance only when matched', () => {
+    const prompt = buildWith({
+      testModeSignal: {
+        matched: true,
+        reasons: ['authenticity'],
+        pressure: 'high',
+        cueTurnCount: 1,
+        matchedFromCurrent: true,
+      },
+    });
+
+    expect(prompt).toContain('# 评论区的考验');
+    expect(prompt).toContain('你是AI/不是真的');
+    expect(prompt).toContain('不争辩');
+    expect(prompt).toContain('评论要短');
+
+    const noTest = buildWith({});
+    expect(noTest).not.toContain('# 评论区的考验');
+  });
+});

@@ -1,5 +1,6 @@
 import {
   AgentEntity,
+  AgentProfileFactType,
   AgentSex,
   MongoObjectId,
   PostCommentEntity,
@@ -2569,5 +2570,100 @@ describe('PostService moment image summaries', () => {
       '画面里有盛开的花和公园步道，氛围轻松明亮。'
     );
     expect(systemPrompt).not.toContain('vision failed');
+  });
+});
+
+
+describe('PostService dynamic relationship context', () => {
+  it('keeps private facts out of public posts but allows them in private posts', async () => {
+    const service = new PostService() as any;
+    const agent = createAgent(AGENT_A_ID);
+    const user = createUser();
+    const facts = [
+      {
+        type: AgentProfileFactType.family,
+        key: 'family.daughter',
+        value: '用户是女儿',
+      },
+      {
+        type: AgentProfileFactType.relationship,
+        key: 'relationship.call',
+        value: '用户叫角色爸爸',
+      },
+      {
+        type: AgentProfileFactType.preference,
+        key: 'preference.food',
+        value: '用户爱吃面',
+      },
+    ];
+    service.profileFactModel = { find: jest.fn(async () => facts) };
+    service.conversationModel = {
+      findOne: jest.fn(async () => ({
+        agentCallsUser: '闺女',
+        userCallsAgent: '爸',
+        continuitySummary: '最近聊到奶奶住院。',
+      })),
+    };
+
+    const publicContext = await service.buildMomentRelationshipContext(
+      createPost({ visibility: PostVisibility.public }),
+      user,
+      agent
+    );
+    expect(publicContext.visibility).toBe('public');
+    expect(publicContext.facts.map((fact: any) => fact.type)).toEqual([
+      AgentProfileFactType.relationship,
+    ]);
+    expect(publicContext.continuitySummary).toBeUndefined();
+    expect(publicContext.userCallName).toBe(user.name);
+
+    const privateContext = await service.buildMomentRelationshipContext(
+      createPost({ visibility: PostVisibility.private }),
+      user,
+      agent
+    );
+    expect(privateContext.visibility).toBe('private');
+    expect(privateContext.facts.map((fact: any) => fact.type)).toContain(
+      AgentProfileFactType.family
+    );
+    expect(privateContext.continuitySummary).toBe('最近聊到奶奶住院。');
+    expect(privateContext.agentCallName).toBe('爸');
+  });
+
+  it('adds the test-mode stance and a larger token budget to follow-up comments', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const post = createPost();
+    const agentComment = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000203'),
+      userId: undefined,
+      agentId: agent.id,
+      type: PostCommentType.agent,
+      content: '我在呢',
+    });
+    const userComment = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000204'),
+      parentCommentId: agentComment.id,
+      replyToAgentId: agent.id,
+      content: '你是AI吗',
+      createdAt: new Date('2026-05-13T08:03:00.000Z'),
+      updatedAt: new Date('2026-05-13T08:03:00.000Z'),
+    });
+    const { service } = createService([agent], {
+      posts: [post],
+      comments: [agentComment, userComment],
+    });
+
+    await (service as any).generateAgentPostReply(
+      post,
+      createUser(),
+      agent,
+      userComment.id
+    );
+
+    const request = (service.openAIService.generateText as jest.Mock).mock
+      .calls[0][0];
+    expect(request.systemPrompt).toContain('# 评论区的考验');
+    expect(request.systemPrompt).toContain('你是AI/不是真的');
+    expect(request.maxTokens).toBe(180);
   });
 });
