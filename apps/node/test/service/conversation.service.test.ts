@@ -6030,3 +6030,34 @@ describe('ConversationService listConversations', () => {
     expect(result.items).toHaveLength(2);
   });
 });
+
+describe('ConversationService reply lock renewal', () => {
+  it('renews the TTL only while the token still owns the lock', async () => {
+    const service = new ConversationService() as any;
+    const pexpire = jest.fn().mockResolvedValue(1);
+    service.redisService = {
+      get: jest.fn().mockResolvedValue('token-1'),
+      pexpire,
+    };
+
+    await service.renewConversationReplyLock('conversation-1', 'token-1');
+
+    expect(pexpire).toHaveBeenCalledWith(
+      'conversation:reply:lock:conversation-1',
+      2 * 60 * 1000
+    );
+  });
+
+  it('does not extend a lock owned by another token', async () => {
+    const service = new ConversationService() as any;
+    const pexpire = jest.fn().mockResolvedValue(1);
+    service.redisService = {
+      get: jest.fn().mockResolvedValue('token-2'),
+      pexpire,
+    };
+
+    await service.renewConversationReplyLock('conversation-1', 'token-1');
+
+    expect(pexpire).not.toHaveBeenCalled();
+  });
+});

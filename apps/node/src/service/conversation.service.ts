@@ -285,6 +285,10 @@ const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
 const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
+const CONVERSATION_REPLY_LOCK_RENEW_INTERVAL_MS = Math.floor(
+  CONVERSATION_REPLY_LOCK_TTL_MS / 3
+);
+const CONVERSATION_REPLY_LOCK_RETRY_DELAY_MS = 10 * 1000;
 const PENDING_USER_MESSAGE_LOAD_LIMIT = 50;
 const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
@@ -1664,13 +1668,19 @@ export class ConversationService {
           data.traceId || '-'
         );
       }
-      await this.enqueueConversationReplyJob(data);
+      await this.enqueueConversationReplyJob(data, {
+        delayMs: CONVERSATION_REPLY_LOCK_RETRY_DELAY_MS,
+      });
       if (data.traceId) {
         await this.chatTraceService?.markQueued(data.traceId);
       }
       return;
     }
 
+    const lockRenewal = this.startConversationReplyLockRenewal(
+      conversationId,
+      lock.token
+    );
     try {
       if (!data.afterUserCreatedAt) {
         await this.clearConversationReplyDebounce(conversationId);
@@ -1895,6 +1905,9 @@ export class ConversationService {
         });
       }
     } finally {
+      if (lockRenewal) {
+        clearInterval(lockRenewal);
+      }
       await this.releaseConversationReplyLock(conversationId, lock.token);
     }
   }
@@ -8617,7 +8630,8 @@ export class ConversationService {
   }
 
   private async enqueueConversationReplyJob(
-    data: ConversationReplyJobData
+    data: ConversationReplyJobData,
+    options: { delayMs?: number } = {}
   ): Promise<boolean> {
     const queue = this.bullmqFramework?.getQueue(CONVERSATION_REPLY_QUEUE);
     if (!queue) {
@@ -8647,7 +8661,9 @@ export class ConversationService {
     }
 
     const reusableJobId = this.buildConversationReplyJobId(queuedData);
-    const delay = await this.resolveConversationReplyJobDelay(queuedData);
+    const delay =
+      options.delayMs ??
+      (await this.resolveConversationReplyJobDelay(queuedData));
     const existingState = await this.removeReusableConversationReplyJob(
       queue,
       reusableJobId
@@ -8803,6 +8819,39 @@ export class ConversationService {
       acquired: result === 'OK',
       token,
     };
+  }
+
+  private startConversationReplyLockRenewal(
+    conversationId: string,
+    token: string
+  ): NodeJS.Timeout | undefined {
+    if (!this.redisService) {
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      void this.renewConversationReplyLock(conversationId, token);
+    }, CONVERSATION_REPLY_LOCK_RENEW_INTERVAL_MS);
+    timer.unref?.();
+    return timer;
+  }
+
+  private async renewConversationReplyLock(
+    conversationId: string,
+    token: string
+  ): Promise<void> {
+    try {
+      const key = this.getConversationReplyLockKey(conversationId);
+      if ((await this.redisService?.get(key)) !== token) {
+        return;
+      }
+      await (
+        this.redisService as RedisService & {
+          pexpire(lockKey: string, ttlMs: number): Promise<number>;
+        }
+      ).pexpire(key, CONVERSATION_REPLY_LOCK_TTL_MS);
+    } catch {
+      // 续租失败只缩短互斥时间，不能阻断正在生成的那一轮。
+    }
   }
 
   private async releaseConversationReplyLock(
