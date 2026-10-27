@@ -1563,7 +1563,8 @@ export class AgentContextService {
     const testModePromptLines = buildTestModePromptLines(testModeSignal);
     if (testModeSignal.matched) {
       this.logger?.info?.(
-        '[test-mode] pressure=%s reasons=%s cueTurns=%s',
+        '[test-mode] conversationId=%s pressure=%s reasons=%s cueTurns=%s',
+        this.stringifyObjectId(options.conversation.id),
         testModeSignal.pressure,
         testModeSignal.reasons.join(','),
         testModeSignal.cueTurnCount

@@ -88,8 +88,12 @@ describe('test mode prompt lines', () => {
   it('uses the authenticity stance for authenticity challenges', () => {
     const signal = detectTestModeSignal('这不是你啊');
     const lines = buildTestModePromptLines(signal);
-    expect(lines.join('\n')).toContain('已经在质疑');
-    expect(lines.join('\n')).toContain('先认');
+    const text = lines.join('\n');
+    expect(text).toContain('已经在质疑');
+    expect(text).toContain('你是AI');
+    expect(text).toContain('哪里不像');
+    expect(text).not.toContain('还是原来的你');
+    expect(text).not.toContain('刚才那句不像爸');
   });
 
   it('uses the repeated-probe stance without authenticity', () => {
@@ -101,5 +105,16 @@ describe('test mode prompt lines', () => {
     const lines = buildTestModePromptLines(signal);
     expect(lines.join('\n')).toContain('不要再证明');
     expect(lines.join('\n')).toContain('请她提一个字');
+  });
+});
+
+
+describe('test mode hint wording guard', () => {
+  it('does not contain the old leaked sample phrases', () => {
+    for (const text of ['我是你女儿', '这不是你啊', '你以前对妈非打即骂的嘛']) {
+      const lines = buildTestModePromptLines(detectTestModeSignal(text)).join('\n');
+      expect(lines).not.toContain('还是原来的你');
+      expect(lines).not.toContain('刚才那句不像爸');
+    }
   });
 });
