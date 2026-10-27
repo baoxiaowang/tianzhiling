@@ -4629,6 +4629,23 @@ body.page-faq .nav-faq::after {
   content: attr(data-label);
 }
 
+.corp-hero__quiet {
+  margin-top: 18px;
+  color: rgba(247, 242, 232, 0.46);
+  font-size: 11px;
+}
+
+.corp-hero__quiet a {
+  color: var(--gold-2);
+  border-bottom: 1px solid rgba(229, 207, 157, 0.28);
+  padding-bottom: 1px;
+}
+
+.corp-hero__quiet a:hover {
+  color: var(--white);
+  border-color: var(--white);
+}
+
 /* ---------- cinematic hero / memory photography ---------- */
 
 .hero-cinema {
