@@ -2138,7 +2138,7 @@ export class AgentContextService {
           text: deliberateLongReplyPrompt,
         },
       ],
-      { maxBlocks: 3, maxChars: 300 }
+      { maxBlocks: 3, maxChars: 400 }
     );
     if (
       conditionalCompiled.dropped.length > 0 ||
@@ -2147,7 +2147,9 @@ export class AgentContextService {
       this.logger?.info?.(
         '[conditional-prompt] fired=%s dropped=%s suppressed=%s chars=%s',
         conditionalCompiled.fired.join(','),
-        conditionalCompiled.dropped.join(','),
+        conditionalCompiled.dropped
+          .map(id => `${id}:${conditionalCompiled.droppedSizes[id] ?? 0}`)
+          .join(','),
         conditionalCompiled.suppressed.join(','),
         conditionalCompiled.chars
       );

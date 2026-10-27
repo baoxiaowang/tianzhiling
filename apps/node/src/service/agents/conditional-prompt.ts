@@ -21,6 +21,7 @@ export interface ConditionalPromptCompileResult {
   prompt: string;
   fired: string[];
   dropped: string[];
+  droppedSizes: Record<string, number>;
   suppressed: string[];
   chars: number;
 }
@@ -47,6 +48,7 @@ export function compileConditionalPrompts(
 
   const fired: string[] = [];
   const dropped: string[] = [];
+  const droppedSizes: Record<string, number> = {};
   const suppressed: string[] = [];
   const suppressedIds = new Set<string>();
   const firedTexts: string[] = [];
@@ -59,11 +61,13 @@ export function compileConditionalPrompts(
     }
     if (fired.length >= maxBlocks) {
       dropped.push(candidate.id);
+      droppedSizes[candidate.id] = candidate.text.length;
       continue;
     }
     const separator = firedTexts.length ? 1 : 0;
     if (chars + separator + candidate.text.length > maxChars) {
       dropped.push(candidate.id);
+      droppedSizes[candidate.id] = candidate.text.length;
       continue;
     }
 
@@ -79,6 +83,7 @@ export function compileConditionalPrompts(
     prompt: firedTexts.join('\n'),
     fired,
     dropped,
+    droppedSizes,
     suppressed,
     chars,
   };
