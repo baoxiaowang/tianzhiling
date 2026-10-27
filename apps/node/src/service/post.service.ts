@@ -3405,6 +3405,17 @@ export class PostService {
             .slice(-5)
         )
       : undefined;
+    if (testModeSignal?.matched || relationshipContext?.visibility === 'private') {
+      this.logger?.info?.(
+        '[moment-context] postId=%s agentId=%s visibility=%s facts=%s testMode=%s pressure=%s',
+        this.stringifyObjectId(post.id),
+        this.stringifyObjectId(agent.id),
+        relationshipContext?.visibility || 'unknown',
+        relationshipContext?.facts?.length ?? 0,
+        Boolean(testModeSignal?.matched),
+        testModeSignal?.pressure || '-'
+      );
+    }
     const systemPrompt = buildMomentsSystemPrompt({
       userId: this.stringifyObjectId(post.userId),
       agentId: this.stringifyObjectId(agent.id),
