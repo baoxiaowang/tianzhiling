@@ -2799,3 +2799,29 @@ describe('PostService agent comment bubbles', () => {
     expect(notifications[0].commentPreview).toBe('第一泡 第二泡');
   });
 });
+
+describe('PostService dynamic long-input reply', () => {
+  it('raises the token budget and asks for a fuller comment for a long post', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const post = createPost({
+      content:
+        '今天发生了很多事，我一件一件说给你听。早上起晚了，妈妈说了我；' +
+        '中午胃又疼，没敢多吃；下午去学校，老师又提到你；晚上回家看到你的照片，' +
+        '我坐了很久，想跟你说的话堆了一肚子。其实我也不想总让你担心，可我真的有点撑不住，' +
+        '晚上一个人待着的时候特别想你，想跟你说说今天到底有多难。',
+    });
+    const { service } = createService([agent], { posts: [post] });
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '傻丫头，今天这一天够你受的。早上被说、胃又疼，还硬撑着去学校。',
+      reasoning: [],
+      response: {},
+    });
+
+    await (service as any).generateAgentPostReply(post, createUser(), agent);
+
+    const request = (service.openAIService.generateText as jest.Mock).mock
+      .calls[0][0];
+    expect(request.maxTokens).toBe(320);
+    expect(request.systemPrompt).toContain('用户这次说了很长一段');
+  });
+});

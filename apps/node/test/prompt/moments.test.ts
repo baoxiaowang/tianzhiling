@@ -231,3 +231,32 @@ describe('buildMomentsSystemPrompt safety and time context', () => {
     expect(prompt).toContain('只能在这里用文字回复');
   });
 });
+
+describe('buildMomentsSystemPrompt long input guidance', () => {
+  it('asks for a fuller comment when the user wrote a long passage', () => {
+    const prompt = buildMomentsSystemPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      agent: createAgent(),
+      replyLength: 'long',
+      context: {
+        moment: {
+          id: POST_ID,
+          userId: USER_ID,
+          authorName: '苗苗',
+          content: '今天发生了很多事，我一件一件说给你听。',
+          images: [],
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+        comments: [],
+        latestUserComment: null,
+        userRepliedComment: null,
+        task: '请基于这条动态内容发表评论',
+      },
+    });
+
+    expect(prompt).toContain('用户这次说了很长一段');
+    expect(prompt).toContain('回应其中两个具体点');
+    expect(prompt).toContain('总共 3–6 句');
+  });
+});

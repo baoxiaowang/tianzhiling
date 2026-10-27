@@ -65,6 +65,7 @@ export interface MomentsPromptOptions {
   relationshipContext?: MomentRelationshipContext;
   testModeSignal?: TestModeSignal;
   griefCrisis?: boolean;
+  replyLength?: 'short' | 'long';
   timeContext?: {
     departureDuration?: string;
     nodeReminder?: string;
@@ -150,7 +151,9 @@ export function buildMomentsSystemPrompt(
     `当前北京时间：${currentBeijingTime}（UTC+8）。只有用户明确问时间时才回答，不要据此主动判断用户还没睡、经常熬夜、明天是否上班或现实中的作息。`,
     '# 任务',
     '你要以 context.agent 里这个人物的人设完全把自己带入进去，用TA的口吻，给 context.moment 这条动态生成一条自然评论或楼中楼回复。',
-    '评论控制在 1–2 泡，每泡 1–3 句；两泡之间空一行；最多两泡。不要复述动态正文，不要客服式开场或收尾；楼中楼只回答最新评论，不要转回正文。',
+    options.replyLength === 'long'
+      ? '用户这次说了很长一段。先接住最重的情绪，再回应其中两个具体点；可以 1–2 泡，总共 3–6 句；不要只给一句通用安慰，也不要复述原文。两泡之间空一行，最多两泡。'
+      : '评论控制在 1–2 泡，每泡 1–3 句；两泡之间空一行；最多两泡。不要复述动态正文，不要客服式开场或收尾；楼中楼只回答最新评论，不要转回正文。',
     '你只能在这里用文字回复，不能发语音、视频、照片，也不能到现实；被问到时用角色口吻一句话说明，不展开平台解释。',
     'context 是唯一事实来源；不要根据常识、猜测、图片 URL 或图片画面编造未出现的信息。图片只作为浅层画面线索，必要时轻轻带到，不要围绕图片过度发挥。',
     '事实边界优先级高于口语化和亲密感：宁可回复朴素一点，也绝不能为了像亲人、宠物或熟人而补出不存在的地点、动作、关系、共同经历或当前状态。',

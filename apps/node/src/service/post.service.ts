@@ -3460,6 +3460,13 @@ export class PostService {
     const griefCrisis = latestUserComment
       ? isImmediateGriefCrisisIntent(latestUserComment.content)
       : false;
+    const momentInputCharacters = [
+      post.content || '',
+      latestUserComment?.content || '',
+    ]
+      .join('')
+      .replace(/\s+/g, '').length;
+    const isLongMomentInput = momentInputCharacters >= 120;
     if (
       testModeSignal?.matched ||
       griefCrisis ||
@@ -3482,6 +3489,7 @@ export class PostService {
       relationshipContext,
       testModeSignal,
       griefCrisis,
+      replyLength: isLongMomentInput ? 'long' : 'short',
       timeContext: {
         departureDuration: agent.departureDuration,
         nodeReminder: agent.nodeReminder,
@@ -3517,7 +3525,7 @@ export class PostService {
       topP: isFollowUpReply ? 0.85 : 0.95,
       presencePenalty: isFollowUpReply ? 0.1 : 0.6,
       frequencyPenalty: isFollowUpReply ? 0.1 : 0.35,
-      maxTokens: isFollowUpReply ? 180 : 160,
+      maxTokens: isLongMomentInput ? 320 : isFollowUpReply ? 180 : 160,
       reasoningSplit: false,
     });
 
@@ -3619,7 +3627,7 @@ export class PostService {
       .filter(Boolean)
       .slice(0, 2);
     const cleaned = bubbles.join('\n\n');
-    return cleaned.length > 240 ? cleaned.slice(0, 240).trim() : cleaned;
+    return cleaned.length > 420 ? cleaned.slice(0, 420).trim() : cleaned;
   }
 
   private stripReasoningArtifacts(value?: string): string {
