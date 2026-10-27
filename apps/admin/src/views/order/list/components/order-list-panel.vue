@@ -1416,10 +1416,7 @@
       record.status === 'refunded' &&
       (record.voiceMembershipFinalRefund?.status === 'benefits_failed' ||
         record.voiceMembershipFinalRefund?.status === 'benefits_processing');
-    const unsupportedDowngradedUpgrade = Boolean(
-      record.vipUpgrade &&
-        record.voiceMembershipDowngrade?.status === 'completed'
-    );
+    const unsupportedDowngradedUpgrade = isUnsupportedDowngradedUpgrade(record);
 
     return (
       (record.orderType === 'vip_plan' ||
@@ -1436,6 +1433,10 @@
     );
   };
 
+  /**
+   * 只有「升级时确实抵扣了历史订单金额」的订单才需要人工核对历史基础单。
+   * `vipUpgrade` 由后端按 `deductedAmount > 0` 计算为布尔值，这里直接复用。
+   */
   const isUnsupportedDowngradedUpgrade = (record: OrderRecord) => {
     return Boolean(
       record.vipUpgrade &&
@@ -1471,8 +1472,26 @@
 
   // 降级已完成、但退款可能并未真的成功（虚拟支付存在"返回 OK 却没创建退款单"）。
   // 后端会再判定一次：退款确实失败才重发，已成功则返回 409 提示，不会重复退款。
+  /**
+   * 只有降级退款「还没确认成功」时才需要重试。
+   * 降级已完成的订单（微信退款 SUCCESS）不该再出现「重试降级退款」——
+   * 后端对此会返回 ORDER_VOICE_MEMBERSHIP_DOWNGRADE_REFUND_NOT_RETRYABLE（409），
+   * 而且用户后续的退款申请要走普通退款/驳回，与降级退款是两笔。
+   */
   const canRetryVoiceMembershipDowngradeRefund = (record: OrderRecord) => {
-    return record.voiceMembershipDowngrade?.status === 'completed';
+    const downgrade = record.voiceMembershipDowngrade;
+    if (!downgrade) {
+      return false;
+    }
+    if (downgrade.status === 'failed') {
+      return true;
+    }
+    return (
+      downgrade.status === 'completed' &&
+      String(downgrade.wechatRefundStatus || '')
+        .trim()
+        .toUpperCase() !== 'SUCCESS'
+    );
   };
 
   const canRevokeAdminManualOrder = (record: OrderRecord) => {

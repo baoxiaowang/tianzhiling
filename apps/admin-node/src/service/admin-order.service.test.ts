@@ -4402,6 +4402,41 @@ describe('AdminOrderService', () => {
     });
   });
 
+  it('降级退款已成功时，仍允许驳回用户后续的退款申请', async () => {
+    const { service, orders } = createService();
+
+    orders.push(
+      createCompletedVipOrder({
+        status: OrderStatus.refundRequested,
+        snapshot: {
+          voiceMembershipDowngrade: {
+            status: 'completed',
+            refundAmount: 7000,
+            wechatRefundStatus: 'SUCCESS',
+            completedAt: new Date().toISOString(),
+          },
+        },
+      })
+    );
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.rejectRefundOrder(
+      ORDER_ID.toHexString(),
+      'not_refund',
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(result.status).toBe(OrderStatus.completed);
+  });
+
   it('默认不合并退款：items 与 total 保持改动前的购买订单语义', async () => {
     const { service, orders, refundOrders } = createService();
 

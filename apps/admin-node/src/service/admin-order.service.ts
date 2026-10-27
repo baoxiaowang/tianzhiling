@@ -5150,10 +5150,10 @@ export class AdminOrderService {
     const finalRefund = this.getVoiceMembershipFinalRefund(order);
     const downgrade = this.getVoiceMembershipDowngrade(order);
 
-    if (
-      finalRefund?.wechatRefundStatus?.trim().toUpperCase() === 'SUCCESS' ||
-      downgrade?.wechatRefundStatus?.trim().toUpperCase() === 'SUCCESS'
-    ) {
+    // 注意：只拦「本次最终退款」已成功的情况。
+    // 会员降级退款（降级差额，如 169→99 退 70）是另一笔已完成退款，
+    // 用户之后仍可就剩余的 1 年会员提出退款申请，不能因此判定「已退款」而无法驳回。
+    if (finalRefund?.wechatRefundStatus?.trim().toUpperCase() === 'SUCCESS') {
       throw new AppError(
         'ORDER_REFUND_ALREADY_SUCCESS',
         '该订单微信退款已成功，不能驳回',
