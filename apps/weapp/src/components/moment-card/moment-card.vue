@@ -118,7 +118,13 @@
             {{ formatCommentAuthor(comment.replyToUserName) }}
           </text>
           <text class="moment-card__comment-colon">：</text>
-          <text class="moment-card__comment-text">{{ formatCommentContent(comment.content) }}</text>
+          <view class="moment-card__comment-bubbles">
+            <text
+              v-for="(bubble, bubbleIndex) in formatCommentBubbles(comment.content)"
+              :key="bubbleIndex"
+              class="moment-card__comment-text"
+            >{{ bubble }}</text>
+          </view>
         </view>
         <text
           v-if="hiddenCommentCount"
@@ -295,8 +301,17 @@ function formatCommentAuthor(authorName: unknown) {
   return author
 }
 
-function formatCommentContent(content: unknown) {
-  return normalizeEmojiText(normalizeText(content))
+function formatCommentBubbles(content: unknown) {
+  const normalized = normalizeText(content)
+  if (!normalized) {
+    return ['']
+  }
+  const bubbles = normalized
+    .split(/\n{2,}/)
+    .map(bubble => normalizeEmojiText(bubble.trim()))
+    .filter(Boolean)
+    .slice(0, 2)
+  return bubbles.length ? bubbles : ['']
 }
 
 function toggleContentExpanded() {
@@ -618,9 +633,18 @@ function emitOpen() {
 }
 
 .moment-card__comment {
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
   font-size: 14px;
   line-height: 20px;
+}
+
+.moment-card__comment-bubbles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .moment-card__comment + .moment-card__comment {
@@ -643,6 +667,10 @@ function emitOpen() {
   font-size: 14px;
   line-height: 20px;
   color: #191919;
+}
+
+.moment-card__comment-text + .moment-card__comment-text {
+  margin-top: 2px;
 }
 
 .moment-card__comments-more {

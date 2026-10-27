@@ -1,5 +1,6 @@
 import {
   AgentEntity,
+  AgentProfileFactAssertionPolicy,
   AgentProfileFactType,
   AgentSex,
   MongoObjectId,
@@ -2575,7 +2576,7 @@ describe('PostService moment image summaries', () => {
 
 
 describe('PostService dynamic relationship context', () => {
-  it('keeps private facts out of public posts but allows them in private posts', async () => {
+  it('uses the same relationship facts for public and private posts', async () => {
     const service = new PostService() as any;
     const agent = createAgent(AGENT_A_ID);
     const user = createUser();
@@ -2612,10 +2613,12 @@ describe('PostService dynamic relationship context', () => {
     );
     expect(publicContext.visibility).toBe('public');
     expect(publicContext.facts.map((fact: any) => fact.type)).toEqual([
+      AgentProfileFactType.family,
       AgentProfileFactType.relationship,
+      AgentProfileFactType.preference,
     ]);
-    expect(publicContext.continuitySummary).toBeUndefined();
-    expect(publicContext.userCallName).toBe(user.name);
+    expect(publicContext.continuitySummary).toBe('最近聊到奶奶住院。');
+    expect(publicContext.userCallName).toBe('闺女');
 
     const privateContext = await service.buildMomentRelationshipContext(
       createPost({ visibility: PostVisibility.private }),
@@ -2665,5 +2668,64 @@ describe('PostService dynamic relationship context', () => {
     expect(request.systemPrompt).toContain('# 评论区的考验');
     expect(request.systemPrompt).toContain('你是AI/不是真的');
     expect(request.maxTokens).toBe(180);
+  });
+});
+
+
+describe('PostService dynamic bubble split', () => {
+  it('keeps at most two bubbles and preserves the blank-line separator', () => {
+    const service = new PostService() as any;
+    const reply = service.normalizeGeneratedPostReply({
+      content: '第一泡\n\n第二泡\n\n第三泡',
+    });
+    expect(reply).toBe('第一泡\n\n第二泡');
+  });
+
+  it('maps chat bubble markers to the independent moment separator', () => {
+    const service = new PostService() as any;
+    const reply = service.normalizeGeneratedPostReply({
+      content: '第一泡</fenge>第二泡',
+    });
+    expect(reply).toBe('第一泡\n\n第二泡');
+  });
+});
+
+
+describe('PostService dynamic fact assertability', () => {
+  it('does not inject context-only or conflicting facts', async () => {
+    const service = new PostService() as any;
+    const agent = createAgent(AGENT_A_ID);
+    const user = createUser();
+    const facts = [
+      {
+        type: AgentProfileFactType.family,
+        key: 'family.context',
+        value: '候选事实',
+        assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+      },
+      {
+        type: AgentProfileFactType.family,
+        key: 'family.conflict',
+        value: '冲突事实',
+        conflictingValues: ['另一个说法'],
+      },
+      {
+        type: AgentProfileFactType.family,
+        key: 'family.ok',
+        value: '可断言事实',
+      },
+    ];
+    service.profileFactModel = { find: jest.fn(async () => facts) };
+    service.conversationModel = { findOne: jest.fn(async () => null) };
+
+    const context = await service.buildMomentRelationshipContext(
+      createPost({ visibility: PostVisibility.public }),
+      user,
+      agent
+    );
+
+    expect(context.facts.map((fact: any) => fact.value)).toEqual([
+      '可断言事实',
+    ]);
   });
 });

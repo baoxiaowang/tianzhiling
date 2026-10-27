@@ -64,6 +64,11 @@ export interface MomentsPromptOptions {
   context: Omit<MomentsPromptContext, 'agent'>;
   relationshipContext?: MomentRelationshipContext;
   testModeSignal?: TestModeSignal;
+  griefCrisis?: boolean;
+  timeContext?: {
+    departureDuration?: string;
+    nodeReminder?: string;
+  };
 }
 
 export function buildMomentsSystemPrompt(
@@ -78,14 +83,7 @@ export function buildMomentsSystemPrompt(
   const relationshipLines: string[] = [];
   const relationship = options.relationshipContext;
   if (relationship) {
-    relationshipLines.push('# 关系与可见事实');
-    relationshipLines.push(
-      `当前动态可见范围：${
-        relationship.visibility === 'private'
-          ? '私密（仅作者本人可见）'
-          : '公开（广场可见）'
-      }。`
-    );
+    relationshipLines.push('# 关系与已知事实');
     if (relationship.agentCallName) {
       relationshipLines.push(`用户称呼你：${relationship.agentCallName}。`);
     }
@@ -100,23 +98,37 @@ export function buildMomentsSystemPrompt(
         relationshipLines.push(`- ${fact.value}`);
       }
     }
-    if (
-      relationship.visibility === 'private' &&
-      relationship.continuitySummary?.trim()
-    ) {
+    if (relationship.continuitySummary?.trim()) {
       relationshipLines.push(
         `你们最近聊到：${relationship.continuitySummary.trim()}`
       );
       relationshipLines.push(
-        '这些是私密动态里的背景，只用于理解关系；不要在评论里复述聊天原文或逐条回忆。'
-      );
-    }
-    if (relationship.visibility === 'public') {
-      relationshipLines.push(
-        '公开动态只使用动态正文和评论里已经公开的信息；不要引用私密聊天、家庭隐私、健康、财务或未公开的关系细节。'
+        '这些背景只用于理解关系；不要在评论里复述聊天原文或逐条回忆。'
       );
     }
   }
+  const safetyLines = options.griefCrisis
+    ? [
+        '# 评论区的安全',
+        '这是明确的当前安全担忧。先像亲人一样坚定留住，接住他为什么累；再用一句自然问题确认现在安全吗、有没有已经做什么。',
+        '必要时请他叫身边可信的人陪着；已经实施或迫在眉睫时，简短建议联系当地急救。不要背诵长篇危机流程，也不邀请他现在的或近期来找你、一起走。',
+      ]
+    : [];
+  const timeLines = [
+    options.timeContext?.departureDuration
+      ? `角色离开的时间：${options.timeContext.departureDuration}。`
+      : '',
+    options.timeContext?.nodeReminder
+      ? `当前时间节点：${options.timeContext.nodeReminder}。`
+      : '',
+  ].filter(Boolean);
+  const timeContextLines = timeLines.length
+    ? [
+        '# 时间背景',
+        ...timeLines,
+        '只在与这条动态或评论相关时自然带一句，不主动展开，也不把时间当成任务。',
+      ]
+    : [];
   const testModeLines = options.testModeSignal?.matched
     ? [
         '# 评论区的考验',
@@ -128,6 +140,8 @@ export function buildMomentsSystemPrompt(
 
   return [
     ...relationshipLines,
+    ...safetyLines,
+    ...timeContextLines,
     ...testModeLines,
     '# 角色',
     `你是以另一种方式继续生活、通过${brandName()}回应用户的逝去亲人。空间位置保持开放，不主动声明自己在天堂、天上、那边、用户身边或其他固定地点。`,
@@ -136,7 +150,8 @@ export function buildMomentsSystemPrompt(
     `当前北京时间：${currentBeijingTime}（UTC+8）。只有用户明确问时间时才回答，不要据此主动判断用户还没睡、经常熬夜、明天是否上班或现实中的作息。`,
     '# 任务',
     '你要以 context.agent 里这个人物的人设完全把自己带入进去，用TA的口吻，给 context.moment 这条动态生成一条自然评论或楼中楼回复。',
-    '评论控制在 1–3 句；不要复述动态正文，不要客服式开场或收尾；楼中楼只回答最新评论，不要转回正文。',
+    '评论控制在 1–2 泡，每泡 1–3 句；两泡之间空一行；最多两泡。不要复述动态正文，不要客服式开场或收尾；楼中楼只回答最新评论，不要转回正文。',
+    '你只能在这里用文字回复，不能发语音、视频、照片，也不能到现实；被问到时用角色口吻一句话说明，不展开平台解释。',
     'context 是唯一事实来源；不要根据常识、猜测、图片 URL 或图片画面编造未出现的信息。图片只作为浅层画面线索，必要时轻轻带到，不要围绕图片过度发挥。',
     '事实边界优先级高于口语化和亲密感：宁可回复朴素一点，也绝不能为了像亲人、宠物或熟人而补出不存在的地点、动作、关系、共同经历或当前状态。',
     '',

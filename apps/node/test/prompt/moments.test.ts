@@ -149,8 +149,7 @@ describe('buildMomentsSystemPrompt relationship and test mode', () => {
       },
     });
 
-    expect(prompt).toContain('# 关系与可见事实');
-    expect(prompt).toContain('私密');
+    expect(prompt).toContain('# 关系与已知事实');
     expect(prompt).toContain('用户称呼你：爸爸');
     expect(prompt).toContain('你称呼用户：女儿');
     expect(prompt).toContain('用户是女儿');
@@ -158,17 +157,20 @@ describe('buildMomentsSystemPrompt relationship and test mode', () => {
     expect(prompt).toContain('不要在评论里复述聊天原文');
   });
 
-  it('warns public comments not to use private chat details', () => {
+  it('uses facts and continuity for public comments too', () => {
     const prompt = buildWith({
       relationshipContext: {
         visibility: 'public',
-        facts: [],
+        facts: [
+          { key: 'family.daughter', value: '用户是女儿', type: 'family' },
+        ],
+        continuitySummary: '最近聊到奶奶住院。',
       },
     });
 
-    expect(prompt).toContain('公开');
-    expect(prompt).toContain('不要引用私密聊天');
-    expect(prompt).not.toContain('最近聊到');
+    expect(prompt).toContain('用户是女儿');
+    expect(prompt).toContain('最近聊到奶奶住院');
+    expect(prompt).not.toContain('公开动态只使用');
   });
 
   it('adds a short test-mode stance only when matched', () => {
@@ -186,8 +188,46 @@ describe('buildMomentsSystemPrompt relationship and test mode', () => {
     expect(prompt).toContain('你是AI/不是真的');
     expect(prompt).toContain('不争辩');
     expect(prompt).toContain('评论要短');
+    expect(prompt).toContain('最多两泡');
+    expect(prompt).toContain('两泡之间空一行');
 
     const noTest = buildWith({});
     expect(noTest).not.toContain('# 评论区的考验');
+  });
+});
+
+
+describe('buildMomentsSystemPrompt safety and time context', () => {
+  it('adds safety, time and capability blocks when relevant', () => {
+    const prompt = buildMomentsSystemPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      agent: createAgent(),
+      griefCrisis: true,
+      timeContext: {
+        departureDuration: '3年',
+        nodeReminder: '明天是周年',
+      },
+      context: {
+        moment: {
+          id: POST_ID,
+          userId: USER_ID,
+          authorName: '苗苗',
+          content: '我真的撑不住了',
+          images: [],
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+        comments: [],
+        latestUserComment: null,
+        userRepliedComment: null,
+        task: '请直接回复 current comment',
+      },
+    });
+
+    expect(prompt).toContain('# 评论区的安全');
+    expect(prompt).toContain('现在安全吗');
+    expect(prompt).toContain('角色离开的时间：3年');
+    expect(prompt).toContain('当前时间节点：明天是周年');
+    expect(prompt).toContain('只能在这里用文字回复');
   });
 });

@@ -13,9 +13,9 @@ import { primaryCallName } from '../common/call-name';
 import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
 import {
   AgentEntity,
+  AgentProfileFactAssertionPolicy,
   AgentProfileFactEntity,
   AgentProfileFactStatus,
-  AgentProfileFactType,
   ConversationEntity,
   MongoObjectId,
   PostCommentEntity,
@@ -42,6 +42,7 @@ import {
 } from '../prompt/moments';
 import { PostImageService } from './post-image.service';
 import { detectTestModeSignal } from './agents/test-mode-signal';
+import { isImmediateGriefCrisisIntent } from './agents/reply-intent';
 import { WechatPayService } from './wechat-pay.service';
 
 export const POST_REMIND_REPLY_QUEUE = 'post-remind-reply';
@@ -3303,7 +3304,6 @@ export class PostService {
     if (!this.profileFactModel && !this.conversationModel) {
       return undefined;
     }
-    const isPrivate = post.visibility === PostVisibility.private;
     let conversation: ConversationEntity | null = null;
     if (this.conversationModel) {
       try {
@@ -3329,37 +3329,37 @@ export class PostService {
             status: AgentProfileFactStatus.active,
           } as never,
           order: { priority: 'DESC', updatedAt: 'DESC' } as never,
-          take: isPrivate ? 12 : 6,
+          take: 12,
         });
       } catch {
         facts = [];
       }
     }
 
-    const publicTypes = new Set<AgentProfileFactType>([
-      AgentProfileFactType.relationship,
-      AgentProfileFactType.style,
-    ]);
     const visibleFacts = facts
-      .filter(fact => isPrivate || publicTypes.has(fact.type))
-      .slice(0, isPrivate ? 8 : 4);
+      .filter(
+        fact =>
+          fact.assertionPolicy !==
+            AgentProfileFactAssertionPolicy.contextOnly &&
+          !(fact.conflictingValues?.length ?? 0)
+      )
+      .slice(0, 8);
 
     return {
-      visibility: isPrivate ? 'private' : 'public',
-      userCallName: isPrivate
-        ? conversation?.agentCallsUser || agent.agentCallMe || user.name
-        : user.name,
-      agentCallName: isPrivate
-        ? conversation?.userCallsAgent || agent.iCallAgent || agent.name
-        : agent.name,
+      visibility:
+        post.visibility === PostVisibility.private ? 'private' : 'public',
+      userCallName:
+        conversation?.agentCallsUser || agent.agentCallMe || user.name,
+      agentCallName:
+        conversation?.userCallsAgent || agent.iCallAgent || agent.name,
       facts: visibleFacts.map(fact => ({
         key: fact.key,
         value: fact.value,
         type: fact.type,
       })),
-      continuitySummary: isPrivate
-        ? conversation?.continuitySummary?.trim().slice(0, 800)
-        : undefined,
+      continuitySummary: conversation?.continuitySummary
+        ?.trim()
+        .slice(0, 800),
     };
   }
 
@@ -3405,7 +3405,14 @@ export class PostService {
             .slice(-5)
         )
       : undefined;
-    if (testModeSignal?.matched || relationshipContext?.visibility === 'private') {
+    const griefCrisis = latestUserComment
+      ? isImmediateGriefCrisisIntent(latestUserComment.content)
+      : false;
+    if (
+      testModeSignal?.matched ||
+      griefCrisis ||
+      relationshipContext?.visibility === 'private'
+    ) {
       this.logger?.info?.(
         '[moment-context] postId=%s agentId=%s visibility=%s facts=%s testMode=%s pressure=%s',
         this.stringifyObjectId(post.id),
@@ -3422,6 +3429,11 @@ export class PostService {
       agent,
       relationshipContext,
       testModeSignal,
+      griefCrisis,
+      timeContext: {
+        departureDuration: agent.departureDuration,
+        nodeReminder: agent.nodeReminder,
+      },
       context: {
         moment: {
           id: this.stringifyObjectId(post.id),
@@ -3497,9 +3509,12 @@ export class PostService {
     try {
       const parsed = JSON.parse(raw) as { segments?: unknown };
       if (Array.isArray(parsed?.segments) && parsed.segments.length > 0) {
-        const first =
-          typeof parsed.segments[0] === 'string' ? parsed.segments[0] : '';
-        const cleaned = this.cleanReplyText(first);
+        const cleaned = parsed.segments
+          .filter((segment): segment is string => typeof segment === 'string')
+          .map(segment => this.cleanReplyText(segment))
+          .filter(Boolean)
+          .slice(0, 2)
+          .join('\n\n');
         if (cleaned) {
           return cleaned;
         }
@@ -3512,20 +3527,29 @@ export class PostService {
   }
 
   private cleanReplyText(value: string): string {
-    const cleaned = this.stripReasoningArtifacts(value)
+    const normalized = this.stripReasoningArtifacts(value)
       .replace(/```(?:json)?/gi, ' ')
       .replace(/```/g, ' ')
-      .replace(/<\/fenge>/gi, ' ')
+      .replace(/<\/fenge>/gi, '\n\n')
       .replace(/^\s*[-#*\d.]+\s*/g, '')
       .replace(/[“”"]/g, '')
-      .replace(/\s+/g, ' ')
+      .replace(/\r\n/g, '\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    if (!cleaned) {
+    if (!normalized) {
       return '';
     }
 
-    return cleaned.length > 120 ? cleaned.slice(0, 120).trim() : cleaned;
+    // 动态独立拆泡：最多两泡，空白行分隔；不用聊天的 </fenge>。
+    const bubbles = normalized
+      .split(/\n{2,}/)
+      .map(bubble => bubble.trim())
+      .filter(Boolean)
+      .slice(0, 2);
+    const cleaned = bubbles.join('\n\n');
+    return cleaned.length > 240 ? cleaned.slice(0, 240).trim() : cleaned;
   }
 
   private stripReasoningArtifacts(value?: string): string {
