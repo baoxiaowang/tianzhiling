@@ -3544,12 +3544,22 @@ export class PostService {
       existingComments,
       latestUserComment
     );
-    return this.guardMomentReply(
+    const finalReply = this.guardMomentReply(
       selected || this.buildFallbackMomentReply(post, agent, latestUserComment),
       post,
       agent,
       latestUserComment
     );
+    if (isLongMomentInput) {
+      this.logger?.info?.(
+        '[moment-length] postId=%s inputChars=%s mode=long replyChars=%s bubbles=%s maxTokens=320',
+        this.stringifyObjectId(post.id),
+        momentInputCharacters,
+        finalReply.replace(/\s+/g, '').length,
+        finalReply.split(/\n{2,}/).filter(Boolean).length
+      );
+    }
+    return finalReply;
   }
 
   private guardMomentReply(

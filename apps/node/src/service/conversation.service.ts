@@ -775,6 +775,8 @@ export class ConversationService {
   @Logger()
   logger: ILogger;
 
+  private readonly voiceTimbreLogKeys = new Set<string>();
+
   @InjectEntityModel(ConversationEntity)
   conversationModel: MongoRepository<ConversationEntity>;
 
@@ -1689,12 +1691,20 @@ export class ConversationService {
         ? Math.max(0, Date.now() - enqueuedAt.getTime())
         : 0;
       if (waitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
+        const lockKey = this.getConversationReplyLockKey(conversationId);
+        const holderToken = await this.redisService?.get(lockKey);
+        const holderTtlMs = await (
+          this.redisService as RedisService & { pttl(key: string): Promise<number> }
+        )?.pttl(lockKey);
         this.logger.error(
-          '[conversation-reply] lock busy after slow wait, conversationId=%s, userId=%s, waitMs=%s, traceId=%s',
+          '[conversation-reply] lock busy after slow wait, conversationId=%s, userId=%s, waitMs=%s, traceId=%s, jobId=%s, holderToken=%s, holderTtlMs=%s',
           conversationId,
           userId,
           waitMs,
-          data.traceId || '-'
+          data.traceId || '-',
+          options.queueJobId || '-',
+          holderToken ? holderToken.slice(0, 8) : '-',
+          Number.isFinite(holderTtlMs) ? holderTtlMs : '-'
         );
       }
       await this.enqueueConversationReplyJob(data, {
@@ -1709,6 +1719,13 @@ export class ConversationService {
     const lockRenewal = this.startConversationReplyLockRenewal(
       conversationId,
       lock.token
+    );
+    const lockAcquiredAt = Date.now();
+    this.logger?.debug?.(
+      '[reply-lock] acquired, conversationId=%s jobId=%s token=%s',
+      conversationId,
+      options.queueJobId || '-',
+      lock.token.slice(0, 8)
     );
     const replyTiming = createReplyTiming(conversationId);
     markReplyTiming(replyTiming, 'lock_acquired');
@@ -1942,6 +1959,16 @@ export class ConversationService {
     } finally {
       if (lockRenewal) {
         clearInterval(lockRenewal);
+      }
+      const heldMs = Date.now() - lockAcquiredAt;
+      if (heldMs > SLOW_REPLY_TIMING_THRESHOLD_MS) {
+        this.logger.warn(
+          '[reply-lock] slow holder released, conversationId=%s jobId=%s token=%s heldMs=%s',
+          conversationId,
+          options.queueJobId || '-',
+          lock.token.slice(0, 8),
+          heldMs
+        );
       }
       this.logReplyTiming(replyTiming);
       await this.releaseConversationReplyLock(conversationId, lock.token);
@@ -10601,35 +10628,70 @@ export class ConversationService {
     agent?: AgentEntity | null
   ): Promise<VoiceTimbreEntity | undefined> {
     const voiceTimbreId = this.normalizeObjectId(agent?.voiceTimbreId);
+    const logKey = `${this.stringifyObjectId(agent?.id)}:${this.stringifyObjectId(voiceTimbreId)}`;
 
-    if (!voiceTimbreId) {
-      return undefined;
+    if (voiceTimbreId) {
+      const timbre =
+        (await this.voiceTimbreModel.findOne({
+          where: {
+            id: voiceTimbreId,
+            status: VoiceTimbreStatus.active,
+          },
+        })) ??
+        (await this.voiceTimbreModel.findOne({
+          where: {
+            _id: voiceTimbreId,
+            status: VoiceTimbreStatus.active,
+          } as never,
+        }));
+      if (timbre) {
+        return timbre;
+      }
     }
 
-    const timbre =
-      (await this.voiceTimbreModel.findOne({
-        where: {
-          id: voiceTimbreId,
-          status: VoiceTimbreStatus.active,
-        },
-      })) ??
-      (await this.voiceTimbreModel.findOne({
-        where: {
-          _id: voiceTimbreId,
-          status: VoiceTimbreStatus.active,
-        } as never,
-      }));
+    // 配置的音色可能被删除/停用；不要每次语音都失败，回退到该用户最新的
+    // active 音色，并把 agent 的 stale voiceTimbreId 修掉。
+    const fallback = agent?.createdUserId
+      ? await this.voiceTimbreModel.findOne({
+          where: {
+            userId: agent.createdUserId,
+            status: VoiceTimbreStatus.active,
+          },
+          order: { updatedAt: 'DESC' },
+        } as never)
+      : undefined;
 
-    if (!timbre) {
+    if (fallback) {
+      if (!this.voiceTimbreLogKeys.has(logKey)) {
+        this.voiceTimbreLogKeys.add(logKey);
+        this.logger.warn(
+          '[conversation] voice timbre fallback, agentId=%s stale=%s fallback=%s',
+          this.stringifyObjectId(agent?.id),
+          this.stringifyObjectId(voiceTimbreId),
+          this.stringifyObjectId(fallback.id)
+        );
+      }
+      if (agent && fallback.id) {
+        agent.voiceTimbreId = fallback.id;
+        await this.agentModel
+          .updateOne(
+            { _id: agent.id } as never,
+            { $set: { voiceTimbreId: fallback.id } } as never
+          )
+          .catch(() => undefined);
+      }
+      return fallback;
+    }
+
+    if (!this.voiceTimbreLogKeys.has(logKey)) {
+      this.voiceTimbreLogKeys.add(logKey);
       this.logger.error(
         '[conversation] active voice timbre not found, agentId=%s, voiceTimbreId=%s',
         this.stringifyObjectId(agent?.id),
         this.stringifyObjectId(voiceTimbreId)
       );
-      return undefined;
     }
-
-    return timbre;
+    return undefined;
   }
 
   private buildAssistantReplySpeechText(replyContent: string): string {

@@ -1,6 +1,8 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
+import { InjectEntityModel } from '@midwayjs/typeorm';
+import { MongoRepository } from 'typeorm';
 import { MessageEntity, MessageRole, MongoObjectId } from '@tzl/entities';
 import {
   extractConversationEntityDeclarations,
@@ -43,6 +45,9 @@ export class ConversationEntityLedgerService {
 
   @Inject()
   redisService: RedisService;
+
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
 
   async ingestUserMessage(
     message: MessageEntity,
@@ -90,7 +95,11 @@ export class ConversationEntityLedgerService {
   async loadForPrompt(options: {
     conversationId: MongoObjectId;
   }): Promise<ConversationEntityLedgerPromptEntry[]> {
-    const entries = await this.loadEntries(options.conversationId);
+    let entries = await this.loadEntries(options.conversationId);
+    if (!entries.length) {
+      await this.seedFromRecentMessages(options.conversationId);
+      entries = await this.loadEntries(options.conversationId);
+    }
     return entries
       .filter(entry => isValidConversationEntityName(entry.name))
       .filter(
@@ -123,6 +132,84 @@ export class ConversationEntityLedgerService {
       .map(entry => entry.sourceMessageId)
       .filter((id): id is string => Boolean(id))
       .slice(0, 6);
+  }
+
+  /**
+   * 账本是会话投影；Redis 冷启动或老会话没有账本时，从最近用户消息回填一次。
+   * 只回填显式“名字 + 关系”，不把模型猜测写进来。
+   */
+  private async seedFromRecentMessages(
+    conversationId: MongoObjectId
+  ): Promise<void> {
+    if (!this.messageModel || !this.redisService) return;
+    const markerKey = `conversation:entity-ledger:seeded:${String(
+      conversationId
+    )}`;
+    try {
+      if (await this.redisService.get(markerKey)) return;
+      const messages = await this.messageModel.find({
+        where: {
+          conversationId,
+          role: MessageRole.user,
+        },
+        order: { createdAt: 'DESC' },
+        take: 100,
+      } as never);
+      if (!messages.length) {
+        await this.redisService.set(markerKey, '1', 'EX', LEDGER_TTL_SECONDS);
+        return;
+      }
+
+      const entries: StoredLedgerEntry[] = [];
+      let seeded = 0;
+      for (const message of [...messages].reverse()) {
+        const text = (message.content || message.mediaTranscript || '').trim();
+        if (!text) continue;
+        const declarations = extractConversationEntityDeclarations(text);
+        if (!declarations.length) continue;
+        const at = (
+          message.createdAt instanceof Date
+            ? message.createdAt
+            : new Date(message.createdAt)
+        ).toISOString();
+        for (const declaration of declarations) {
+          const normalizedName = normalizeName(declaration.name);
+          const existing = entries.find(
+            entry => entry.normalizedName === normalizedName
+          );
+          const merged = mergeDeclaration(
+            existing,
+            declaration,
+            message,
+            text,
+            at
+          );
+          const index = entries.findIndex(
+            entry => entry.normalizedName === normalizedName
+          );
+          if (index >= 0) entries[index] = merged;
+          else entries.push(merged);
+          seeded += 1;
+        }
+      }
+      for (const entry of entries) {
+        await this.saveEntry(conversationId, entry);
+      }
+      await this.redisService.set(markerKey, '1', 'EX', LEDGER_TTL_SECONDS);
+      if (seeded > 0) {
+        this.logger?.info?.(
+          '[entity-ledger] seeded from messages, conversationId=%s entries=%s',
+          String(conversationId),
+          entries.length
+        );
+      }
+    } catch (error) {
+      this.logger?.warn?.(
+        '[entity-ledger] seed failed, conversationId=%s reason=%s',
+        String(conversationId),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   private ledgerKey(conversationId: MongoObjectId | string): string {
