@@ -10683,7 +10683,9 @@ export class ConversationService {
       return fallback;
     }
 
-    if (!this.voiceTimbreLogKeys.has(logKey)) {
+    // 没配置过音色是正常状态（用户没开通/没选择），不记 ERROR；
+    // 只有“配置过但已失效且没有可回退音色”才需要告警。
+    if (voiceTimbreId && !this.voiceTimbreLogKeys.has(logKey)) {
       this.voiceTimbreLogKeys.add(logKey);
       this.logger.error(
         '[conversation] active voice timbre not found, agentId=%s, voiceTimbreId=%s',
