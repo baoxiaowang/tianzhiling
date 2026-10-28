@@ -18,11 +18,31 @@ export interface ConversationEntityLedgerPromptEntry {
 const RELATION_PATTERN =
   '儿子|女儿|闺女|孩子|宝宝|宝贝|孙子|孙女|外孙|外孙女|哥哥|姐姐|弟弟|妹妹|爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|丈夫|妻子|老公|老婆|爱人|伴侣';
 
-const NAME_PATTERN = '[\\u4e00-\\u9fa5A-Za-z·]{1,12}';
+const NAME_PATTERN = '[\\u4e00-\\u9fa5A-Za-z·]{1,6}';
 const NEGATION_OR_QUESTION = /[？?]|吗|是不是|不是|没有|没(?:有)?|不记得|忘了/u;
 
 function normalizeName(value: string): string {
   return value.replace(/[，,。！？!?；;：:、\s"'“”‘’]/g, '').trim();
+}
+
+const INVALID_ENTITY_NAMES = new Set([
+  '也', '又', '还', '就', '才', '都', '只', '只是', '她', '他', '我', '你',
+  '我们', '你们', '他们', '她们', '这', '那', '这个', '那个', '一个', '自己',
+  '人家', '别人', '谁', '什么', '哪个', '这里', '那里', '现在', '以后', '然后',
+  '所以', '因为', '但是', '而且', '如果', '已经', '一直', '总是', '每次', '好',
+  '对', '是', '的', '了', '吗', '呢', '吧', '啊', '呀', '哦', '嗯',
+]);
+
+const INVALID_ENTITY_NAME_PATTERN =
+  /她|他|我|你|它|的|了|和|与|也|都|就|还|只|叫|是|有|在|这|那|什么|谁|哪个|吗|呢|吧|啊|呀|哦|嗯|爸爸|妈妈|父亲|母亲|儿子|女儿|孩子|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆/;
+
+export function isValidConversationEntityName(value: string): boolean {
+  const name = normalizeName(value);
+  if (!name || name.length > 6) return false;
+  if (INVALID_ENTITY_NAMES.has(name)) return false;
+  if (INVALID_ENTITY_NAME_PATTERN.test(name)) return false;
+  if (/^[0-9]+$/.test(name)) return false;
+  return true;
 }
 
 export function extractConversationEntityDeclarations(
@@ -105,11 +125,7 @@ export function extractConversationEntityDeclarations(
         if (match.index === pattern.regex.lastIndex) pattern.regex.lastIndex += 1;
         continue;
       }
-      if (
-        /^(?:我|你|他|她|我们|你们|他们|她们|什么|谁|哪个|这个|那个)$/.test(
-          name
-        )
-      ) {
+      if (!isValidConversationEntityName(name)) {
         if (match.index === pattern.regex.lastIndex) pattern.regex.lastIndex += 1;
         continue;
       }

@@ -45,3 +45,23 @@ describe('conversation entity ledger extractor', () => {
     expect(prompt).toContain('不要把这个名字猜成宠物');
   });
 });
+
+describe('conversation entity ledger name validation', () => {
+  it('does not capture function words as names', () => {
+    expect(extractConversationEntityDeclarations('也是我的弟弟')).toEqual([]);
+    expect(extractConversationEntityDeclarations('只认她是你老婆')).toEqual([]);
+  });
+});
+
+describe('conversation entity ledger rejects phrase names', () => {
+  it.each([
+    '和你妈',
+    '爸爸这',
+    '也都',
+    '可爱的你',
+    '什么名字啊',
+    '航航是你的外孙克伟',
+  ])('does not keep %s as a name', text => {
+    expect(extractConversationEntityDeclarations(text)).toEqual([]);
+  });
+});

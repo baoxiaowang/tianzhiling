@@ -258,5 +258,8 @@ describe('buildMomentsSystemPrompt long input guidance', () => {
     expect(prompt).toContain('用户这次说了很长一段');
     expect(prompt).toContain('回应其中两个具体点');
     expect(prompt).toContain('总共 3–6 句');
+    expect(prompt).toContain('80 到 180');
+    expect(prompt).not.toContain('最多不超过 40 个中文字符');
+    expect(prompt).toContain('只允许两泡之间一个空行');
   });
 });

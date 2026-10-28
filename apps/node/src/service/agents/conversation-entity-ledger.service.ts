@@ -4,6 +4,7 @@ import { RedisService } from '@midwayjs/redis';
 import { MessageEntity, MessageRole, MongoObjectId } from '@tzl/entities';
 import {
   extractConversationEntityDeclarations,
+  isValidConversationEntityName,
   type ConversationEntityLedgerDeclaration,
   type ConversationEntityLedgerPromptEntry,
 } from './conversation-entity-ledger.shared';
@@ -91,6 +92,7 @@ export class ConversationEntityLedgerService {
   }): Promise<ConversationEntityLedgerPromptEntry[]> {
     const entries = await this.loadEntries(options.conversationId);
     return entries
+      .filter(entry => isValidConversationEntityName(entry.name))
       .filter(
         entry =>
           entry.status === LEDGER_STATUS_ACTIVE ||

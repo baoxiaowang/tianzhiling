@@ -3467,6 +3467,13 @@ export class PostService {
       .join('')
       .replace(/\s+/g, '').length;
     const isLongMomentInput = momentInputCharacters >= 120;
+    if (isLongMomentInput) {
+      this.logger?.info?.(
+        '[moment-length] postId=%s inputChars=%s mode=long maxTokens=320',
+        this.stringifyObjectId(post.id),
+        momentInputCharacters
+      );
+    }
     if (
       testModeSignal?.matched ||
       griefCrisis ||
