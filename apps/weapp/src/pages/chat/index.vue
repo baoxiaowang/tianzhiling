@@ -4589,10 +4589,8 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
     return;
   }
 
-  if (!(await ensureChatQuotaAvailableBeforeSend())) {
-    return;
-  }
-
+  // 语音消息不占用文本聊天额度：用户发语音时不再走文本额度预检，
+  // 避免非会员在语音场景被“聊天额度已用完”误拦。
   const mimeType = "audio/aac";
   const tempId = `local-voice-${Date.now()}`;
   const now = new Date();

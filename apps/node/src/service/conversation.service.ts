@@ -3352,7 +3352,12 @@ export class ConversationService {
     let chatQuota: ConversationChatQuotaSnapshot | undefined;
     if (isAutomaticChatImport) {
       chatQuota = await this.resolveCurrentChatQuota(runtime, now);
-    } else if (!alreadyPermanentlySilent) {
+    } else if (
+      !alreadyPermanentlySilent &&
+      messagePayload.type !== MessageType.voice
+    ) {
+      // 语音消息不占用文本聊天额度：语音发送不走额度校验，也不扣每日额度。
+      // 语音转文字仍走文字链路，继续受聊天额度约束。
       try {
         chatQuota = await this.resolveChatQuotaForSend(
           runtime,
@@ -5102,6 +5107,7 @@ export class ConversationService {
       userId: options.userId,
       agentId: options.agentId,
       role: MessageRole.user,
+      type: { $ne: MessageType.voice },
       status: MessageStatus.sent,
       quotaExempt: { $ne: true },
       createdAt: createdAtQuery,
