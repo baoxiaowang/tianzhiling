@@ -543,6 +543,11 @@ export class AgentProfileFactService {
   @Logger()
   logger: ILogger;
 
+  private readonly regionalPreferenceCache = new Map<
+    string,
+    { value: string; expiresAt: number }
+  >();
+
   @InjectEntityModel(AgentProfileFactEntity)
   factModel: MongoRepository<AgentProfileFactEntity>;
 
@@ -1334,6 +1339,33 @@ export class AgentProfileFactService {
    * 再复用 extractFactsWithRules 的称呼/表达偏好/忌讳规则，只保留白名单 key。
    * shadow 模式只记录不写库；active 模式才 upsert。
    */
+  private async getActiveRegionalPreferenceValue(
+    userId: MongoObjectId,
+    agentId: MongoObjectId
+  ): Promise<string | undefined> {
+    const key = `${this.stringifyObjectId(userId)}:${this.stringifyObjectId(
+      agentId
+    )}`;
+    const cached = this.regionalPreferenceCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const fact = await this.factModel.findOne({
+      where: {
+        userId,
+        agentId,
+        key: 'style.preference.region_dialect',
+        status: AgentProfileFactStatus.active,
+      } as never,
+    });
+    const value = fact?.value?.trim() || undefined;
+    if (value) {
+      this.regionalPreferenceCache.set(key, {
+        value,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
+    }
+    return value;
+  }
+
   async recordExplicitUserRequest(options: {
     message: MessageEntity;
     searchableText: string;
@@ -1342,8 +1374,14 @@ export class AgentProfileFactService {
     if (mode === 'off') return [];
 
     const signal = detectUserRequest(options.searchableText);
+    const activeRegionalValue = await this.getActiveRegionalPreferenceValue(
+      options.message.userId,
+      options.message.agentId
+    );
+    // active 后不再扫地方词表；只保留明确改口（我是X人/以后说X话）。
     const regional = detectRegionalExpressionPreference(
-      options.searchableText
+      options.searchableText,
+      { includeExpressions: !activeRegionalValue }
     );
     const comfort = detectComfortPreference(options.searchableText);
     const hasComfort =
@@ -1496,6 +1534,15 @@ export class AgentProfileFactService {
         key
       );
     }
+    const existingRegional = regional
+      ? await this.factModel.findOne({
+          where: {
+            userId: options.message.userId,
+            agentId: options.message.agentId,
+            key: 'style.preference.region_dialect',
+          } as never,
+        })
+      : undefined;
     const written: AgentProfileFactSummary[] = [];
     for (const fact of requestFactsToWrite) {
       const value =
@@ -1507,6 +1554,41 @@ export class AgentProfileFactService {
             )
           : fact.value;
       const factToWrite = { ...fact, value };
+      if (
+        fact.key === 'style.preference.region_dialect' &&
+        regional?.source === 'expression'
+      ) {
+        // 地方词推断不是一次命中就常驻：先 candidate，同一地区第二次证据才 active。
+        // active 后 expression 检测已关闭，这里只处理 candidate 阶段。
+        if (
+          existingRegional?.status === AgentProfileFactStatus.active ||
+          (existingRegional &&
+            existingRegional.value?.trim() !== factToWrite.value.trim())
+        ) {
+          continue;
+        }
+        const hasCandidate = existingRegional?.status ===
+          AgentProfileFactStatus.candidate;
+        await this.upsertFact({
+          ...factToWrite,
+          userId: options.message.userId,
+          agentId: options.message.agentId,
+          sourceMessageId: options.message.id,
+          sourceOccurredAt: options.message.createdAt,
+          sourceText: options.searchableText,
+          trustedSource: false,
+          confidence: AgentProfileFactConfidence.extracted,
+          status: AgentProfileFactStatus.candidate,
+          forceCandidate: !hasCandidate,
+        });
+        this.regionalPreferenceCache.delete(
+          `${this.stringifyObjectId(options.message.userId)}:${this.stringifyObjectId(
+            options.message.agentId
+          )}`
+        );
+        written.push(factToWrite);
+        continue;
+      }
       await this.upsertFact({
         ...factToWrite,
         userId: options.message.userId,
@@ -1518,6 +1600,13 @@ export class AgentProfileFactService {
         confidence: AgentProfileFactConfidence.confirmed,
         status: AgentProfileFactStatus.active,
       });
+      if (fact.key === 'style.preference.region_dialect') {
+        this.regionalPreferenceCache.delete(
+          `${this.stringifyObjectId(options.message.userId)}:${this.stringifyObjectId(
+            options.message.agentId
+          )}`
+        );
+      }
       written.push(factToWrite);
     }
     this.logger?.info?.(

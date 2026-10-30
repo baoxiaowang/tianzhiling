@@ -178,7 +178,8 @@ const DIALECT_REGION: Record<string, string> = {
 
 const QUESTION_OR_HYPOTHETICAL =
   /[?？]|(?:吗|呢|哪里|哪儿|什么|谁|是不是|会不会|能不能|如果|要是|假如|万一)/;
-const NEGATION = /(?:不是|并非|不算|不再是)/;
+const NEGATION =
+  /(?:不是|并非|不算|不再是|不会|不说|没(?:有)?说|别(?:说|用)|不要(?:说|用)|不想(?:说|用)|听不懂|不会讲|不会说)/;
 
 const AGENT_PATTERN =
   /(?:你|您)(?:是|也是|就是|来自|老家是)([\u4e00-\u9fa5]{2,8}?)(?:人|的)/;
@@ -304,7 +305,8 @@ function normalizeDialect(raw: string): {
  * 返回高置信的地区表达偏好；疑问、否定、假设、非地区称谓返回 undefined。
  */
 export function detectRegionalExpressionPreference(
-  text: string
+  text: string,
+  options: { includeExpressions?: boolean } = {}
 ): RegionalExpressionPreference | undefined {
   const value = (text || '').replace(/\s+/g, ' ').trim();
   if (!value || value.length > 400) return undefined;
@@ -313,6 +315,16 @@ export function detectRegionalExpressionPreference(
 
   const dialectMatch = DIALECT_PATTERN.exec(value);
   if (dialectMatch) {
+    const before = value.slice(
+      Math.max(0, dialectMatch.index - 16),
+      dialectMatch.index
+    );
+    const thirdPartySubject =
+      /(?:妈妈|妈|爸爸|爸|婆婆|公公|奶奶|爷爷|外婆|外公|他|她|他们|她们|别人)/;
+    const selfOrAgent = /(?:我|你|您|我们)/;
+    if (thirdPartySubject.test(before) && !selfOrAgent.test(before)) {
+      return undefined;
+    }
     const { dialect, region } = normalizeDialect(dialectMatch[1]);
     if (dialect) {
       const regionText = region ? `，沿用${region}地区的表达习惯` : '';
@@ -367,20 +379,20 @@ export function detectRegionalExpressionPreference(
     }
   }
 
-  const expression = detectExpressionLexicon(value);
-  if (expression) {
-    const dialectText = expression.dialect
-      ? `（${expression.dialect}）`
-      : '';
-    return {
-      region: expression.region,
-      dialect: expression.dialect,
-      source: 'expression',
-      matched: expression.expressions.join('、'),
-      expressions: expression.expressions,
-      confidence: expression.confidence,
-      value: `用户常用${expression.region}地方表达${dialectText}：${expression.expressions.join('、')}。回复时自然沿用这些地方用语，不要生硬堆砌。`,
-    };
+  if (options.includeExpressions !== false) {
+    const expression = detectExpressionLexicon(value);
+    if (expression) {
+      return {
+        region: expression.region,
+        dialect: expression.dialect,
+        source: 'expression',
+        matched: expression.expressions.join('、'),
+        expressions: expression.expressions,
+        confidence: expression.confidence,
+        // value 必须稳定：不能把每次命中的具体词写进常驻值，否则永远无法累计证据。
+        value: `用户希望沿用${expression.region}地区的表达习惯交流；自然使用，不要每句堆地方词。`,
+      };
+    }
   }
 
   return undefined;

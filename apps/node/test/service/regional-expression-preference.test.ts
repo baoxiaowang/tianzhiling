@@ -73,6 +73,10 @@ describe('regional expression preference false positives', () => {
       '老公昨天都没和你说上话',
       '我只想说心里话',
       '说几句话就好',
+      '每天只能和你说三十句话',
+      '不会讲普通话',
+      '我妈不会讲普通话',
+      '而且他们租的房子只有一间房，不会讲普通话',
     ];
 
     for (const message of messages) {
@@ -133,5 +137,28 @@ describe('regional expression recognition expansion', () => {
 
   it('does not treat ordinary Mandarin as local expression', () => {
     expect(detectRegionalExpressionPreference('今天天气真好')).toBeUndefined();
+  });
+});
+
+describe('regional expression stability', () => {
+  it('keeps the persisted value stable instead of embedding each turn expression', () => {
+    const result = detectRegionalExpressionPreference('我今儿去嘎哈了');
+    expect(result?.value).toBe(
+      '用户希望沿用东北地区的表达习惯交流；自然使用，不要每句堆地方词。'
+    );
+    expect(result?.value).not.toContain('嘎哈');
+  });
+
+  it('can disable expression scanning when an active preference already exists', () => {
+    expect(
+      detectRegionalExpressionPreference('我今儿去嘎哈了', {
+        includeExpressions: false,
+      })
+    ).toBeUndefined();
+    expect(
+      detectRegionalExpressionPreference('以后跟我说四川话', {
+        includeExpressions: false,
+      })
+    ).toMatchObject({ region: '四川', dialect: '四川话' });
   });
 });
