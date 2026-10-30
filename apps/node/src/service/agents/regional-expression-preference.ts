@@ -381,7 +381,7 @@ export function detectRegionalExpressionPreference(
 
   if (options.includeExpressions !== false) {
     const expression = detectExpressionLexicon(value);
-    if (expression) {
+    if (expression?.confidence === 'high') {
       return {
         region: expression.region,
         dialect: expression.dialect,

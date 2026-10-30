@@ -137,6 +137,7 @@ describe('regional expression recognition expansion', () => {
 
   it('does not treat ordinary Mandarin as local expression', () => {
     expect(detectRegionalExpressionPreference('今天天气真好')).toBeUndefined();
+    expect(detectRegionalExpressionPreference('在那边待着咋说，缺啥跟我说')).toBeUndefined();
   });
 });
 
