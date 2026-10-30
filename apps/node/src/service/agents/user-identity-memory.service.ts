@@ -22,6 +22,7 @@ import {
 } from './user-relative-profile.service';
 import { canonicalKinshipRelation } from './memory-value';
 import { OpenAIService } from './openai';
+import { selectProgrammaticAddress } from './person-address.shared';
 
 export interface UserIdentityPromptProfile {
   realName?: string;
@@ -35,6 +36,7 @@ export interface UserKnownPersonPromptProfile {
   realName?: string;
   aliases: string[];
   relationToUser?: string;
+  selectedAddress?: string;
   /**
    * How this other person addresses the user (e.g. 爸爸 calls the user 湾呐).
    * It is the other person's usage, not the current role's address; readers
@@ -524,9 +526,11 @@ export class UserIdentityMemoryService {
 
     return people
       .filter(person =>
-        this.unique([person.realName, ...(person.aliases || [])]).some(
-          name => name.length >= 2 && mentionText.includes(name)
-        )
+        this.unique([
+          person.realName,
+          ...(person.aliases || []),
+          person.relationToUser,
+        ]).some(name => name.length >= 2 && mentionText.includes(name))
       )
       .slice(0, Math.max(1, Math.min(options.limit || 4, 8)))
       .map(person => ({
@@ -537,6 +541,15 @@ export class UserIdentityMemoryService {
         realName: person.realName?.trim() || undefined,
         aliases: this.unique(person.aliases || []),
         relationToUser: person.relationToUser?.trim() || undefined,
+        selectedAddress: selectProgrammaticAddress(
+          {
+            preferredName: person.preferredName?.trim() || undefined,
+            realName: person.realName?.trim() || undefined,
+            aliases: this.unique(person.aliases || []),
+            relationToUser: person.relationToUser?.trim() || undefined,
+          },
+          mentionText
+        ),
         ...(person.personCallsUser?.trim()
           ? { personCallsUser: person.personCallsUser.trim() }
           : {}),

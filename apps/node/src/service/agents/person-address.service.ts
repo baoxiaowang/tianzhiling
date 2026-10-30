@@ -4,12 +4,9 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import { RedisService } from '@midwayjs/redis';
 import { MongoRepository } from 'typeorm';
 import {
-  AgentEntity,
-  AgentProfileFactEntity,
   MongoObjectId,
   UserKnownPersonEntity,
   UserKnownPersonStatus,
-  UserRelativeFactEntity,
 } from '@tzl/entities';
 
 export interface PersonAddressCorrection {
@@ -78,15 +75,6 @@ export class PersonAddressService {
   @InjectEntityModel(UserKnownPersonEntity)
   knownPersonModel: MongoRepository<UserKnownPersonEntity>;
 
-  @InjectEntityModel(AgentEntity)
-  agentModel: MongoRepository<AgentEntity>;
-
-  @InjectEntityModel(AgentProfileFactEntity)
-  profileFactModel: MongoRepository<AgentProfileFactEntity>;
-
-  @InjectEntityModel(UserRelativeFactEntity)
-  relativeFactModel: MongoRepository<UserRelativeFactEntity>;
-
   async applyCorrectionFromUserText(options: {
     userId: MongoObjectId | string;
     text: string;
@@ -104,7 +92,7 @@ export class PersonAddressService {
         status: UserKnownPersonStatus.active,
       } as never,
     });
-    const target = people.find(person => {
+    let target = people.find(person => {
       const names = [
         person.realName,
         person.preferredName,
@@ -112,40 +100,53 @@ export class PersonAddressService {
       ].filter(Boolean) as string[];
       return names.some(name => normalizeName(name) === correction.oldName);
     });
+    if (!target) {
+      // 旧变体不一定作为 alias 保存；先从 variant 映射找它对应的确认名字，
+      // 再定位人物。这样“不是小蹦蛋儿，是小蹦得儿”仍然能修到正确人物。
+      const bans = await this.loadBans(userId);
+      const canonical = bans.get(correction.oldName);
+      if (canonical) {
+        target = people.find(person => {
+          const names = [
+            person.realName,
+            person.preferredName,
+            ...(person.aliases || []),
+          ].filter(Boolean) as string[];
+          return names.some(name => normalizeName(name) === normalizeName(canonical));
+        });
+      }
+    }
+    if (!target) {
+      target = people.find(person =>
+        Boolean(person.sourceText?.includes(correction.oldName))
+      );
+    }
     if (!target) return false;
 
+    // 只废弃“被纠正的那个旧写法”，不要把它以外的有效昵称一起清掉。
+    // 例：孩子有 preferred=小蹦得儿、allowed=小朵朵；纠正“小蹦蛋儿”时，
+    // 只 ban 小蹦蛋儿，小朵朵必须保留。
+    const normalizedOld = normalizeName(correction.oldName);
     const oldVariants = Array.from(
       new Set(
-        [
-          target.realName,
-          target.preferredName,
-          ...(target.aliases || []),
-          correction.oldName,
-        ]
+        [target.realName, target.preferredName, ...(target.aliases || [])]
           .map(name => normalizeName(name))
-          .filter(Boolean)
+          .filter(name => name && name === normalizedOld)
+          .concat(normalizedOld)
       )
     ).filter(name => name !== correction.newName);
 
     target.preferredName = correction.newName;
-    if (!target.realName || oldVariants.includes(normalizeName(target.realName))) {
+    if (!target.realName || normalizeName(target.realName) === normalizedOld) {
       target.realName = correction.newName;
     }
     target.aliases = (target.aliases || []).filter(
-      name => !oldVariants.includes(normalizeName(name))
+      name => normalizeName(name) !== normalizedOld
     );
     target.updatedAt = new Date();
     await this.knownPersonModel.save(target);
 
     await this.addBans(userId, oldVariants, correction.newName);
-    await this.propagateToAgents(userId, oldVariants, correction.newName);
-    await this.propagateToProfileFacts(userId, oldVariants, correction.newName);
-    await this.propagateToRelativeFacts(
-      userId,
-      target.id,
-      oldVariants,
-      correction.newName
-    );
 
     this.logger?.info?.(
       '[person-address] correction applied, userId=%s old=%s new=%s personId=%s',
@@ -216,93 +217,5 @@ export class PersonAddressService {
     return `person-address:${String(userId)}:bans`;
   }
 
-  private async propagateToAgents(
-    userId: MongoObjectId,
-    variants: string[],
-    canonical: string
-  ): Promise<void> {
-    const agents = await this.agentModel.find({
-      where: { createdUserId: userId } as never,
-    });
-    for (const agent of agents) {
-      let changed = false;
-      for (const field of ['languageHabits', 'description'] as const) {
-        const value = (agent as any)[field] as string | undefined;
-        const next = replaceVariants(value, variants, canonical);
-        if (next !== value) {
-          (agent as any)[field] = next;
-          changed = true;
-        }
-      }
-      if (agent.agentCallMe) {
-        const callMe = replaceVariants(agent.agentCallMe, variants, canonical);
-        if (callMe !== agent.agentCallMe) {
-          agent.agentCallMe = callMe;
-          changed = true;
-        }
-      }
-      if (changed) {
-        agent.updatedAt = new Date();
-        await this.agentModel.save(agent);
-      }
-    }
-  }
 
-  private async propagateToProfileFacts(
-    userId: MongoObjectId,
-    variants: string[],
-    canonical: string
-  ): Promise<void> {
-    const facts = await this.profileFactModel.find({
-      where: { userId } as never,
-    });
-    for (const fact of facts) {
-      const nextValue = replaceVariants(fact.value, variants, canonical);
-      const nextConflicts = (fact.conflictingValues || [])
-        .map(value => replaceVariants(value, variants, canonical))
-        .filter((value): value is string => Boolean(value));
-      const changed =
-        nextValue !== fact.value ||
-        JSON.stringify(nextConflicts) !==
-          JSON.stringify(fact.conflictingValues || []);
-      if (!changed) continue;
-      fact.value = nextValue;
-      fact.conflictingValues = nextConflicts;
-      fact.updatedAt = new Date();
-      await this.profileFactModel.save(fact);
-    }
-  }
-
-  private async propagateToRelativeFacts(
-    userId: MongoObjectId,
-    personId: MongoObjectId,
-    variants: string[],
-    canonical: string
-  ): Promise<void> {
-    const facts = await this.relativeFactModel.find({
-      where: { userId, personId } as never,
-    });
-    for (const fact of facts) {
-      const nextValue = replaceVariants(fact.value, variants, canonical);
-      if (nextValue !== fact.value) {
-        fact.value = nextValue;
-        fact.updatedAt = new Date();
-        await this.relativeFactModel.save(fact);
-      }
-    }
-  }
-}
-
-function replaceVariants(
-  value: string | undefined,
-  variants: string[],
-  canonical: string
-): string {
-  let next = value || '';
-  for (const variant of variants) {
-    if (variant && next.includes(variant)) {
-      next = next.split(variant).join(canonical);
-    }
-  }
-  return next;
 }

@@ -389,6 +389,9 @@ export function buildAgentIdentityPrompt(
       ...(realName ? { realName } : {}),
       ...(aliases.length ? { aliases } : {}),
       ...(relationToUser ? { relationToUser } : {}),
+      ...(person.selectedAddress
+        ? { selectedAddress: clean(person.selectedAddress, 24) }
+        : {}),
       ...(personCallsUser ? { personCallsUser } : {}),
     };
   });
@@ -464,6 +467,9 @@ export function buildAgentIdentityPrompt(
     `身份：${JSON.stringify({ agent, user })}`,
     knownPeople.length
       ? `本轮相关其他人物：${JSON.stringify(knownPeople)}`
+      : '',
+    knownPeople.length
+      ? 'knownPeople.selectedAddress 是程序按本轮语境选定的称呼；优先使用；aliases 是可用别名，可按场景使用；不要使用 rejected/asr 变体。'
       : '',
     personAddressLines.length
       ? `其他家人对用户的称呼：${personAddressLines.join(
