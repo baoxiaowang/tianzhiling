@@ -161,7 +161,10 @@ import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
 import { ConversationEntityLedgerService } from './agents/conversation-entity-ledger.service';
 import { PersonAddressService } from './agents/person-address.service';
-import { NameCorrectionWorkflowService } from './agents/name-correction-workflow.service';
+import {
+  isNameCorrectionCandidate,
+  NameCorrectionWorkflowService,
+} from './agents/name-correction-workflow.service';
 import { isSearchableDialogueEvidence } from './agents/memory-value';
 import { MemoryModuleService } from './memory/memory-module.service';
 import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
@@ -3430,6 +3433,7 @@ export class ConversationService {
     }
 
     let nameCorrectionApplied = false;
+    const nameCorrectionCandidate = isNameCorrectionCandidate(searchableText);
     try {
       const workflowResult = await this.runNameCorrectionWorkflowWithTimeout({
         userId: runtime.conversation.userId,
@@ -3446,7 +3450,7 @@ export class ConversationService {
       );
     }
 
-    if (!nameCorrectionApplied) {
+    if (!nameCorrectionApplied && !nameCorrectionCandidate) {
       try {
         await this.personAddressService?.applyCorrectionFromUserText({
           userId: runtime.conversation.userId,
