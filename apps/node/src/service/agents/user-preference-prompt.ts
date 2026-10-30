@@ -24,6 +24,11 @@ const GLOBAL_KEYS = new Set([
   'taboo.comfort.avoid',
   'style.preference.death_wording',
   'style.preference.region_dialect',
+  'style.preference.other',
+  'style.preference.closing_question',
+  'style.preference.verbosity',
+  'style.preference.preachy',
+  'style.preference.tone',
 ]);
 
 function isActive(fact: UserPreferenceFactLike): boolean {
@@ -39,6 +44,13 @@ function renderGlobal(fact: UserPreferenceFactLike): string {
   }
   if (fact.key === 'style.preference.region_dialect') {
     return `用户地区表达偏好：${fact.value}`;
+  }
+  if (fact.key.startsWith('style.preference.')) {
+    const instruction = fact.value.replace(
+      /^用户对表达方式的长期要求：/,
+      ''
+    );
+    return `用户表达要求：${instruction}`;
   }
   return `用户长期偏好：${fact.value}`;
 }

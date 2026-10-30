@@ -24,6 +24,27 @@ describe('user preference prompt compiler', () => {
     expect(section.task).toBe('');
   });
 
+  it('renders durable style requirements in the stable section', () => {
+    const section = buildUserPreferencePromptSection([
+      {
+        key: 'style.preference.other',
+        value: '用户对表达方式的长期要求：不喜欢发“嗯”',
+        status: 'active',
+        preferenceScope: 'global',
+        priority: 3,
+      },
+      {
+        key: 'style.preference.closing_question',
+        value: '用户对表达方式的长期要求：不要一直问我这个问题',
+        status: 'active',
+        preferenceScope: 'global',
+        priority: 3,
+      },
+    ]);
+    expect(section.stable).toContain('用户表达要求：不喜欢发“嗯”');
+    expect(section.stable).toContain('用户表达要求：不要一直问我这个问题');
+  });
+
   it('only injects conditional preferences when the trigger matches', () => {
     const fact = {
       key: 'taboo.comfort.avoid.kid',
