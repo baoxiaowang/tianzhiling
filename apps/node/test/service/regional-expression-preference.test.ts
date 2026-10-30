@@ -40,7 +40,10 @@ describe('regional expression preference', () => {
     expect(detectRegionalExpressionPreference('你是好人')).toBeUndefined();
     expect(detectRegionalExpressionPreference('你是中国人')).toBeUndefined();
     expect(detectRegionalExpressionPreference('你是外地人')).toBeUndefined();
-    expect(detectRegionalExpressionPreference('我是四川人')).toBeUndefined();
+    expect(detectRegionalExpressionPreference('我是四川人')).toMatchObject({
+      region: '四川',
+      source: 'user',
+    });
     expect(detectRegionalExpressionPreference('我爸爸是四川人')).toBeUndefined();
   });
 });
@@ -93,5 +96,42 @@ describe('regional expression preference false positives', () => {
     expect(detectRegionalExpressionPreference('你是北方人')).toMatchObject({
       region: '北方',
     });
+  });
+});
+
+
+describe('regional expression recognition expansion', () => {
+  it('recognizes user self-origin and hometown phrases', () => {
+    expect(detectRegionalExpressionPreference('我老家在山东')).toMatchObject({
+      region: '山东',
+      source: 'user',
+    });
+    expect(detectRegionalExpressionPreference('我来自云南')).toMatchObject({
+      region: '云南',
+      source: 'user',
+    });
+    expect(detectRegionalExpressionPreference('我在四川长大')).toMatchObject({
+      region: '四川',
+      source: 'user',
+    });
+  });
+
+  it('recognizes high-signal local expressions', () => {
+    expect(detectRegionalExpressionPreference('我今儿去嘎哈了')).toMatchObject({
+      region: '东北',
+      source: 'expression',
+    });
+    expect(detectRegionalExpressionPreference('这瓜娃子巴适得板')).toMatchObject({
+      region: '四川',
+      source: 'expression',
+    });
+    expect(detectRegionalExpressionPreference('唔该晒')).toMatchObject({
+      region: '广东',
+      source: 'expression',
+    });
+  });
+
+  it('does not treat ordinary Mandarin as local expression', () => {
+    expect(detectRegionalExpressionPreference('今天天气真好')).toBeUndefined();
   });
 });

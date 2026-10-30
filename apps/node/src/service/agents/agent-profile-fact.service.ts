@@ -1381,7 +1381,10 @@ export class AgentProfileFactService {
           key: 'style.preference.region_dialect',
           value: regional.value,
           polarity: AgentProfileFactPolarity.positive,
-          confidence: AgentProfileFactConfidence.confirmed,
+          confidence:
+            regional.confidence === 'medium'
+              ? AgentProfileFactConfidence.extracted
+              : AgentProfileFactConfidence.confirmed,
           priority: 3,
           status: AgentProfileFactStatus.active,
           preferenceScope: 'global',

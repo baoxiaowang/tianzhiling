@@ -8,7 +8,9 @@
 export interface RegionalExpressionPreference {
   region?: string;
   dialect?: string;
-  source: 'agent' | 'shared' | 'dialect';
+  source: 'agent' | 'shared' | 'dialect' | 'user' | 'expression';
+  expressions?: string[];
+  confidence?: 'high' | 'medium';
   matched: string;
   value: string;
 }
@@ -150,6 +152,28 @@ const DIALECT_REGION: Record<string, string> = {
   湖北话: '湖北',
   河南话: '河南',
   山东话: '山东',
+  陕西话: '陕西',
+  山西话: '山西',
+  甘肃话: '甘肃',
+  宁夏话: '宁夏',
+  新疆话: '新疆',
+  内蒙古话: '内蒙古',
+  云南话: '云南',
+  贵州话: '贵州',
+  广西话: '广西',
+  福建话: '福建',
+  江西话: '江西',
+  安徽话: '安徽',
+  江苏话: '江苏',
+  浙江话: '浙江',
+  海南话: '海南',
+  台湾话: '台湾',
+  天津话: '天津',
+  北京话: '北京',
+  河北话: '河北',
+  吴语: '江苏',
+  赣语: '江西',
+  湘语: '湖南',
 };
 
 const QUESTION_OR_HYPOTHETICAL =
@@ -160,8 +184,95 @@ const AGENT_PATTERN =
   /(?:你|您)(?:是|也是|就是|来自|老家是)([\u4e00-\u9fa5]{2,8}?)(?:人|的)/;
 const SHARED_PATTERN =
   /我们(?:都|也)?是([\u4e00-\u9fa5]{2,8}?)(?:人|的)/;
+const USER_PATTERNS = [
+  /(?:^|[，,。；;])(?:我|俺|本人)(?:是|也是|就是)([\u4e00-\u9fa5]{2,8}?)(?:人|的)/,
+  /(?:^|[，,。；;])(?:我|俺|本人)来自([\u4e00-\u9fa5]{2,8}?)(?=$|[，,。；;])/,
+  /(?:^|[，,。；;])(?:我|俺|本人)(?:老家是|老家在|老家|家在|住在)([\u4e00-\u9fa5]{2,8}?)(?:人|的|那边|这儿|这里|长大|出生)?/,
+  /(?:^|[，,。；;])(?:我|俺|本人)在([\u4e00-\u9fa5]{2,8}?)(?:长大|出生|生活)/,
+];
 const DIALECT_PATTERN =
   /(?:说|讲|用)([\u4e00-\u9fa5]{1,8}?(?:话|语|方言))/;
+
+interface ExpressionLexiconEntry {
+  region: string;
+  dialect?: string;
+  strong: string[];
+  weak?: string[];
+}
+
+/**
+ * 地方用语高信号词表。只收辨识度较高的词/短语；普通普通话常用字
+ * （如“整/中/啥”）不作为单条强证据，避免把正常表达误判成方言。
+ */
+const EXPRESSION_LEXICON: ExpressionLexiconEntry[] = [
+  { region: '东北', dialect: '东北话', strong: ['嘎哈', '咋整', '埋汰', '唠嗑', '贼拉', '得瑟', '膈应', '敞亮'], weak: ['稀罕', '麻溜', '忽悠'] },
+  { region: '四川', dialect: '四川话', strong: ['巴适得板', '摆龙门阵', '瓜娃子', '哦豁', '扯把子'], weak: ['巴适', '安逸', '啥子', '晓得', '要得', '莫得', '咋个'] },
+  { region: '重庆', dialect: '重庆话', strong: ['巴适得板', '摆龙门阵', '瓜娃子', '雄起', '扯把子', '哦豁'], weak: ['巴适', '要得', '莫得', '咋个'] },
+  { region: '广东', dialect: '粤语', strong: ['唔该', '点解', '冇', '佢', '得闲', '食饭', '早晨', '唔系'], weak: ['唔', '睇', '乜'] },
+  { region: '上海', dialect: '上海话', strong: ['阿拉', '侬', '覅', '白相', '结棍'], weak: ['伐', '勿', '伊', '适意'] },
+  { region: '湖南', dialect: '湖南话', strong: ['霸蛮', '恰饭', '嬲塞', '宝里宝气'], weak: ['咯', '哒'] },
+  { region: '河南', dialect: '河南话', strong: ['弄啥嘞', '中不中', '得劲', '俺们'], weak: ['恁', '啥', '咋'] },
+  { region: '山东', dialect: '山东话', strong: ['拉呱', '哈啤酒', '潮巴', '得劲'], weak: ['俺', '恁', '么'] },
+  { region: '陕西', dialect: '陕西话', strong: ['嫽扎咧', '克里马擦', '咥', '谝'], weak: ['额', '咋', '咧'] },
+  { region: '云南', dialect: '云南话', strong: ['板扎', '给是', '整哪样'], weak: ['咋个', '咯', '甩'] },
+  { region: '贵州', dialect: '贵州话', strong: ['板扎', '搞哪样'], weak: ['勒', '哦豁', '哈'] },
+  { region: '广西', dialect: '广西话', strong: ['咩', '啵', '老表'], weak: ['咧', '克'] },
+  { region: '福建', dialect: '闽南语', strong: ['歹势', '古早', '厝', '阮'], weak: ['食'] },
+  { region: '潮汕', dialect: '潮汕话', strong: ['孥', '厝', '阮'], weak: ['好食'] },
+  { region: '客家', dialect: '客家话', strong: ['涯', '食朝', '转屋卡', '你兜'], weak: [] },
+  { region: '天津', dialect: '天津话', strong: ['倍儿', '哏儿', '干嘛呢'], weak: ['嘛', '介'] },
+  { region: '湖北', dialect: '湖北话', strong: ['么斯', '冇得', '拐子', '闹眼子'], weak: ['蛮扎实'] },
+  { region: '江西', dialect: '江西话', strong: ['恰饭', '崽里', '老表'], weak: ['冇'] },
+  { region: '安徽', dialect: '安徽话', strong: ['搞么斯', '得味'], weak: ['乖乖'] },
+  { region: '浙江', dialect: '吴语', strong: ['侬', '阿拉', '弗', '木佬佬'], weak: ['伐', '适意'] },
+  { region: '山西', dialect: '山西话', strong: ['圪蹴', '老醯儿'], weak: ['甚'] },
+  { region: '甘肃', dialect: '甘肃话', strong: ['尕', '谝'], weak: ['咋', '啥'] },
+  { region: '新疆', dialect: '新疆话', strong: ['尕', '谝'], weak: ['咋', '啥'] },
+  { region: '海南', dialect: '海南话', strong: ['做乜', '加咪'], weak: ['鲁'] },
+];
+
+function detectExpressionLexicon(text: string): {
+  region: string;
+  dialect?: string;
+  expressions: string[];
+  confidence: 'high' | 'medium';
+} | undefined {
+  let best:
+    | {
+        region: string;
+        dialect?: string;
+        expressions: string[];
+        confidence: 'high' | 'medium';
+        score: number;
+      }
+    | undefined;
+
+  for (const entry of EXPRESSION_LEXICON) {
+    const strongHits = entry.strong.filter(word => text.includes(word));
+    const weakHits = (entry.weak || []).filter(word => text.includes(word));
+    const expressions = Array.from(new Set([...strongHits, ...weakHits]));
+    const highConfidence = strongHits.length > 0;
+    if (!highConfidence && weakHits.length < 2) continue;
+    const score = strongHits.length * 10 + weakHits.length;
+    if (!best || score > best.score) {
+      best = {
+        region: entry.region,
+        dialect: entry.dialect,
+        expressions,
+        confidence: highConfidence ? 'high' : 'medium',
+        score,
+      };
+    }
+  }
+
+  if (!best) return undefined;
+  return {
+    region: best.region,
+    dialect: best.dialect,
+    expressions: best.expressions,
+    confidence: best.confidence,
+  };
+}
 
 function normalizeRegion(raw: string): string | undefined {
   let value = (raw || '').trim();
@@ -239,6 +350,37 @@ export function detectRegionalExpressionPreference(
         value: `用户希望沿用${region}地区的表达习惯交流`,
       };
     }
+  }
+
+  for (const pattern of USER_PATTERNS) {
+    const match = pattern.exec(value);
+    if (!match) continue;
+    const region = normalizeRegion(match[1]);
+    if (region) {
+      return {
+        region,
+        source: 'user',
+        matched: match[0],
+        value: `用户希望沿用${region}地区的表达习惯交流`,
+        confidence: 'high',
+      };
+    }
+  }
+
+  const expression = detectExpressionLexicon(value);
+  if (expression) {
+    const dialectText = expression.dialect
+      ? `（${expression.dialect}）`
+      : '';
+    return {
+      region: expression.region,
+      dialect: expression.dialect,
+      source: 'expression',
+      matched: expression.expressions.join('、'),
+      expressions: expression.expressions,
+      confidence: expression.confidence,
+      value: `用户常用${expression.region}地方表达${dialectText}：${expression.expressions.join('、')}。回复时自然沿用这些地方用语，不要生硬堆砌。`,
+    };
   }
 
   return undefined;
