@@ -161,6 +161,7 @@ import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
 import { ConversationEntityLedgerService } from './agents/conversation-entity-ledger.service';
 import { PersonAddressService } from './agents/person-address.service';
+import { assessVoiceTranscriptQuality } from './agents/voice-transcript-quality';
 import {
   isNameCorrectionCandidate,
   NameCorrectionWorkflowService,
@@ -3902,6 +3903,22 @@ export class ConversationService {
     // 记忆写入总闸：暂停期间不再为聊天/异步/小使者消息派生结构化记忆任务。
     if (isMemoryWriteDisabled()) {
       return;
+    }
+    // ASR 明显低质量时不写结构化记忆，避免把听错的名字/数字/关系固化。
+    if (message.type === MessageType.voice) {
+      const quality = assessVoiceTranscriptQuality(
+        message.mediaTranscript,
+        message.mediaDurationMs
+      );
+      if (quality.lowQuality) {
+        this.logger?.info?.(
+          '[voice-transcript] skip memory enrichment, messageId=%s reason=%s durationMs=%s',
+          this.stringifyObjectId(message.id),
+          quality.reason || 'low_quality',
+          message.mediaDurationMs || 0
+        );
+        return;
+      }
     }
     const pureSocial = isPureSocialTurn(searchableText);
     const gateMode = getRuleGateMode();
@@ -10480,6 +10497,10 @@ export class ConversationService {
       type: MessageType.voice,
       content: synthesizedVoice.transcript,
       status: MessageStatus.sent,
+      // 语音回复也是一次具体回复：绑定到触发它的用户消息，避免连续语音时
+      // 前端只能看到两条独立语音、无法判断谁回应谁。
+      replyGroupId: this.stringifyObjectId(options.before.userMessage.id),
+      replySegmentIndex: 0,
       mediaObjectKey: synthesizedVoice.mediaObjectKey,
       mediaMimeType: synthesizedVoice.mediaMimeType,
       mediaTranscript: synthesizedVoice.transcript,
@@ -11279,7 +11300,13 @@ export class ConversationService {
       case MessageType.voice: {
         const transcript = payload.mediaTranscript?.trim();
         if (!transcript) return '';
-        return `语音：${transcript}`;
+        const quality = assessVoiceTranscriptQuality(
+          transcript,
+          payload.mediaDurationMs
+        );
+        return quality.lowQuality
+          ? `[语音转写低置信度，可能有误，涉及人名、数字、关系或关键事实时先确认]\n语音：${transcript}`
+          : `语音：${transcript}`;
       }
       case MessageType.text:
       default:
