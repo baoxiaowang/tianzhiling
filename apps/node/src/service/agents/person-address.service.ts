@@ -158,6 +158,58 @@ export class PersonAddressService {
     return true;
   }
 
+  async applyStructuredNameCorrection(options: {
+    userId: MongoObjectId | string;
+    personId: MongoObjectId | string;
+    preferredName: string;
+    allowedNames?: string[];
+    rejectedNames?: string[];
+  }): Promise<boolean> {
+    const userId =
+      options.userId instanceof MongoObjectId
+        ? options.userId
+        : new MongoObjectId(String(options.userId));
+    const personId =
+      options.personId instanceof MongoObjectId
+        ? options.personId
+        : new MongoObjectId(String(options.personId));
+    const person = await this.knownPersonModel.findOne({
+      where: { _id: personId, userId } as never,
+    });
+    if (!person) return false;
+
+    const preferred = normalizeName(options.preferredName);
+    if (!preferred) return false;
+    const rejected = Array.from(
+      new Set((options.rejectedNames || []).map(normalizeName).filter(Boolean))
+    ).filter(name => name !== preferred);
+    const allowed = Array.from(
+      new Set(
+        [...(options.allowedNames || []), ...(person.aliases || [])]
+          .map(normalizeName)
+          .filter(Boolean)
+      )
+    ).filter(name => name !== preferred && !rejected.includes(name));
+
+    person.preferredName = preferred;
+    if (!person.realName || rejected.includes(normalizeName(person.realName))) {
+      person.realName = preferred;
+    }
+    person.aliases = allowed;
+    person.updatedAt = new Date();
+    await this.knownPersonModel.save(person);
+    await this.addBans(userId, rejected, preferred);
+    this.logger?.info?.(
+      '[person-address] structured correction, userId=%s personId=%s preferred=%s allowed=%s rejected=%s',
+      String(userId),
+      String(personId),
+      preferred,
+      allowed.join('|') || '-',
+      rejected.join('|') || '-'
+    );
+    return true;
+  }
+
   async normalizeText(options: {
     userId: MongoObjectId | string;
     text: string;

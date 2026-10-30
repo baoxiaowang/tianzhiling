@@ -161,6 +161,7 @@ import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
 import { ConversationEntityLedgerService } from './agents/conversation-entity-ledger.service';
 import { PersonAddressService } from './agents/person-address.service';
+import { NameCorrectionWorkflowService } from './agents/name-correction-workflow.service';
 import { isSearchableDialogueEvidence } from './agents/memory-value';
 import { MemoryModuleService } from './memory/memory-module.service';
 import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
@@ -884,6 +885,9 @@ export class ConversationService {
 
   @Inject()
   personAddressService: PersonAddressService;
+
+  @Inject()
+  nameCorrectionWorkflowService: NameCorrectionWorkflowService;
 
   @Inject()
   relativeMemoryExtractorService: RelativeMemoryExtractorService;
@@ -3425,17 +3429,36 @@ export class ConversationService {
       );
     }
 
+    let nameCorrectionApplied = false;
     try {
-      await this.personAddressService?.applyCorrectionFromUserText({
+      const workflowResult = await this.runNameCorrectionWorkflowWithTimeout({
         userId: runtime.conversation.userId,
-        text: searchableText,
+        conversationId: runtime.conversation.id,
+        currentText: searchableText,
+        currentMessageId: userMessage.id,
       });
+      nameCorrectionApplied = workflowResult?.applied === true;
     } catch (error) {
       this.logger?.warn?.(
-        '[person-address] correction failed, conversationId=%s reason=%s',
+        '[name-correction] workflow dispatch failed, conversationId=%s reason=%s',
         this.stringifyObjectId(runtime.conversation.id),
         this.describeReplyError(error)
       );
+    }
+
+    if (!nameCorrectionApplied) {
+      try {
+        await this.personAddressService?.applyCorrectionFromUserText({
+          userId: runtime.conversation.userId,
+          text: searchableText,
+        });
+      } catch (error) {
+        this.logger?.warn?.(
+          '[person-address] correction failed, conversationId=%s reason=%s',
+          this.stringifyObjectId(runtime.conversation.id),
+          this.describeReplyError(error)
+        );
+      }
     }
 
     // Save quota trigger decision on user message
@@ -8262,6 +8285,31 @@ export class ConversationService {
     return /(?:TIMEOUT|ABORT|AbortError|ETIMEDOUT|exceeded)/i.test(
       `${code}\n${message}`
     );
+  }
+
+  private async runNameCorrectionWorkflowWithTimeout(options: {
+    userId: MongoObjectId;
+    conversationId: MongoObjectId;
+    currentText: string;
+    currentMessageId: MongoObjectId;
+  }): Promise<{ applied?: boolean; skipped?: string }> {
+    if (!this.nameCorrectionWorkflowService) {
+      return { applied: false, skipped: 'service_unavailable' };
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.nameCorrectionWorkflowService.maybeApply(options),
+        new Promise<{ applied: boolean; skipped: string }>(resolve => {
+          timer = setTimeout(
+            () => resolve({ applied: false, skipped: 'timeout' }),
+            2000
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async guardPersonAddressSegments(
