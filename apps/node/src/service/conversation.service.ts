@@ -161,6 +161,7 @@ import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
 import { ConversationEntityLedgerService } from './agents/conversation-entity-ledger.service';
 import { PersonAddressService } from './agents/person-address.service';
+import { detectExplicitAgentName } from './agents/explicit-agent-name';
 import { assessVoiceTranscriptQuality } from './agents/voice-transcript-quality';
 import {
   isNameCorrectionCandidate,
@@ -3419,6 +3420,12 @@ export class ConversationService {
       updatedAt: now,
     });
 
+    await this.applyExplicitAgentSelfName(
+      runtime.agent,
+      searchableText,
+      messagePayload
+    );
+
     try {
       await this.conversationEntityLedgerService?.ingestUserMessage(
         userMessage,
@@ -4084,6 +4091,56 @@ export class ConversationService {
         this.describeReplyError(error)
       );
       return [];
+    }
+  }
+
+  /**
+   * “你的名字叫X / 记住你叫X”是用户直接给 AI 本人命名，
+   * 不走高警戒称呼纠正，直接更新 agent.realName/iCallAgent。
+   */
+  private async applyExplicitAgentSelfName(
+    agent: AgentEntity | null,
+    text: string,
+    payload?: PreparedIncomingMessage
+  ): Promise<void> {
+    if (!agent || !text) return;
+    if (
+      payload?.type === MessageType.voice &&
+      assessVoiceTranscriptQuality(
+        payload.mediaTranscript,
+        payload.mediaDurationMs
+      ).lowQuality
+    ) {
+      return;
+    }
+    const instruction = detectExplicitAgentName(text);
+    if (!instruction) return;
+    const field =
+      instruction.kind === 'realName' ? 'realName' : 'iCallAgent';
+    if ((agent[field] || '').trim() === instruction.name) return;
+    try {
+      await this.agentModel.updateOne(
+        { _id: agent.id } as never,
+        {
+          $set: {
+            [field]: instruction.name,
+            updatedAt: new Date(),
+          },
+        } as never
+      );
+      agent[field] = instruction.name;
+      this.logger.info(
+        '[agent-self-name] applied, agentId=%s kind=%s name=%s',
+        this.stringifyObjectId(agent.id),
+        instruction.kind,
+        instruction.name
+      );
+    } catch (error) {
+      this.logger.warn(
+        '[agent-self-name] write skipped, agentId=%s reason=%s',
+        this.stringifyObjectId(agent.id),
+        this.describeReplyError(error)
+      );
     }
   }
 
