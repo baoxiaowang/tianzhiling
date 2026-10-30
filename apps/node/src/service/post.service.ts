@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { PersonAddressService } from './agents/person-address.service';
 import { brandName } from '../config/brand';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -218,6 +219,9 @@ type MongoWhere = Record<string, unknown>;
 export class PostService {
   @Logger()
   logger: ILogger;
+
+  @Inject()
+  personAddressService: PersonAddressService;
 
   @Inject()
   postImageService: PostImageService;
@@ -3544,22 +3548,29 @@ export class PostService {
       existingComments,
       latestUserComment
     );
-    const finalReply = this.guardMomentReply(
+    const guardedReply = this.guardMomentReply(
       selected || this.buildFallbackMomentReply(post, agent, latestUserComment),
       post,
       agent,
       latestUserComment
     );
+    const normalizedReply =
+      (
+        await this.personAddressService?.normalizeText({
+          userId: post.userId,
+          text: guardedReply,
+        })
+      )?.text || guardedReply;
     if (isLongMomentInput) {
       this.logger?.info?.(
         '[moment-length] postId=%s inputChars=%s mode=long replyChars=%s bubbles=%s maxTokens=320',
         this.stringifyObjectId(post.id),
         momentInputCharacters,
-        finalReply.replace(/\s+/g, '').length,
-        finalReply.split(/\n{2,}/).filter(Boolean).length
+        normalizedReply.replace(/\s+/g, '').length,
+        normalizedReply.split(/\n{2,}/).filter(Boolean).length
       );
     }
-    return finalReply;
+    return normalizedReply;
   }
 
   private guardMomentReply(

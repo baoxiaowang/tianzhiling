@@ -160,6 +160,7 @@ import { MilvusService } from './rag/milvus.service';
 import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
 import { ConversationEntityLedgerService } from './agents/conversation-entity-ledger.service';
+import { PersonAddressService } from './agents/person-address.service';
 import { isSearchableDialogueEvidence } from './agents/memory-value';
 import { MemoryModuleService } from './memory/memory-module.service';
 import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
@@ -880,6 +881,9 @@ export class ConversationService {
 
   @Inject()
   conversationEntityLedgerService: ConversationEntityLedgerService;
+
+  @Inject()
+  personAddressService: PersonAddressService;
 
   @Inject()
   relativeMemoryExtractorService: RelativeMemoryExtractorService;
@@ -2077,7 +2081,7 @@ export class ConversationService {
       mimeType: payload?.mimeType,
     });
     const transcript = (
-      await this.transcribeVoiceForConversation(voicePayload)
+      await this.transcribeVoiceForConversation(voicePayload, auth.sub)
     )?.trim();
 
     if (!transcript) {
@@ -3417,6 +3421,19 @@ export class ConversationService {
         '[entity-ledger] ingest failed, conversationId=%s messageId=%s reason=%s',
         this.stringifyObjectId(runtime.conversation.id),
         this.stringifyObjectId(userMessage.id),
+        this.describeReplyError(error)
+      );
+    }
+
+    try {
+      await this.personAddressService?.applyCorrectionFromUserText({
+        userId: runtime.conversation.userId,
+        text: searchableText,
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[person-address] correction failed, conversationId=%s reason=%s',
+        this.stringifyObjectId(runtime.conversation.id),
         this.describeReplyError(error)
       );
     }
@@ -6053,9 +6070,13 @@ export class ConversationService {
       }
     }
     markReplyTiming(timing, 'review_done');
+    const addressGuardedSegments = await this.guardPersonAddressSegments(
+      runtime.conversation.userId,
+      participationResult.segments
+    );
     return this.attachTurnStatePlans(
       {
-        replySegments: participationResult.segments,
+        replySegments: addressGuardedSegments,
         deliberateLongReplyCandidate,
         deliberateFollowUpDecision,
         usage: this.mergeReplyUsage(
@@ -8243,6 +8264,27 @@ export class ConversationService {
     );
   }
 
+  private async guardPersonAddressSegments(
+    userId: MongoObjectId,
+    segments: string[]
+  ): Promise<string[]> {
+    if (!this.personAddressService || !segments?.length) return segments;
+    return Promise.all(
+      segments.map(async segment => {
+        try {
+          return (
+            await this.personAddressService.normalizeText({
+              userId,
+              text: segment,
+            })
+          ).text;
+        } catch {
+          return segment;
+        }
+      })
+    );
+  }
+
   private async validateAssistantReply(options: {
     contextMessages: ChatCompletionMessageParam[];
     userQuery: string;
@@ -9370,7 +9412,10 @@ export class ConversationService {
         return {
           ...message,
           mediaTranscript:
-            (await this.transcribeVoiceForConversation(message)) || '',
+            (await this.transcribeVoiceForConversation(
+              message,
+              runtime.conversation.userId
+            )) || '',
         };
       case MessageType.image: {
         const imageAnalysis = await this.describeImageForConversation(
@@ -9514,11 +9559,14 @@ export class ConversationService {
     };
   }
 
-  private async transcribeVoiceForConversation(payload: {
-    mediaUrl?: string;
-    mediaObjectKey?: string;
-    mediaMimeType?: string;
-  }): Promise<string | undefined> {
+  private async transcribeVoiceForConversation(
+    payload: {
+      mediaUrl?: string;
+      mediaObjectKey?: string;
+      mediaMimeType?: string;
+    },
+    userId?: MongoObjectId | string
+  ): Promise<string | undefined> {
     const objectKey = payload.mediaObjectKey || '';
     // DashScope qwen3-asr-flash 需要可公网访问的音频 URL，内联 base64 data URL 不被接受。
     const audioUrl =
@@ -9542,9 +9590,17 @@ export class ConversationService {
         const transcript = await this.openAIService.createTranscription({
           audioUrl,
         });
-        const content = transcript.trim();
+        const rawContent = transcript.trim();
 
-        if (content) {
+        if (rawContent) {
+          const content = userId
+            ? (
+                await this.personAddressService?.normalizeText({
+                  userId,
+                  text: rawContent,
+                })
+              )?.text || rawContent
+            : rawContent;
           if (attempt > 0) {
             this.logger.warn(
               '[conversation] voice transcription succeeded on retry, objectKey=%s, attempt=%d/2',
