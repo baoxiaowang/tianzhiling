@@ -3937,12 +3937,8 @@ async function startVoiceRecording() {
     return;
   }
 
-  const hasQuota = await ensureChatQuotaAvailableBeforeSend();
-  if (!hasQuota || !isVoicePressPreviewing.value) {
-    resetVoiceGestureState();
-    return;
-  }
-
+  // 语音消息不占用文本聊天额度，录音入口不再做文本额度预检；
+  // 否则 VIP 快照过期或额度为 0 时，会在开始录音前被静默拦住。
   const hasPermission = await ensureRecordPermission();
   if (!hasPermission || !isVoicePressPreviewing.value) {
     resetVoiceGestureState();
