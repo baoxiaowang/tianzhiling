@@ -249,18 +249,20 @@ function detectExpressionLexicon(text: string): {
     | undefined;
 
   for (const entry of EXPRESSION_LEXICON) {
-    const strongHits = entry.strong.filter(word => text.includes(word));
-    const weakHits = (entry.weak || []).filter(word => text.includes(word));
-    const expressions = Array.from(new Set([...strongHits, ...weakHits]));
-    const highConfidence = strongHits.length > 0;
-    if (!highConfidence && weakHits.length < 2) continue;
-    const score = strongHits.length * 10 + weakHits.length;
+    // 只收多字、辨识度高的地方短语。单字（啥、咋、冇、侬等）和弱信号
+    // 一律不算证据，避免把普通口语误判成常驻地方偏好。
+    const strongHits = entry.strong.filter(
+      word => word.length >= 2 && text.includes(word)
+    );
+    if (!strongHits.length) continue;
+    const expressions = Array.from(new Set(strongHits));
+    const score = strongHits.length;
     if (!best || score > best.score) {
       best = {
         region: entry.region,
         dialect: entry.dialect,
         expressions,
-        confidence: highConfidence ? 'high' : 'medium',
+        confidence: 'high',
         score,
       };
     }
