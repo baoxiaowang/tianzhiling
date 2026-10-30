@@ -180,6 +180,8 @@ const QUESTION_OR_HYPOTHETICAL =
   /[?？]|(?:吗|呢|哪里|哪儿|什么|谁|是不是|会不会|能不能|如果|要是|假如|万一)/;
 const NEGATION =
   /(?:不是|并非|不算|不再是|不会|不说|没(?:有)?说|别(?:说|用)|不要(?:说|用)|不想(?:说|用)|听不懂|不会讲|不会说)/;
+const DIALECT_DISLIKE =
+  /(?:不习惯|听不惯|不喜欢|不爱听|受不了|不想听|别再(?:说|讲|用)|不要再(?:说|讲|用))/;
 
 const AGENT_PATTERN =
   /(?:你|您)(?:是|也是|就是|来自|老家是)([\u4e00-\u9fa5]{2,8}?)(?:人|的)/;
@@ -314,6 +316,7 @@ export function detectRegionalExpressionPreference(
   if (!value || value.length > 400) return undefined;
   if (QUESTION_OR_HYPOTHETICAL.test(value)) return undefined;
   if (NEGATION.test(value)) return undefined;
+  if (DIALECT_DISLIKE.test(value)) return undefined;
 
   const dialectMatch = DIALECT_PATTERN.exec(value);
   if (dialectMatch) {

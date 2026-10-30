@@ -77,6 +77,7 @@ describe('regional expression preference false positives', () => {
       '不会讲普通话',
       '我妈不会讲普通话',
       '而且他们租的房子只有一间房，不会讲普通话',
+      '你一直和我说普通话，我也不习惯',
     ];
 
     for (const message of messages) {
