@@ -1183,14 +1183,19 @@ describe('AdminOperationsService', () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-10-31T04:00:00.000Z'));
     const service = new AdminOperationsService();
 
+    const cursor = (rows: unknown[]) => ({
+      toArray: async () => rows,
+    });
     service.userModel = {
-      aggregate: jest.fn().mockResolvedValue([
-        { _id: '2026-10-30', n: 10 },
-        { _id: '2026-10-31', n: 5 },
-      ]),
+      aggregate: jest.fn(() =>
+        cursor([
+          { _id: '2026-10-30', n: 10 },
+          { _id: '2026-10-31', n: 5 },
+        ])
+      ),
     } as never;
     service.userAccountModel = {
-      aggregate: jest.fn().mockResolvedValue([{ _id: '2026-10-30', n: 2 }]),
+      aggregate: jest.fn(() => cursor([{ _id: '2026-10-30', n: 2 }])),
     } as never;
 
     const result = await service.getVisitorStats(3);

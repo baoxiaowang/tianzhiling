@@ -1036,19 +1036,23 @@ export class AdminOperationsService {
     });
 
     const [visitorRows, registeredRows] = await Promise.all([
-      this.userModel.aggregate<{ _id: string; n: number }>([
-        { $match: { createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
-        { $group: { _id: dateOf('createdAt'), n: { $sum: 1 } } },
-      ]),
-      this.userAccountModel.aggregate<{ _id: string; n: number }>([
-        {
-          $match: {
-            createdAt: { $gte: rangeStart, $lt: rangeEnd },
-            account: { $regex: '^1[0-9]{10}$' },
+      this.userModel
+        .aggregate<{ _id: string; n: number }>([
+          { $match: { createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
+          { $group: { _id: dateOf('createdAt'), n: { $sum: 1 } } },
+        ])
+        .toArray(),
+      this.userAccountModel
+        .aggregate<{ _id: string; n: number }>([
+          {
+            $match: {
+              createdAt: { $gte: rangeStart, $lt: rangeEnd },
+              account: { $regex: '^1[0-9]{10}$' },
+            },
           },
-        },
-        { $group: { _id: dateOf('createdAt'), n: { $sum: 1 } } },
-      ]),
+          { $group: { _id: dateOf('createdAt'), n: { $sum: 1 } } },
+        ])
+        .toArray(),
     ]);
 
     const visitorMap = new Map<string, number>();
