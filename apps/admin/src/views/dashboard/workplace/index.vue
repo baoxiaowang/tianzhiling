@@ -87,6 +87,50 @@
       </a-grid>
 
       <a-card
+        class="data-dashboard__chart-card"
+        :bordered="false"
+        title="访客与注册"
+        style="margin-bottom: 16px"
+      >
+        <template #extra>
+          <a-space>
+            <a-typography-text type="secondary">
+              访客＝当天新进入并建档的用户，注册＝绑定手机号
+            </a-typography-text>
+            <a-select
+              v-model="visitorDays"
+              size="small"
+              style="width: 110px"
+              @change="() => fetchVisitors()"
+            >
+              <a-option :value="7">近 7 天</a-option>
+              <a-option :value="30">近 30 天</a-option>
+              <a-option :value="90">近 90 天</a-option>
+            </a-select>
+          </a-space>
+        </template>
+        <div class="data-dashboard__visitor-stats">
+          <div>
+            <span>新增访客</span>
+            <strong>{{ formatNumber(visitorTotals.visitors) }}</strong>
+          </div>
+          <div>
+            <span>其中未注册</span>
+            <strong>{{ formatNumber(visitorTotals.unregistered) }}</strong>
+          </div>
+          <div>
+            <span>手机号注册</span>
+            <strong>{{ formatNumber(visitorTotals.registered) }}</strong>
+          </div>
+          <div>
+            <span>注册率</span>
+            <strong>{{ visitorTotals.conversionRate }}%</strong>
+          </div>
+        </div>
+        <Chart height="300px" :option="visitorChartOption" />
+      </a-card>
+
+      <a-card
         class="data-dashboard__chart-card data-dashboard__monthly"
         :bordered="false"
         title="每月新增用户、收入与消息数"
@@ -130,8 +174,13 @@
     AdminMonthlySummaryPointDTO,
     AdminMonthlySummaryRange,
     AdminOperationsReportDTO,
+    AdminVisitorStatsResultDTO,
   } from '@tzl/shared';
-  import { queryMonthlySummary, queryOperationsReport } from '@/api/operations';
+  import {
+    queryMonthlySummary,
+    queryOperationsReport,
+    queryVisitorStats,
+  } from '@/api/operations';
 
   // 异步加载 Chart 组件，减小首屏 bundle
   const Chart = defineAsyncComponent(
@@ -215,6 +264,65 @@
 
     return map[trendMetric.value];
   });
+  const visitorDays = ref(30);
+  const visitorStats = ref<AdminVisitorStatsResultDTO | null>(null);
+
+  const visitorTotals = computed(
+    () =>
+      visitorStats.value?.totals || {
+        visitors: 0,
+        registered: 0,
+        unregistered: 0,
+        conversionRate: 0,
+      }
+  );
+
+  const fetchVisitors = async () => {
+    try {
+      const { data } = await queryVisitorStats(visitorDays.value);
+      visitorStats.value = data || null;
+    } catch {
+      // 访客统计失败不影响仪表盘其它数据
+    }
+  };
+
+  const visitorChartOption = computed(() => {
+    const daily = visitorStats.value?.daily || [];
+    return {
+      tooltip: { trigger: 'axis' },
+      legend: {
+        top: 0,
+        left: 'center',
+        data: ['新增访客', '其中注册'],
+      },
+      grid: { left: 56, right: 28, top: 44, bottom: 34 },
+      xAxis: {
+        type: 'category',
+        data: daily.map((item) => formatDay(item.date)),
+        axisLabel: { interval: 6 },
+      },
+      yAxis: { type: 'value', minInterval: 1, name: '人' },
+      series: [
+        {
+          name: '新增访客',
+          type: 'bar',
+          data: daily.map((item) => item.visitors),
+          itemStyle: { color: '#7662cf', borderRadius: [3, 3, 0, 0] },
+          barMaxWidth: 18,
+        },
+        {
+          name: '其中注册',
+          type: 'line',
+          smooth: true,
+          symbolSize: 6,
+          data: daily.map((item) => item.registered),
+          itemStyle: { color: '#36a375' },
+          lineStyle: { width: 2.5 },
+        },
+      ],
+    };
+  });
+
   const trendChartOption = computed(() => {
     const daily = report.value?.daily || [];
     const showAgents = trendMetric.value === 'newUsers';
@@ -358,7 +466,7 @@
   // 手动刷新：绕过后端 30 分钟缓存并重算最近汇总
   const refreshData = async () => {
     const refreshed = await fetchData({ refresh: true });
-    await fetchMonthly({ silent: true });
+    await Promise.all([fetchMonthly({ silent: true }), fetchVisitors()]);
     if (refreshed) {
       Message.success('数据已刷新');
     }
@@ -469,6 +577,7 @@
   onMounted(() => {
     fetchData();
     fetchMonthly();
+    fetchVisitors();
   });
 </script>
 
@@ -581,7 +690,38 @@
     }
   }
 
+  .data-dashboard__visitor-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 12px;
+
+    > div {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 16px;
+      background: var(--color-fill-1);
+      border-radius: 8px;
+
+      span {
+        color: var(--color-text-3);
+        font-size: 13px;
+      }
+
+      strong {
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--color-text-1);
+      }
+    }
+  }
+
   @media (max-width: 768px) {
+    .data-dashboard__visitor-stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .data-dashboard {
       padding: 16px;
 

@@ -44,6 +44,7 @@ import {
   UserEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
+import { UserAccountEntity } from '@tzl/entities';
 import { DouyinReviewService } from './douyin-review.service';
 
 type TaskQuery = {
@@ -195,6 +196,25 @@ type PromotionExpenseOverrideQueryRunner = {
 };
 
 /** 每日明细页的响应：每日行 + 当日运营笔记（date -> 文本）。 */
+export interface AdminVisitorStatsResultDTO {
+  days: number;
+  startDate: string;
+  endDate: string;
+  totals: {
+    visitors: number;
+    registered: number;
+    unregistered: number;
+    conversionRate: number;
+  };
+  daily: Array<{
+    date: string;
+    visitors: number;
+    registered: number;
+    unregistered: number;
+  }>;
+}
+
+/** 每日明细页的响应：每日行 + 当日运营笔记（date -> 文本）。 */
 export interface AdminDailyDetailResult {
   month: string;
   daily: AdminOperationsDailyPointDTO[];
@@ -214,6 +234,9 @@ export class AdminOperationsService {
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
+
+  @InjectEntityModel(UserAccountEntity)
+  userAccountModel: MongoRepository<UserAccountEntity>;
 
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
@@ -986,6 +1009,108 @@ export class AdminOperationsService {
       daily,
       notes: notesRecord,
     };
+  }
+
+  /**
+   * 访客统计：最近 N 天「每天新增进店用户」与「其中完成手机号注册」的数量。
+   *
+   * 口径（2026-10-31 与运营确认）：
+   *   · 访客 = 当天新建的用户文档（小程序/公众号首次进入即建档）；
+   *   · 注册 = 当天新建的手机号账号（user_account.account 为 11 位手机号）；
+   *   · 未注册 = 访客 − 注册（同一天口径，最小 0）。
+   */
+  async getVisitorStats(days?: number | string): Promise<AdminVisitorStatsResultDTO> {
+    const parsed = Number(days);
+    const normalizedDays =
+      Number.isFinite(parsed) && parsed >= 1 && parsed <= 180
+        ? Math.floor(parsed)
+        : 30;
+
+    const today = this.getTodayBeijing();
+    const startDate = this.addDaysToBeijingDate(today, 1 - normalizedDays);
+    const rangeStart = this.beijingDateStart(startDate);
+    const rangeEnd = this.beijingDateStart(this.addDaysToBeijingDate(today, 1));
+
+    const dateOf = (field: string) => ({
+      $dateToString: { format: '%Y-%m-%d', date: `$${field}`, timezone: '+08:00' },
+    });
+
+    const [visitorRows, registeredRows] = await Promise.all([
+      this.userModel.aggregate<{ _id: string; n: number }>([
+        { $match: { createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
+        { $group: { _id: dateOf('createdAt'), n: { $sum: 1 } } },
+      ]),
+      this.userAccountModel.aggregate<{ _id: string; n: number }>([
+        {
+          $match: {
+            createdAt: { $gte: rangeStart, $lt: rangeEnd },
+            account: { $regex: '^1[0-9]{10}$' },
+          },
+        },
+        { $group: { _id: dateOf('createdAt'), n: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const visitorMap = new Map<string, number>();
+    visitorRows.forEach(row => {
+      visitorMap.set(String(row._id), Number(row.n) || 0);
+    });
+    const registeredMap = new Map<string, number>();
+    registeredRows.forEach(row => {
+      registeredMap.set(String(row._id), Number(row.n) || 0);
+    });
+
+    const daily: Array<{
+      date: string;
+      visitors: number;
+      registered: number;
+      unregistered: number;
+    }> = [];
+    for (let offset = 0; offset < normalizedDays; offset += 1) {
+      const date = this.addDaysToBeijingDate(startDate, offset);
+      const visitors = visitorMap.get(date) ?? 0;
+      const registered = registeredMap.get(date) ?? 0;
+      daily.push({
+        date,
+        visitors,
+        registered,
+        unregistered: Math.max(visitors - registered, 0),
+      });
+    }
+
+    const visitorsTotal = daily.reduce((sum, item) => sum + item.visitors, 0);
+    const registeredTotal = daily.reduce((sum, item) => sum + item.registered, 0);
+    const unregisteredTotal = daily.reduce(
+      (sum, item) => sum + item.unregistered,
+      0
+    );
+
+    return {
+      days: normalizedDays,
+      startDate,
+      endDate: today,
+      totals: {
+        visitors: visitorsTotal,
+        registered: registeredTotal,
+        unregistered: unregisteredTotal,
+        conversionRate:
+          visitorsTotal > 0
+            ? Math.round((registeredTotal / visitorsTotal) * 1000) / 10
+            : 0,
+      },
+      daily,
+    };
+  }
+
+  /** 在 `YYYY-MM-DD` 上加减天数（按 UTC 计算，避免本地时区影响）。 */
+  private addDaysToBeijingDate(date: string, delta: number): string {
+    const [year, month, day] = date.split('-').map(Number);
+    const shifted = new Date(
+      Date.UTC(year, month - 1, day) + delta * 24 * 60 * 60 * 1000
+    );
+    return `${shifted.getUTCFullYear()}-${String(
+      shifted.getUTCMonth() + 1
+    ).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
   }
 
   /** 读取日期区间内的运营笔记（date -> 文本，不含空笔记）。 */

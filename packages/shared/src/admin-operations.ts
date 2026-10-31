@@ -426,3 +426,28 @@ export interface AdminSystemRuntimeDTO {
     failedChatTraces: number;
   };
 }
+
+/** 访客统计：每天新增的「进店用户」（含未注册）与其中完成手机号注册的数量。 */
+export interface AdminVisitorDailyPointDTO {
+  date: string;
+  /** 当日新建用户（进店建档）——即当日访客数 */
+  visitors: number;
+  /** 当日新建手机号账号（真正注册） */
+  registered: number;
+  /** 当日访客中未注册（visitors - registered，最小 0） */
+  unregistered: number;
+}
+
+export interface AdminVisitorStatsResultDTO {
+  days: number;
+  startDate: string;
+  endDate: string;
+  totals: {
+    visitors: number;
+    registered: number;
+    unregistered: number;
+    /** 注册转化率（百分比，保留 1 位小数） */
+    conversionRate: number;
+  };
+  daily: AdminVisitorDailyPointDTO[];
+}

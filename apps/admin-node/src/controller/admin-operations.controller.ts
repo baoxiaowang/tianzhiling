@@ -82,6 +82,12 @@ export class AdminOperationsController {
     return this.adminOperationsService.getMonthlySummary(query?.range);
   }
 
+  /** 访客统计：最近 N 天新增访客（含未注册）与手机号注册数。 */
+  @Get('/visitors')
+  async visitors(@Query() query: Record<string, string>) {
+    return this.adminOperationsService.getVisitorStats(query?.days);
+  }
+
   @Get('/daily-detail')
   async dailyDetail(@Query() query: Record<string, string>) {
     return this.adminOperationsService.getDailyDetail(query?.month, {

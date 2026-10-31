@@ -1178,4 +1178,54 @@ describe('AdminOperationsService', () => {
     );
     expect(result.handlingStatus).toBe('resolved');
   });
+
+  it('访客统计：按天返回新增访客、注册数与转化率', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-31T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+
+    service.userModel = {
+      aggregate: jest.fn().mockResolvedValue([
+        { _id: '2026-10-30', n: 10 },
+        { _id: '2026-10-31', n: 5 },
+      ]),
+    } as never;
+    service.userAccountModel = {
+      aggregate: jest.fn().mockResolvedValue([{ _id: '2026-10-30', n: 2 }]),
+    } as never;
+
+    const result = await service.getVisitorStats(3);
+
+    expect(result.days).toBe(3);
+    expect(result.startDate).toBe('2026-10-29');
+    expect(result.endDate).toBe('2026-10-31');
+    expect(result.daily.map(item => item.date)).toEqual([
+      '2026-10-29',
+      '2026-10-30',
+      '2026-10-31',
+    ]);
+    expect(result.daily[0]).toEqual({
+      date: '2026-10-29',
+      visitors: 0,
+      registered: 0,
+      unregistered: 0,
+    });
+    expect(result.daily[1]).toEqual({
+      date: '2026-10-30',
+      visitors: 10,
+      registered: 2,
+      unregistered: 8,
+    });
+    expect(result.daily[2]).toEqual({
+      date: '2026-10-31',
+      visitors: 5,
+      registered: 0,
+      unregistered: 5,
+    });
+    expect(result.totals).toEqual({
+      visitors: 15,
+      registered: 2,
+      unregistered: 13,
+      conversionRate: 13.3,
+    });
+  });
 });

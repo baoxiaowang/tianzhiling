@@ -14,6 +14,7 @@ import type {
   AdminSystemRuntimeDTO,
   AdminUserValueReportDTO,
   UpdateAdminChatFeedbackRequestDTO,
+  AdminVisitorStatsResultDTO,
 } from '@tzl/shared';
 
 export interface OperationsTaskListParams {
@@ -83,6 +84,16 @@ export interface DailyDetailDTO {
  * 每日明细页专用：只取所选月份的每日行与运营笔记。
  * 比 queryOperationsReport 轻很多——后者还要算累计口径（扫全表消息）。
  */
+/** 访客统计：最近 N 天新增访客（含未注册）与手机号注册数 */
+export function queryVisitorStats(days = 30) {
+  return axios.get<AdminVisitorStatsResultDTO>(
+    '/admin_api/operations/visitors',
+    {
+      params: { days },
+    }
+  );
+}
+
 export function queryDailyDetail(
   month?: string,
   options?: { refresh?: boolean }
