@@ -5,6 +5,7 @@ import * as bullmq from '@midwayjs/bullmq';
 import { RedisService } from '@midwayjs/redis';
 import { MongoRepository } from 'typeorm';
 import { createHash } from 'crypto';
+import { FaceRecognitionService } from './face-recognition.service';
 import { AppError } from '../common/errors';
 import { isRetryableTranscriptionError } from '../common/asr-utils';
 import {
@@ -36,6 +37,7 @@ import {
   ReplyQuotaTriggerDecision,
   QuotaTriggerEventEntity,
   QuotaTriggerType,
+  FaceRecognitionDecision,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
@@ -811,6 +813,9 @@ export class ConversationService {
 
   @InjectEntityModel(VoiceTimbreEntity)
   voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
+
+  @Inject()
+  faceRecognitionService: FaceRecognitionService;
 
   @Inject()
   openAIService: OpenAIService;
@@ -9562,10 +9567,14 @@ export class ConversationService {
           message,
           runtime
         );
+        const faceHint = await this.buildFaceRecognitionHint(message, runtime);
 
         return {
           ...message,
-          mediaAnalysis: imageAnalysis?.mediaAnalysis,
+          mediaAnalysis: this.appendFaceRecognitionHint(
+            imageAnalysis?.mediaAnalysis,
+            faceHint
+          ),
           visualAppearanceObservations: imageAnalysis?.observations,
           imageType: imageAnalysis?.imageType || 'normal_image',
         };
@@ -9966,6 +9975,68 @@ export class ConversationService {
     }
 
     return '.png';
+  }
+
+  /**
+   * 本地人脸识别：给出「这张图里最像谁」的确定性线索。
+   * 只作为提示词线索，不直接断言；失败时静默降级（图片理解仍可用）。
+   */
+  private async buildFaceRecognitionHint(
+    message: { mediaObjectKey?: string; mediaUrl?: string },
+    runtime: ReplyRuntime
+  ): Promise<string> {
+    const objectKey = message.mediaObjectKey?.trim();
+    if (!objectKey || !this.faceRecognitionService?.isEnabled?.()) {
+      return '';
+    }
+    try {
+      const outcome = await this.faceRecognitionService.recognize({
+        userId: this.stringifyObjectId(runtime.conversation.userId),
+        agentId: this.stringifyObjectId(runtime.agent.id),
+        objectKey,
+      });
+      if (!outcome?.enabled || !outcome.faces.length) {
+        return '';
+      }
+
+      const parts: string[] = [];
+      outcome.faces.forEach((face, index) => {
+        const name = face.top1?.name?.trim();
+        if (!name) {
+          return;
+        }
+        const distance = outcome.candidates[index]?.[0]?.distance;
+        const suffix =
+          typeof distance === 'number' ? `，距离 ${distance.toFixed(2)}` : '';
+        if (face.decision === FaceRecognitionDecision.confirmed) {
+          parts.push(`第 ${index + 1} 张脸最像「${name}」（较为确定${suffix}）`);
+        } else if (face.decision === FaceRecognitionDecision.ask) {
+          parts.push(`第 ${index + 1} 张脸可能是「${name}」（不确定${suffix}）`);
+        }
+      });
+      return parts.join('；');
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] face recognition failed, objectKey=%s, reason=%s',
+        objectKey,
+        error instanceof Error ? error.message : String(error)
+      );
+      return '';
+    }
+  }
+
+  /** 把识别线索拼到图片理解结果后面，供提示词使用。 */
+  private appendFaceRecognitionHint(
+    mediaAnalysis: string | undefined,
+    hint: string
+  ): string | undefined {
+    const trimmed = hint.trim();
+    if (!trimmed) {
+      return mediaAnalysis;
+    }
+    const line = `人脸识别线索（本地模型，仅作参考）：${trimmed}`;
+    const base = mediaAnalysis?.trim();
+    return base ? `${base}\n${line}` : line;
   }
 
   private async describeImageForConversation(
