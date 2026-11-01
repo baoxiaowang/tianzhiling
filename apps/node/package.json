@@ -67,7 +67,8 @@
     "provision:user-messengers": "node ./scripts/provision-user-messengers.js",
     "upload:messenger-avatar": "node ./scripts/upload-messenger-avatar.js",
     "ci": "npm run cov",
-    "build": "mwtsc --cleanOutDir"
+    "build": "mwtsc --cleanOutDir",
+    "face:eval": "node ./dist/scripts/face-eval.js"
   },
   "repository": {
     "type": "git",
