@@ -79,6 +79,12 @@
 
     <a-card class="app-user-detail-page__tabs-card" :bordered="false">
       <a-tabs v-model:active-key="activeTab" @change="handleTabChange">
+        <a-tab-pane key="family-album" title="家人相册">
+          <family-album-panel
+            v-if="activeTab === 'family-album'"
+            :user-id="userId"
+          />
+        </a-tab-pane>
         <a-tab-pane key="agents" title="关系智能体">
           <a-card :bordered="false">
             <a-form
@@ -572,6 +578,7 @@
   import uploadAdminFile from '@/api/storage';
   import OrderListPanel from '@/views/order/list/components/order-list-panel.vue';
   import PostListPanel from '@/views/post/components/post-list-panel.vue';
+  import FamilyAlbumPanel from './family-album-panel.vue';
   import VoiceModelPanel from './voice-model-panel.vue';
   import MemoryPanel from './memory-panel.vue';
   import CoreInfoPanel from './core-info-panel.vue';
