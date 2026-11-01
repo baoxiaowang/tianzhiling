@@ -507,17 +507,33 @@ export class FaceRecognitionService {
     return Number(((sizeScore + blurScore + yawScore) / 3).toFixed(3));
   }
 
-  /** 欧氏距离排序（dlib 官方推荐用距离，越小越像）。 */
+  /**
+   * 按「人」聚合后排序：同一个人的多张模板取最小距离，
+   * 这样 top1/top2 的 margin 才是「人」与「人」之间的差距
+   * （否则同一人的两张模板会把 margin 压成 0，导致永远无法确认）。
+   */
   private rank(
     embedding: number[],
     templates: TemplateRow[]
   ): Array<TemplateRow & { distance: number; score: number }> {
-    return templates
-      .map(template => {
-        const distance = euclideanDistance(embedding, template.embedding);
-        return { ...template, distance, score: Number((1 - distance).toFixed(4)) };
-      })
-      .sort((left, right) => left.distance - right.distance);
+    const bestByPerson = new Map<
+      string,
+      TemplateRow & { distance: number; score: number }
+    >();
+    for (const template of templates) {
+      const distance = euclideanDistance(embedding, template.embedding);
+      const current = bestByPerson.get(template.personId);
+      if (!current || distance < current.distance) {
+        bestByPerson.set(template.personId, {
+          ...template,
+          distance,
+          score: Number((1 - distance).toFixed(4)),
+        });
+      }
+    }
+    return Array.from(bestByPerson.values()).sort(
+      (left, right) => left.distance - right.distance
+    );
   }
 
   private get confirmDistance(): number {

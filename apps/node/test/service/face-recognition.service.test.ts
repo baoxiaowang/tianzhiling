@@ -110,6 +110,27 @@ describe('FaceRecognitionService', () => {
     expect(result.candidates[0][0].score).toBeCloseTo(1, 2);
   });
 
+  it('同一人多张模板不会把 margin 压成 0（应按人聚合）', async () => {
+    const { service } = createService();
+    jest.mocked(service.faceModel.find).mockResolvedValue([
+      {
+        personId: PERSON_ID,
+        userId: USER_ID,
+        embedding: embeddingAt(8, 1),
+        status: 'active',
+      },
+      {
+        personId: PERSON_ID,
+        userId: USER_ID,
+        embedding: embeddingAt(8, 1),
+        status: 'active',
+      },
+    ] as never);
+
+    const result = await service.recognize({ userId: USER_ID });
+    expect(result.faces[0].decision).toBe(FaceRecognitionDecision.confirmed);
+  });
+
   it('距离在 ask 区间时判定为 ask', async () => {
     const { service } = createService({
       templateEmbedding: embeddingAt(8, 1),
