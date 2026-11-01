@@ -55,3 +55,5 @@ export * from "./agent-voice-training-link.entity";
 export * from "./voice-training-task.entity";
 
 export * from "./quota-trigger-event.entity";
+export * from "./user-known-person-face.entity";
+export * from "./face-recognition-log.entity";

@@ -51,6 +51,8 @@ import {
   VoiceServiceSessionEntity,
   VoiceTimbreEntity,
   VoiceTrainingTaskEntity,
+  UserKnownPersonFaceEntity,
+  FaceRecognitionLogEntity,
 } from '@tzl/entities';
 import { MessageUserCountSubscriber } from '../subscriber/message-user-count.subscriber';
 import { SiteMessageEntity } from '../entity/site-message.entity';
@@ -1054,6 +1056,23 @@ export default {
       true
     ),
   },
+  // 自建人脸识别（亲人照片识别）：sidecar 负责检测/编码，本服务负责模板与决策。
+  faceRecognition: {
+    enabled: readBooleanFrom(['NODE_FACE_RECOGNITION_ENABLED'], true),
+    sidecarUrl: readStringFrom(
+      ['NODE_FACE_SIDECAR_URL'],
+      'http://tzl_face_sidecar:8899'
+    ),
+    timeoutMs: readNumberFrom(['NODE_FACE_SIDECAR_TIMEOUT_MS'], 15000),
+    // dlib 官方建议：欧氏距离 ≤ 0.6 视为同一人；这里拆成「确认」和「反问」两档。
+    confirmDistance: readNumberFrom(['NODE_FACE_CONFIRM_DISTANCE'], 0.45),
+    askDistance: readNumberFrom(['NODE_FACE_ASK_DISTANCE'], 0.6),
+    confirmMargin: readNumberFrom(['NODE_FACE_CONFIRM_MARGIN'], 0.08),
+    minFaceSize: readNumberFrom(['NODE_FACE_MIN_FACE_SIZE'], 80),
+    minBlur: readNumberFrom(['NODE_FACE_MIN_BLUR'], 40),
+    maxYaw: readNumberFrom(['NODE_FACE_MAX_YAW'], 0.35),
+    logEnabled: readBooleanFrom(['NODE_FACE_LOG_ENABLED'], true),
+  },
   voiceClipping: {
     binaryPath: readStringFrom(['NODE_FFMPEG_BINARY_PATH'], 'ffmpeg'),
     // 切片前降噪：默认开启，可用 NODE_VOICE_DENOISE_ENABLED=false 关闭；
@@ -1221,6 +1240,8 @@ export default {
           UserEntity,
           UserIdentityProfileEntity,
           UserKnownPersonEntity,
+          UserKnownPersonFaceEntity,
+          FaceRecognitionLogEntity,
           UserRelativeFactEntity,
           UserRelativeProfileEntity,
           UserSelfFactEntity,

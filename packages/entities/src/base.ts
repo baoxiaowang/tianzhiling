@@ -10,6 +10,8 @@ export enum TableName {
   app_test_grant = "app_test_grant",
   user_identity_profile = "user_identity_profile",
   user_known_person = "user_known_person",
+  user_known_person_face = "user_known_person_face",
+  face_recognition_log = "face_recognition_log",
   user_relative_profile = "user_relative_profile",
   user_relative_fact = "user_relative_fact",
   user_self_fact = "user_self_fact",

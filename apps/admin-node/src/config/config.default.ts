@@ -50,6 +50,8 @@ import {
   VoiceTimbreEntity,
   VoiceTimbreMaterialEntity,
   VoiceTrainingTaskEntity,
+  UserKnownPersonFaceEntity,
+  FaceRecognitionLogEntity,
 } from '@tzl/entities';
 
 loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
@@ -771,6 +773,8 @@ export default {
         ),
         logging: readBooleanFrom(['ADMIN_API_DB_LOGGING'], false),
         entities: [
+          UserKnownPersonFaceEntity,
+          FaceRecognitionLogEntity,
           AdminAccountEntity,
           AppPreviewGrantEntity,
           AdminDailyStatsEntity,

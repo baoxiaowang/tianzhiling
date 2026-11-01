@@ -185,6 +185,20 @@ services:
       - tzl-network
     restart: always
 
+  # 自建人脸识别 sidecar：只做检测 / 质量分 / 128 维编码（CPU，无 GPU）。
+  # 由 tzl_node 通过 http://tzl_face_sidecar:8899 调用。
+  tzl_face_sidecar:
+    profiles: ["prod"]
+    container_name: tzl_face_sidecar
+    build:
+      context: apps/face-sidecar
+      dockerfile: Dockerfile
+    expose:
+      - "8899"
+    networks:
+      - tzl-network
+    restart: unless-stopped
+
   tzl_redis:
     container_name: tzl_redis
     image: redis:latest
