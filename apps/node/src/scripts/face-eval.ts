@@ -189,7 +189,11 @@ async function main() {
   console.log('明细已写入 /tmp/face-eval-report.json');
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exit(1);
-});
+// 注意：Midway 启动时会 require dist 下的每个 .js 来扫描导出，
+// 这里必须用 require.main 守卫，否则脚本会在 bootstrap 阶段被执行并让进程退出。
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}
