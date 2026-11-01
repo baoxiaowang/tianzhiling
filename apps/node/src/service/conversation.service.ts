@@ -162,6 +162,7 @@ import { UserIdentityMemoryService } from './agents/user-identity-memory.service
 import { ConversationEntityLedgerService } from './agents/conversation-entity-ledger.service';
 import { PersonAddressService } from './agents/person-address.service';
 import { detectExplicitAgentName } from './agents/explicit-agent-name';
+import { AbuseConflictService } from './agents/abuse-conflict.service';
 import { assessVoiceTranscriptQuality } from './agents/voice-transcript-quality';
 import {
   isNameCorrectionCandidate,
@@ -890,6 +891,9 @@ export class ConversationService {
 
   @Inject()
   personAddressService: PersonAddressService;
+
+  @Inject()
+  abuseConflictService: AbuseConflictService;
 
   @Inject()
   nameCorrectionWorkflowService: NameCorrectionWorkflowService;
@@ -3426,6 +3430,11 @@ export class ConversationService {
       messagePayload
     );
 
+    await this.abuseConflictService?.observe({
+      conversationId: this.stringifyObjectId(runtime.conversation.id),
+      text: searchableText,
+    });
+
     try {
       await this.conversationEntityLedgerService?.ingestUserMessage(
         userMessage,
@@ -5440,12 +5449,17 @@ export class ConversationService {
           before.searchableText
         );
 
+    const conflictModePrompt = await this.abuseConflictService?.buildPrompt(
+      this.stringifyObjectId(runtime.conversation.id)
+    );
+
     try {
       context = await this.withTraceSpan(
         ChatTraceStage.contextLoad,
         'context.build',
         () =>
           this.agentContextService.buildConversationContext({
+            conflictModePrompt,
             auth: runtime.auth,
             conversation: runtime.conversation,
             agent: runtime.agent,

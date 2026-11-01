@@ -236,6 +236,8 @@ export interface BuildConversationContextOptions {
   effectiveChatModel?: string;
   recognitionJourneyPrompt?: string;
   continuityInformationCardPrompt?: string;
+  /** 会话级冲突边界模式（辱骂回怼）；只在冲突轮注入，不进入稳定段。 */
+  conflictModePrompt?: string;
   deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
   deliberateLongReplyExecutionPrompt?: string;
   pinnedHistoryMessageIds?: string[];
@@ -2188,6 +2190,8 @@ export class AgentContextService {
       );
     }
     const taskParts = [
+      // 会话级冲突边界：只在当前轮处于辱骂冲突时存在，随本轮信号出现/消失。
+      options.conflictModePrompt || '',
       // 条件规则随本轮信号出现/消失，放在任务层，稳定段因此逐字不变。
       // 低频条件统一走编译器：优先级、抑制关系、块数/字符预算。
       conditionalCompiled.prompt,
