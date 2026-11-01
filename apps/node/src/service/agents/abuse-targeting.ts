@@ -19,6 +19,8 @@ const CRISIS =
   /(?:我不想活|不想活了|我想死|我要死|想自杀|自杀|轻生|活不下去|死了算了|不如死了)/;
 const CALM =
   /(?:对不起|我错了|不该骂|不该说|冷静|不骂了|别生气|我没事|谢谢你|不说了)/;
+const CONFLICT_CONTINUATION =
+  /(?:恨你|滚|闭嘴|烦|不想见|去死|别管我|你走|讨厌你|骂你|受不了你)/;
 const REPORTED_OR_THIRD_PARTY =
   /(?:我|他|她|妈|爸|奶奶|爷爷|朋友|别人|同事).{0,8}(?:骂|说|叫|骂我|说我).{0,8}(?:傻逼|煞笔|贱人|婊子|畜生|狗东西)/;
 
@@ -48,6 +50,10 @@ export function isCalmingText(text: string): boolean {
   return CALM.test((text || '').trim());
 }
 
+export function isConflictContinuationText(text: string): boolean {
+  return CONFLICT_CONTINUATION.test((text || '').trim());
+}
+
 export function buildAbuseConflictPrompt(
   level: AbuseConflictLevel
 ): string {
@@ -60,7 +66,7 @@ export function buildAbuseConflictPrompt(
   if (level === 1) {
     return [
       ...common,
-      '先立规矩：用一句符合角色关系的短话接住怒气并划线，然后停住。',
+      '先用一句符合角色关系的短话回怼/训斥，再划线，然后停住。',
       '不要进入长篇安慰，不要客服口吻。',
     ].join('\n');
   }

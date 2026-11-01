@@ -6,6 +6,7 @@ import {
   buildAbuseConflictPrompt,
   detectAbuseTargeting,
   isCalmingText,
+  isConflictContinuationText,
   isSelfCrisisText,
 } from './abuse-targeting';
 
@@ -55,10 +56,25 @@ export class AbuseConflictService {
       }
 
       const signal = detectAbuseTargeting(text);
-      if (!signal.strong) {
+      const continuation = Boolean(
+        existing && !signal.strong && isConflictContinuationText(text)
+      );
+      if (!signal.strong && !continuation) {
         // 用户已经不再辱骂：不把上一轮的怒气延续到正常聊天。
         if (existing) await this.clear(conversationId);
         return { active: false };
+      }
+
+      if (continuation) {
+        const level = Math.min(3, existing!.level + 1) as AbuseConflictLevel;
+        const next: ConflictModeState = { level, updatedAt: Date.now() };
+        await this.redisService.set(
+          this.modeKey(conversationId),
+          JSON.stringify(next),
+          'PX',
+          MODE_TTL_MS
+        );
+        return { active: true, level };
       }
 
       const signalKey = this.signalKey(conversationId);
