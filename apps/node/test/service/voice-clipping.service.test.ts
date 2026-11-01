@@ -103,6 +103,109 @@ describe('VoiceClippingService', () => {
     );
   });
 
+  it('denoises the material before ready-to-use clipping', async () => {
+    const service = new VoiceClippingService();
+    service.config = { maxTotalClips: 8 };
+    service.logger = { warn: jest.fn(), info: jest.fn() } as never;
+    const denoiseAudio = jest.fn().mockResolvedValue({
+      buffer: Buffer.from('denoised'),
+      fileName: 'a-denoised.wav',
+      contentType: 'audio/wav',
+    });
+    const createReadyReviewClipWithQuality = jest.fn().mockResolvedValue({
+      clips: [
+        {
+          buffer: Buffer.from('clip'),
+          fileName: 'clip.mp3',
+          contentType: 'audio/mpeg',
+          durationSeconds: 8,
+          qualityMetrics: {
+            durationSeconds: 8,
+            silenceRatio: 0.1,
+            rmsDb: -24,
+            peakDb: -4,
+            clippingRatio: 0,
+          },
+          qualityIssues: [],
+        },
+      ],
+      filteredClips: [],
+    });
+    service.tencentCosService = {
+      getBuffer: jest.fn().mockResolvedValue({ buffer: Buffer.from('raw') }),
+      putBuffer: jest.fn().mockResolvedValue({
+        objectKey: 'voice-service-clips/clip.mp3',
+        url: 'https://example.com/clip.mp3',
+      }),
+    } as never;
+    service.voiceFfmpegService = {
+      isDenoiseEnabled: () => true,
+      denoiseAudio,
+      createReadyReviewClipWithQuality,
+    } as never;
+
+    await service.createReviewClipsWithMetrics(
+      [material('ready', 'a.mp4', 'voice-timbres/a.mp4')],
+      VoiceServiceProcessingMode.readyToUse
+    );
+
+    expect(denoiseAudio).toHaveBeenCalledWith({
+      buffer: Buffer.from('raw'),
+      fileName: 'a.mp4',
+    });
+    expect(createReadyReviewClipWithQuality).toHaveBeenCalledWith({
+      buffer: Buffer.from('denoised'),
+      fileName: 'a-denoised.wav',
+    });
+  });
+
+  it('falls back to the raw material when denoising fails', async () => {
+    const service = new VoiceClippingService();
+    service.config = { maxTotalClips: 8 };
+    service.logger = { warn: jest.fn(), info: jest.fn() } as never;
+    const createReadyReviewClipWithQuality = jest.fn().mockResolvedValue({
+      clips: [
+        {
+          buffer: Buffer.from('clip'),
+          fileName: 'clip.mp3',
+          contentType: 'audio/mpeg',
+          durationSeconds: 8,
+          qualityMetrics: {
+            durationSeconds: 8,
+            silenceRatio: 0.1,
+            rmsDb: -24,
+            peakDb: -4,
+            clippingRatio: 0,
+          },
+          qualityIssues: [],
+        },
+      ],
+      filteredClips: [],
+    });
+    service.tencentCosService = {
+      getBuffer: jest.fn().mockResolvedValue({ buffer: Buffer.from('raw') }),
+      putBuffer: jest.fn().mockResolvedValue({
+        objectKey: 'voice-service-clips/clip.mp3',
+        url: 'https://example.com/clip.mp3',
+      }),
+    } as never;
+    service.voiceFfmpegService = {
+      isDenoiseEnabled: () => true,
+      denoiseAudio: jest.fn().mockRejectedValue(new Error('ffmpeg failed')),
+      createReadyReviewClipWithQuality,
+    } as never;
+
+    await service.createReviewClipsWithMetrics(
+      [material('ready', 'a.mp4', 'voice-timbres/a.mp4')],
+      VoiceServiceProcessingMode.readyToUse
+    );
+
+    expect(createReadyReviewClipWithQuality).toHaveBeenCalledWith({
+      buffer: Buffer.from('raw'),
+      fileName: 'a.mp4',
+    });
+  });
+
   it('uses speaker diarization and sentence boundaries for assisted clipping', async () => {
     const service = new VoiceClippingService();
     service.config = { maxTotalClips: 8 };

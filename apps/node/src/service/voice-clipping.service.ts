@@ -270,6 +270,42 @@ export class VoiceClippingService {
   @Inject()
   dashScopeVoiceAnalysisService: DashScopeVoiceAnalysisService;
 
+  /**
+   * 切片前的降噪处理：成功则返回降噪后的音频，失败时记录日志并回退原始素材。
+   * 降噪属于质量增强，不能因为它失败让整批素材被跳过。
+   */
+  private async prepareDenoisedSource(
+    buffer: Buffer,
+    fileName: string
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    if (!this.voiceFfmpegService.isDenoiseEnabled?.()) {
+      return { buffer, fileName };
+    }
+
+    try {
+      const startedAt = Date.now();
+      const denoised = await this.voiceFfmpegService.denoiseAudio({
+        buffer,
+        fileName,
+      });
+      this.logger.info(
+        '[voice-clipping] denoised before clipping, fileName=%s, inBytes=%s, outBytes=%s, costMs=%s',
+        fileName,
+        buffer.length,
+        denoised.buffer.length,
+        Date.now() - startedAt
+      );
+      return { buffer: denoised.buffer, fileName: denoised.fileName };
+    } catch (error) {
+      this.logger.warn(
+        '[voice-clipping] denoise failed, fallback to raw material, fileName=%s, reason=%s',
+        fileName,
+        error instanceof Error ? error.message : String(error)
+      );
+      return { buffer, fileName };
+    }
+  }
+
   async createReviewClips(
     materials: VoiceServiceMaterialItem[],
     processingMode: VoiceServiceProcessingMode = VoiceServiceProcessingMode.assisted
@@ -310,25 +346,30 @@ export class VoiceClippingService {
         const source = await this.tencentCosService.getBuffer(
           material.objectKey
         );
+        // 切片前先降噪一遍，提升后续 VAD/切片质量（失败则回退原始素材，不阻断流程）。
+        const prepared = await this.prepareDenoisedSource(
+          source.buffer,
+          material.name
+        );
         const qualityBatch: VoiceFfmpegQualityBatch =
           processingMode === VoiceServiceProcessingMode.readyToUse
             ? this.voiceFfmpegService.createReadyReviewClipWithQuality
               ? await this.voiceFfmpegService.createReadyReviewClipWithQuality({
-                  buffer: source.buffer,
-                  fileName: material.name,
+                  buffer: prepared.buffer,
+                  fileName: prepared.fileName,
                 })
               : {
                   clips: [
                     await this.voiceFfmpegService.createReadyReviewClip({
-                      buffer: source.buffer,
-                      fileName: material.name,
+                      buffer: prepared.buffer,
+                      fileName: prepared.fileName,
                     }),
                   ],
                   filteredClips: [],
                 }
             : await this.createAssistedClips(
-                source.buffer,
-                material.name,
+                prepared.buffer,
+                prepared.fileName,
                 metrics
               );
 

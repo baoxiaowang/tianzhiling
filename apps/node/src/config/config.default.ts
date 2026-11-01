@@ -1056,6 +1056,10 @@ export default {
   },
   voiceClipping: {
     binaryPath: readStringFrom(['NODE_FFMPEG_BINARY_PATH'], 'ffmpeg'),
+    // 切片前降噪：默认开启，可用 NODE_VOICE_DENOISE_ENABLED=false 关闭；
+    // 滤镜串可用 NODE_VOICE_DENOISE_FILTER 覆盖（默认 highpass+afftdn+lowpass）。
+    denoiseEnabled: readBooleanFrom(['NODE_VOICE_DENOISE_ENABLED'], true),
+    denoiseFilter: readStringFrom(['NODE_VOICE_DENOISE_FILTER'], ''),
     timeoutMs: readNumberFrom(['NODE_FFMPEG_TIMEOUT_MS'], 300000),
     segmentSeconds: readNumberFrom(['NODE_VOICE_CLIP_SEGMENT_SECONDS'], 12),
     maxClipsPerMaterial: readNumberFrom(
