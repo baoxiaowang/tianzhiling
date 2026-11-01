@@ -144,7 +144,13 @@ export class AdminFaceService {
         body: JSON.stringify(body ?? {}),
         signal: controller.signal,
       });
-      const payload = (await response.json()) as NodeEnvelope<T>;
+      // node 侧统一被 FormatMiddleware 包了一层 { success, code, data }，
+      // 真正的业务结果在 data 里（{ ok, data | error }）。
+      const raw = (await response.json()) as
+        | NodeEnvelope<T>
+        | { data?: NodeEnvelope<T> };
+      const payload =
+        (raw as { data?: NodeEnvelope<T> }).data ?? (raw as NodeEnvelope<T>);
       if (!payload?.ok) {
         throw new AppError(
           'FACE_NODE_CALL_FAILED',
