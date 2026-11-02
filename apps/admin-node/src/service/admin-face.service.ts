@@ -109,6 +109,14 @@ export class AdminFaceService {
     );
   }
 
+  async mergePersons(input: {
+    userId: string;
+    sourcePersonId: string;
+    targetPersonId: string;
+  }) {
+    return this.callNode<{ moved: number }>('/api/system/face/person/merge', input);
+  }
+
   async deleteFaces(input: { userId: string; personId: string }) {
     return this.callNode<{ deleted: number }>('/api/system/face/person/delete', {
       userId: input.userId,

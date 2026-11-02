@@ -125,6 +125,29 @@ export class FaceInternalController {
     return { ok: true, data };
   }
 
+  @Post('/face/person/merge')
+  async mergePersons(
+    @Body()
+    body: { userId: string; sourcePersonId: string; targetPersonId: string }
+  ) {
+    if (!this.authorized()) {
+      return { ok: false, error: 'UNAUTHORIZED' };
+    }
+    try {
+      const data = await this.faceRecognitionService.mergePersons({
+        userId: body.userId,
+        sourcePersonId: body.sourcePersonId,
+        targetPersonId: body.targetPersonId,
+      });
+      return { ok: true, data };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   @Post('/face/person/delete')
   async deleteFaces(@Body() body: { userId: string; personId: string }) {
     if (!this.authorized()) {

@@ -57,6 +57,14 @@
               <a-button type="text" size="small" @click="openRegister(record)">
                 登记人脸
               </a-button>
+              <a-button
+                type="text"
+                size="small"
+                :disabled="persons.length < 2"
+                @click="openMerge(record)"
+              >
+                合并到…
+              </a-button>
               <a-popconfirm
                 content="清空这个人已登记的所有人脸照片？（识别将不再认识 TA）"
                 ok-text="清空"
@@ -99,6 +107,29 @@
           照片越清晰、角度越多，识别越准；小于 80px 或明显模糊的照片会自动跳过。
         </a-alert>
       </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:visible="mergeVisible"
+      :title="`合并「${mergeSource?.name || ''}」到…`"
+      :ok-loading="merging"
+      ok-text="确认合并"
+      @ok="handleMerge"
+    >
+      <a-space direction="vertical" style="width: 100%">
+        <a-select v-model="mergeTargetId" placeholder="选择要合并进的人">
+          <a-option
+            v-for="item in mergeCandidates"
+            :key="item.personId"
+            :value="item.personId"
+          >
+            {{ item.name }}{{ item.relation ? `（${item.relation}）` : '' }}
+          </a-option>
+        </a-select>
+        <a-alert type="warning" show-icon>
+          合并后，源档案的人脸照片会全部迁到目标档案，源档案归档（不再参与识别）。
+        </a-alert>
+      </a-space>
     </a-modal>
 
     <a-modal
@@ -157,6 +188,7 @@
   import uploadAdminFile from '@/api/storage';
   import {
     deleteFaceTemplates,
+    mergeFacePersons,
     queryFacePersons,
     recognizeFaceImage,
     registerFaceTemplates,
@@ -174,6 +206,11 @@
   const submitting = ref(false);
   const registerFiles = ref<File[]>([]);
   const registerForm = ref<Record<string, unknown>>({});
+
+  const mergeVisible = ref(false);
+  const mergeSource = ref<AdminFacePerson>();
+  const mergeTargetId = ref('');
+  const merging = ref(false);
 
   const recognizeVisible = ref(false);
   const recognizing = ref(false);
@@ -271,6 +308,40 @@
       await fetchPersons();
     } catch (error) {
       Message.error(error instanceof Error ? error.message : '清空失败');
+    }
+  };
+
+  const mergeCandidates = computed(() =>
+    persons.value.filter(
+      (item) => item.personId !== mergeSource.value?.personId
+    )
+  );
+
+  const openMerge = (record: AdminFacePerson) => {
+    mergeSource.value = record;
+    mergeTargetId.value = '';
+    mergeVisible.value = true;
+  };
+
+  const handleMerge = async () => {
+    if (!mergeSource.value || !mergeTargetId.value) {
+      Message.warning('请选择要合并进的人');
+      return;
+    }
+    merging.value = true;
+    try {
+      const { data } = await mergeFacePersons(
+        props.userId,
+        mergeSource.value.personId,
+        mergeTargetId.value
+      );
+      Message.success(`已合并，迁移 ${data?.moved ?? 0} 张人脸`);
+      mergeVisible.value = false;
+      await fetchPersons();
+    } catch (error) {
+      Message.error(error instanceof Error ? error.message : '合并失败');
+    } finally {
+      merging.value = false;
     }
   };
 

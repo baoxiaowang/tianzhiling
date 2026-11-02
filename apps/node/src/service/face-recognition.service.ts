@@ -2,7 +2,12 @@ import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type { ILogger } from '@midwayjs/logger';
 import { MongoRepository } from 'typeorm';
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from 'crypto';
 import {
   FaceRecognitionDecision,
   FaceRecognitionFaceResult,
@@ -331,7 +336,9 @@ export class FaceRecognitionService {
             messageId: input.messageId
               ? new MongoObjectId(input.messageId)
               : undefined,
-            objectKey: input.objectKey,
+            // 日志脱敏：只保留对象 key 的哈希前缀，避免日志泄露原图路径
+            objectKey: undefined,
+            objectKeyHash: hashObjectKey(input.objectKey),
             action: 'recognize',
             faces,
             model: analysis.model,
@@ -375,6 +382,72 @@ export class FaceRecognitionService {
       source: row.source,
       createdAt: row.createdAt,
     }));
+  }
+
+  /**
+   * 合并两个「认识的人」：把 source 的人脸模板全部迁到 target，并归档 source。
+   * 典型场景：用户先后录入了「妈妈」和「母亲」，确认是同一个人。
+   */
+  async mergePersons(input: {
+    userId: string;
+    sourcePersonId: string;
+    targetPersonId: string;
+  }): Promise<{ moved: number }> {
+    if (input.sourcePersonId === input.targetPersonId) {
+      throw new AppError(
+        'FACE_MERGE_SAME_PERSON',
+        '不能把一个人合并到自己',
+        400
+      );
+    }
+    const [source, target] = await Promise.all([
+      this.loadPerson(input.userId, input.sourcePersonId),
+      this.loadPerson(input.userId, input.targetPersonId),
+    ]);
+    if (!source || !target) {
+      throw new AppError('FACE_PERSON_NOT_FOUND', 'known person not found', 404);
+    }
+
+    const result = await this.faceModel.updateMany(
+      {
+        personId: new MongoObjectId(input.sourcePersonId),
+        userId: new MongoObjectId(input.userId),
+        status: UserKnownPersonFaceStatus.active,
+      } as never,
+      {
+        $set: {
+          personId: new MongoObjectId(input.targetPersonId),
+          updatedAt: new Date(),
+        },
+      } as never
+    );
+    const moved = Number(
+      (result as unknown as { modifiedCount?: number }).modifiedCount ?? 0
+    );
+
+    source.status = UserKnownPersonStatus.archived;
+    source.updatedAt = new Date();
+    await this.personModel.save(source);
+
+    try {
+      await this.logModel.save(
+        this.logModel.create({
+          userId: new MongoObjectId(input.userId),
+          personId: new MongoObjectId(input.targetPersonId),
+          action: 'merge',
+          deletedCount: moved,
+          faces: [],
+          createdAt: new Date(),
+        } as unknown as FaceRecognitionLogEntity)
+      );
+    } catch (error) {
+      this.logger.warn(
+        '[face] write merge audit failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
+    return { moved };
   }
 
   /** 软删除某人的全部人脸模板（原图由调用方按存储策略清理）。 */
@@ -664,6 +737,13 @@ export class FaceRecognitionService {
     return row.embedding?.length ? row.embedding : null;
   }
 
+}
+
+function hashObjectKey(objectKey?: string): string | undefined {
+  if (!objectKey) {
+    return undefined;
+  }
+  return createHash('sha256').update(objectKey).digest('hex').slice(0, 16);
 }
 
 function euclideanDistance(left: number[], right: number[]): number {

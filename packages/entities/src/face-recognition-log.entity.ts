@@ -44,8 +44,13 @@ export class FaceRecognitionLogEntity extends BaseEntity {
   @Column()
   messageId?: MongoObjectId;
 
+  /** 原图对象 key（历史字段，新日志不再写入，改用哈希） */
   @Column()
   objectKey?: string;
+
+  /** 对象 key 的 sha256 前 16 位（日志脱敏用） */
+  @Column()
+  objectKeyHash?: string;
 
   @Column()
   faces: FaceRecognitionFaceResult[];

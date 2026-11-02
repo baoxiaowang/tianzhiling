@@ -75,3 +75,15 @@ export function recognizeFaceImage(body: {
     } as never
   );
 }
+
+/** 把 source 的家人合并到 target（人脸模板迁移，source 归档） */
+export function mergeFacePersons(
+  userId: string,
+  sourcePersonId: string,
+  targetPersonId: string
+) {
+  return axios.post<{ moved: number }>(
+    `/admin_api/face/persons/${sourcePersonId}/merge`,
+    { userId, targetPersonId }
+  );
+}

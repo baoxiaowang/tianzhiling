@@ -29,6 +29,18 @@ export class AdminFaceController {
     });
   }
 
+  @Post('/persons/:personId/merge')
+  async merge(
+    @Param('personId') personId: string,
+    @Body() body: { userId: string; targetPersonId: string }
+  ) {
+    return this.adminFaceService.mergePersons({
+      userId: body?.userId,
+      sourcePersonId: personId,
+      targetPersonId: body?.targetPersonId,
+    });
+  }
+
   @Post('/persons/:personId/faces/delete')
   async deleteFaces(
     @Param('personId') personId: string,

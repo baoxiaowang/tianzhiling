@@ -206,6 +206,63 @@ describe('FaceRecognitionService', () => {
     expect(savedFaces).toHaveLength(1);
   });
 
+  it('合并家人：模板迁移到目标、源档案归档', async () => {
+    const { service } = createService();
+    const archived: Array<{ status?: string }> = [];
+    service.personModel = {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => ({
+        id: where._id,
+        userId: USER_ID,
+        preferredName: '妈妈',
+        status: UserKnownPersonStatus.active,
+      })),
+      save: jest.fn(async (entity: unknown) => {
+        archived.push(entity as { status?: string });
+        return entity;
+      }),
+    } as never;
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 3 });
+    service.faceModel = {
+      find: jest.fn().mockResolvedValue([]),
+      updateMany,
+    } as never;
+    service.logModel = { create: jest.fn(v => v), save: jest.fn(async v => v) } as never;
+
+    const result = await service.mergePersons({
+      userId: USER_ID,
+      sourcePersonId: '665000000000000000000904',
+      targetPersonId: '665000000000000000000905',
+    });
+
+    expect(result).toEqual({ moved: 3 });
+    expect(updateMany).toHaveBeenCalled();
+    expect(archived[0]).toEqual(
+      expect.objectContaining({ status: UserKnownPersonStatus.archived })
+    );
+  });
+
+  it('识别日志不落原始 objectKey（只存哈希）', async () => {
+    const { service } = createService();
+    const saved: Array<{ objectKey?: string; objectKeyHash?: string }> = [];
+    service.logModel = {
+      create: jest.fn(v => v),
+      save: jest.fn(async v => {
+        saved.push(v as { objectKey?: string; objectKeyHash?: string });
+        return v;
+      }),
+    } as never;
+    service.config = { ...service.config, logEnabled: true };
+
+    await service.recognize({
+      userId: USER_ID,
+      objectKey: 'voice-timbres/2026/11/02/secret.jpg',
+    });
+
+    expect(saved[0].objectKey).toBeUndefined();
+    expect(saved[0].objectKeyHash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
   it('关闭开关时识别直接返回 enabled=false', async () => {
     const { service } = createService();
     service.config = { ...service.config, enabled: false };
