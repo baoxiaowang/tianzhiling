@@ -12,6 +12,11 @@ export interface UploadQuotaConfig {
   /** 目录级额外上限，例如 chat-imports 允许一次导入 30 张截图。 */
   folderDailyFiles?: Record<string, number>;
   /**
+   * 只豁免“文件数/图片数”全局计数的目录，仍受全局总字节约束。
+   * 用于聊天语音等高频上传：不再卡 50 个文件，但仍保留 256MB/日成本护栏。
+   */
+  fileCountExemptFolders?: string[];
+  /**
    * 豁免“文件数/图片数”全局计数的目录（一次性批量流程）。
    * 豁免仍受目录自身上限与全局总字节约束；未配目录上限时不豁免。
    */
@@ -123,13 +128,20 @@ export class UploadQuotaService {
       (this.quotaConfig?.exemptFolders || []).some(
         item => normalizeUploadFolder(item) === normalizedFolder
       );
+    const fileCountExemptFolders =
+      this.quotaConfig?.fileCountExemptFolders?.length
+        ? this.quotaConfig.fileCountExemptFolders
+        : ['conversation-voice'];
+    const fileCountExempt = fileCountExemptFolders.some(
+      item => normalizeUploadFolder(item) === normalizedFolder
+    );
 
     return {
       files: this.normalizeLimit(this.quotaConfig?.dailyFilesPerUser),
       images: this.normalizeLimit(this.quotaConfig?.dailyImageFilesPerUser),
       bytes: this.normalizeLimit(this.quotaConfig?.dailyBytesPerUser),
       folderFiles,
-      exempt,
+      exempt: exempt || fileCountExempt,
     };
   }
 

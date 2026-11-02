@@ -548,3 +548,29 @@ describe('UploadQuotaService 豁免目录（聊天导入）', () => {
     expect(readField(hashes, key, 'bytes')).toBe(0);
   });
 });
+
+
+describe('聊天语音不计文件数', () => {
+  it('50 个文件额度用完后仍可继续发语音，但仍记录字节', async () => {
+    const { redis, hashes } = createFakeRedis();
+    const service = createService({
+      redis,
+      config: { fileCountExemptFolders: ['conversation-voice'] },
+    });
+
+    for (let index = 0; index < 51; index += 1) {
+      const reservation = await service.reserve({
+        userId: 'u1',
+        folder: 'conversation-voice',
+        contentType: 'audio/aac',
+        sizeBytes: 1024,
+        now: NOW,
+      });
+      expect(reservation).not.toBeNull();
+    }
+
+    const key = `tzl:upload-quota:u1:${DAY_KEY}`;
+    expect(readField(hashes, key, 'files')).toBe(0);
+    expect(readField(hashes, key, 'bytes')).toBe(51 * 1024);
+  });
+});
