@@ -427,9 +427,16 @@ export class OpenAIService {
   private buildChatCompletionBody(
     request: Omit<OpenAIChatRequest, 'trace'>
   ): ChatCompletionCreateParamsNonStreaming {
+    const model = request.model?.trim() || this.getDefaultModel();
+    // DeepSeek 默认开启 thinking；角色聊天只需要最终回复，思考预算会把
+    // max_tokens 吃光，表现为 completion_tokens 打满但没有 content。
+    const thinking =
+      request.thinking ??
+      (/deepseek/i.test(model) ? { type: 'disabled' as const } : undefined);
     return {
       ...request,
-      model: request.model?.trim() || this.getDefaultModel(),
+      model,
+      ...(thinking ? { thinking } : {}),
       temperature: this.normalizeTemperature(request.temperature),
       top_p: this.normalizeTopP(request.topP),
       presence_penalty: this.normalizePenalty(
