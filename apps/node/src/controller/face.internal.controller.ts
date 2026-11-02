@@ -20,6 +20,37 @@ export class FaceInternalController {
     return Boolean(expected) && this.ctx.get('x-internal-secret') === expected;
   }
 
+  @Post('/face/consent')
+  async consent(
+    @Body() body: { userId: string; granted: boolean; source?: string }
+  ) {
+    if (!this.authorized()) {
+      return { ok: false, error: 'UNAUTHORIZED' };
+    }
+    try {
+      const data = await this.faceRecognitionService.setConsent({
+        userId: body.userId,
+        granted: body.granted === true,
+        source: body.source,
+      });
+      return { ok: true, data };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  @Post('/face/consent/status')
+  async consentStatus(@Body() body: { userId: string }) {
+    if (!this.authorized()) {
+      return { ok: false, error: 'UNAUTHORIZED' };
+    }
+    const granted = await this.faceRecognitionService.hasConsent(body.userId);
+    return { ok: true, data: { granted } };
+  }
+
   @Post('/face/analyze')
   async analyze(
     @Body() body: { objectKey?: string; imageBase64?: string }

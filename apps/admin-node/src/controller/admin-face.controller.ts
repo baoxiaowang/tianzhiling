@@ -52,6 +52,20 @@ export class AdminFaceController {
     });
   }
 
+  @Get('/consent')
+  async consent(@Query() query: Record<string, string>) {
+    return this.adminFaceService.consentStatus(query?.userId || '');
+  }
+
+  @Post('/consent')
+  async setConsent(@Body() body: { userId: string; granted: boolean }) {
+    return this.adminFaceService.setConsent({
+      userId: body?.userId,
+      granted: body?.granted === true,
+      source: 'admin',
+    });
+  }
+
   @Post('/recognize')
   async recognize(
     @Body()

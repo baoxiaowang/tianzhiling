@@ -109,6 +109,19 @@ export class AdminFaceService {
     );
   }
 
+  async setConsent(input: { userId: string; granted: boolean; source?: string }) {
+    return this.callNode<{ granted: boolean; at?: string }>(
+      '/api/system/face/consent',
+      input
+    );
+  }
+
+  async consentStatus(userId: string) {
+    return this.callNode<{ granted: boolean }>('/api/system/face/consent/status', {
+      userId,
+    });
+  }
+
   async mergePersons(input: {
     userId: string;
     sourcePersonId: string;

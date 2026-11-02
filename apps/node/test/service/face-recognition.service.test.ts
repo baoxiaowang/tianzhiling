@@ -263,6 +263,42 @@ describe('FaceRecognitionService', () => {
     expect(saved[0].objectKeyHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
+  it('要求同意时：未同意不做识别，同意后正常识别', async () => {
+    const { service } = createService();
+    service.config = { ...service.config, requireConsent: true };
+
+    let consented = false;
+    service.userModel = {
+      findOne: jest.fn(async () => ({
+        faceRecognitionConsent: consented ? { granted: true } : undefined,
+      })),
+      updateOne: jest.fn(async () => ({ modifiedCount: 1 })),
+    } as never;
+
+    const blocked = await service.recognize({ userId: USER_ID });
+    expect(blocked.enabled).toBe(false);
+    expect(blocked.faces).toHaveLength(0);
+
+    consented = true;
+    const allowed = await service.recognize({ userId: USER_ID });
+    expect(allowed.enabled).toBe(true);
+    expect(allowed.faces.length).toBeGreaterThan(0);
+  });
+
+  it('撤回同意会清空已登记的人脸模板', async () => {
+    const { service } = createService();
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 4 });
+    const updateOne = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    service.userModel = { updateOne } as never;
+    service.faceModel = { find: jest.fn(), updateMany } as never;
+
+    const result = await service.setConsent({ userId: USER_ID, granted: false });
+
+    expect(result.granted).toBe(false);
+    expect(updateOne).toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalled();
+  });
+
   it('关闭开关时识别直接返回 enabled=false', async () => {
     const { service } = createService();
     service.config = { ...service.config, enabled: false };

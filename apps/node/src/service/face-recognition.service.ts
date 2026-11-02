@@ -13,6 +13,7 @@ import {
   FaceRecognitionFaceResult,
   FaceRecognitionLogEntity,
   MongoObjectId,
+  UserEntity,
   UserKnownPersonEntity,
   UserKnownPersonFaceEntity,
   UserKnownPersonFaceSource,
@@ -40,6 +41,8 @@ export interface FaceRecognitionConfig {
   maxYaw?: number;
   /** 是否把识别记录写入 face_recognition_log */
   logEnabled?: boolean;
+  /** 是否要求用户已单独同意才做人脸识别（上线灰度期默认关闭） */
+  requireConsent?: boolean;
 }
 
 export interface FaceSidecarFace {
@@ -109,6 +112,9 @@ export class FaceRecognitionService {
 
   @InjectEntityModel(UserKnownPersonEntity)
   personModel: MongoRepository<UserKnownPersonEntity>;
+
+  @InjectEntityModel(UserEntity)
+  userModel: MongoRepository<UserEntity>;
 
   @InjectEntityModel(FaceRecognitionLogEntity)
   logModel: MongoRepository<FaceRecognitionLogEntity>;
@@ -254,6 +260,9 @@ export class FaceRecognitionService {
   }): Promise<FaceRecognitionOutcome> {
     const startedAt = Date.now();
     if (!this.isEnabled()) {
+      return { enabled: false, latencyMs: 0, faces: [], candidates: [] };
+    }
+    if (this.requireConsent && !(await this.hasConsent(input.userId))) {
       return { enabled: false, latencyMs: 0, faces: [], candidates: [] };
     }
 
@@ -658,6 +667,61 @@ export class FaceRecognitionService {
     return Number(this.config?.maxYaw ?? 0.35);
   }
 
+
+  /** 是否要求单独同意（env NODE_FACE_REQUIRE_CONSENT 优先，其次配置，默认关闭）。 */
+  private get requireConsent(): boolean {
+    const raw = String(process.env.NODE_FACE_REQUIRE_CONSENT ?? '')
+      .trim()
+      .toLowerCase();
+    if (['0', 'false', 'off', 'no'].includes(raw)) {
+      return false;
+    }
+    if (['1', 'true', 'on', 'yes'].includes(raw)) {
+      return true;
+    }
+    return this.config?.requireConsent === true;
+  }
+
+  /** 记录/撤销用户对「人脸识别」的单独同意（人脸属敏感个人信息）。 */
+  async setConsent(input: {
+    userId: string;
+    granted: boolean;
+    source?: string;
+    version?: string;
+  }): Promise<{ granted: boolean; at?: Date }> {
+    const at = new Date();
+    const consent = input.granted
+      ? {
+          granted: true,
+          at,
+          source: input.source || 'admin',
+          version: input.version || 'v1',
+        }
+      : { granted: false, at, source: input.source || 'admin', version: input.version || 'v1' };
+    await this.userModel.updateOne(
+      { _id: new MongoObjectId(input.userId) } as never,
+      { $set: { faceRecognitionConsent: consent, updatedAt: at } } as never
+    );
+    if (!input.granted) {
+      // 撤回同意时一并清空已登记的人脸模板（可删除）
+      const uid = input.userId;
+      await this.faceModel.updateMany(
+        { userId: new MongoObjectId(uid), status: UserKnownPersonFaceStatus.active } as never,
+        { $set: { status: UserKnownPersonFaceStatus.deleted, updatedAt: at } } as never
+      );
+    }
+    return { granted: consent.granted, at };
+  }
+
+  async hasConsent(userId: string): Promise<boolean> {
+    const user = await this.userModel.findOne({
+      where: { _id: new MongoObjectId(userId) } as never,
+    } as never);
+    const consent = (user as unknown as {
+      faceRecognitionConsent?: { granted?: boolean };
+    })?.faceRecognitionConsent;
+    return consent?.granted === true;
+  }
 
   /** 是否启用向量加密（配置 NODE_FACE_EMBEDDING_KEY 即启用）。 */
   private encryptionKey(): Buffer | null {
