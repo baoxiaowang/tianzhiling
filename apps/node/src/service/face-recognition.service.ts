@@ -33,8 +33,10 @@ export interface FaceRecognitionConfig {
   askDistance?: number;
   /** top1 与 top2 的最小距离差（越大越保守） */
   confirmMargin?: number;
-  /** 小于该人脸边长视为不合格 */
+  /** 小于该人脸边长视为不合格（可确认档） */
   minFaceSize?: number;
+  /** 小于该边长直接丢弃；介于两者之间只允许「反问」，永不确认 */
+  minFaceSizeAsk?: number;
   /** 低于该拉普拉斯方差视为模糊 */
   minBlur?: number;
   /** 人脸左右偏转上限（0 正面） */
@@ -294,7 +296,12 @@ export class FaceRecognitionService {
         } else if (top1.distance <= this.askDistance) {
           decision = FaceRecognitionDecision.ask;
         }
-      } else if (top1 && top1.distance <= this.askDistance) {
+      } else if (
+        gatedBy !== 'size' &&
+        top1 &&
+        top1.distance <= this.askDistance
+      ) {
+        // 偏小/偏侧/模糊可以「反问」，但人脸过小（<48px）连反问都不给，避免瞎猜
         decision = FaceRecognitionDecision.ask;
       }
 
@@ -594,8 +601,14 @@ export class FaceRecognitionService {
     if (!quality) {
       return undefined;
     }
-    if (Number(quality.faceSize ?? 0) < this.minFaceSize) {
+    const faceSize = Number(quality.faceSize ?? 0);
+    if (faceSize < this.minFaceSizeAsk) {
+      // 太小，连向量都不可靠，直接丢弃
       return 'size';
+    }
+    if (faceSize < this.minFaceSize) {
+      // 偏小：只允许反问，不允许确认
+      return 'small';
     }
     if (Number(quality.blur ?? 0) < this.minBlur) {
       return 'blur';
@@ -659,8 +672,12 @@ export class FaceRecognitionService {
     return Number(this.config?.minFaceSize ?? 80);
   }
 
+  private get minFaceSizeAsk(): number {
+    return Number(this.config?.minFaceSizeAsk ?? 48);
+  }
+
   private get minBlur(): number {
-    return Number(this.config?.minBlur ?? 40);
+    return Number(this.config?.minBlur ?? 12);
   }
 
   private get maxYaw(): number {

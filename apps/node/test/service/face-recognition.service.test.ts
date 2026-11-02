@@ -170,6 +170,20 @@ describe('FaceRecognitionService', () => {
     expect(result.faces[0].decision).not.toBe(FaceRecognitionDecision.confirmed);
   });
 
+  it('小脸（48~80px）只允许反问，不会确认', async () => {
+    const { service } = createService({ quality: { faceSize: 60 } });
+    const result = await service.recognize({ userId: USER_ID });
+    expect(result.faces[0].gatedBy).toBe('small');
+    expect(result.faces[0].decision).not.toBe(FaceRecognitionDecision.confirmed);
+  });
+
+  it('过小的脸（<48px）直接丢弃', async () => {
+    const { service } = createService({ quality: { faceSize: 30 } });
+    const result = await service.recognize({ userId: USER_ID });
+    expect(result.faces[0].gatedBy).toBe('size');
+    expect(result.faces[0].decision).toBe(FaceRecognitionDecision.unknown);
+  });
+
   it('登记模板时质量不合格的照片会被跳过', async () => {
     const { service, savedFaces } = createService({ quality: { blur: 3 } });
     const result = await service.registerFaces({

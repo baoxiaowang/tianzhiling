@@ -35,9 +35,11 @@
 | `NODE_FACE_CONFIRM_DISTANCE` | 0.38 | 确认档距离上限（真实头像标定） |
 | `NODE_FACE_ASK_DISTANCE` | 0.48 | 反问档距离上限（真实头像标定） |
 | `NODE_FACE_CONFIRM_MARGIN` | 0.10 | 确认档 top1/top2 间隔 |
-| `NODE_FACE_MIN_FACE_SIZE` | 80 | 人脸最小边长（px） |
-| `NODE_FACE_MIN_BLUR` | 40 | 拉普拉斯方差下限 |
+| `NODE_FACE_MIN_FACE_SIZE` | 80 | 可「确认」的最小人脸边长（px） |
+| `NODE_FACE_MIN_FACE_SIZE_ASK` | 48 | 低于该值直接丢弃；48~80px 只允许「反问」 |
+| `NODE_FACE_MIN_BLUR` | 12 | 模糊度下限（人脸裁剪归一化到 160×160 后算拉普拉斯方差） |
 | `NODE_FACE_MAX_YAW` | 0.35 | 侧脸容忍度 |
+| `FACE_MAX_INPUT_SIDE` | 1280 | sidecar 检测前把长边缩到该值（速度↑，人脸尺寸仍按原图像素判定） |
 | `NODE_FACE_EMBEDDING_KEY` | 空 | 配置后向量 AES-256-GCM 加密落库 |
 | `NODE_FACE_REQUIRE_CONSENT` | false | true 时未同意不做识别 |
 

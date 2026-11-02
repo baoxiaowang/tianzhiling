@@ -1070,7 +1070,10 @@ export default {
     askDistance: readNumberFrom(['NODE_FACE_ASK_DISTANCE'], 0.48),
     confirmMargin: readNumberFrom(['NODE_FACE_CONFIRM_MARGIN'], 0.1),
     minFaceSize: readNumberFrom(['NODE_FACE_MIN_FACE_SIZE'], 80),
-    minBlur: readNumberFrom(['NODE_FACE_MIN_BLUR'], 40),
+    // 48~80px 的人脸只允许「反问」，不允许确认（真人聊天照常见小脸）
+    minFaceSizeAsk: readNumberFrom(['NODE_FACE_MIN_FACE_SIZE_ASK'], 48),
+    // 模糊度已改为「裁剪后归一化到 160x160」再算拉普拉斯方差，阈值随之调整
+    minBlur: readNumberFrom(['NODE_FACE_MIN_BLUR'], 12),
     maxYaw: readNumberFrom(['NODE_FACE_MAX_YAW'], 0.35),
     logEnabled: readBooleanFrom(['NODE_FACE_LOG_ENABLED'], true),
   },
