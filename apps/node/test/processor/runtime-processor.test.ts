@@ -10,6 +10,9 @@ describe('runtime processor isolation', () => {
     expect(shouldRegisterQueueProcessor('conversation-reply', 'web')).toBe(
       true
     );
+    expect(shouldRegisterQueueProcessor('departure-duration', 'web')).toBe(
+      false
+    );
   });
 
   it('keeps non-memory work out of the memory worker', () => {

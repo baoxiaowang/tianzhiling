@@ -182,16 +182,6 @@ export class MainConfiguration {
               opts: { removeOnComplete: true, removeOnFail: 30 },
             }
           );
-          // 启动时立即跑一次增量，避免重启后当天不执行
-          await durationQueue.add(
-            DEPARTURE_DURATION_QUEUE,
-            { type: 'daily' },
-            {
-              jobId: `departure-duration-startup-${Date.now()}`,
-              removeOnComplete: true,
-              removeOnFail: 30,
-            }
-          );
           await durationQueue.close();
           this.logger.info(
             '[departure-duration] scheduled daily(03:00) and monthly(1st 03:00) computation'

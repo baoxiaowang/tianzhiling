@@ -32,7 +32,17 @@ async function ensureRepeatJobs() {
         opts: { removeOnComplete: true, removeOnFail: 30 },
       }
     );
-    console.log('[departure-duration-worker] repeat jobs ensured: daily(03:00), monthly(1st 03:00)');
+    // 启动增量只能由独立 worker 在 TypeORM 初始化后入队，不能由 web 进程入队。
+    await queue.add(
+      'departure-duration',
+      { type: 'daily' },
+      {
+        jobId: 'departure-duration-startup',
+        removeOnComplete: true,
+        removeOnFail: 30,
+      }
+    );
+    console.log('[departure-duration-worker] repeat jobs ensured and startup job queued');
   } finally {
     await queue.close();
   }
