@@ -167,6 +167,34 @@ describe('FaceRecognitionService', () => {
     expect(savedFaces).toHaveLength(0);
   });
 
+  it('配置密钥时向量加密落库、读取时能解密还原', async () => {
+    process.env.NODE_FACE_EMBEDDING_KEY = 'a'.repeat(64);
+    try {
+      const { service, savedFaces } = createService();
+      const embedding = embeddingAt(8, 1);
+      const result = await service.registerFaces({
+        userId: USER_ID,
+        personId: PERSON_ID,
+        images: [{ buffer: Buffer.from('x') }],
+      });
+      expect(result).toEqual({ stored: 1, skipped: 0 });
+      const saved = savedFaces[0] as unknown as {
+        embedding?: number[];
+        embeddingEnc?: string;
+      };
+      expect(saved.embedding).toBeUndefined();
+      expect(saved.embeddingEnc).toEqual(expect.stringMatching(/^v1:/));
+
+      // 读取链路（loadTemplates → readEmbedding）应能解密出同一向量
+      const read = (service as unknown as {
+        readEmbedding: (row: { embeddingEnc?: string }) => number[] | null;
+      }).readEmbedding({ embeddingEnc: saved.embeddingEnc });
+      expect(read).toEqual(embedding);
+    } finally {
+      delete process.env.NODE_FACE_EMBEDDING_KEY;
+    }
+  });
+
   it('登记模板时合格的图片会写入并带质量分', async () => {
     const { service, savedFaces } = createService();
     const result = await service.registerFaces({

@@ -38,9 +38,16 @@ export class UserKnownPersonFaceEntity extends BaseEntity {
   @Column()
   userId: MongoObjectId;
 
-  /** 128 维特征向量（dlib / face_recognition） */
+  /**
+   * 128 维特征向量（dlib / face_recognition）。
+   * 配置了 NODE_FACE_EMBEDDING_KEY 时改为加密存储，此字段为空。
+   */
   @Column()
-  embedding: number[];
+  embedding?: number[];
+
+  /** 加密后的特征向量（AES-256-GCM，格式 v1:iv:tag:cipher） */
+  @Column()
+  embeddingEnc?: string;
 
   @Column()
   dim: number;

@@ -2,6 +2,7 @@ import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type { ILogger } from '@midwayjs/logger';
 import { MongoRepository } from 'typeorm';
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import {
   FaceRecognitionDecision,
   FaceRecognitionFaceResult,
@@ -198,10 +199,12 @@ export class FaceRecognitionService {
           skipped += 1;
           continue;
         }
+        const serialized = this.serializeEmbedding(face.embedding);
         const entity = this.faceModel.create({
           personId: new MongoObjectId(input.personId),
           userId: new MongoObjectId(input.userId),
-          embedding: face.embedding,
+          embedding: serialized.embedding,
+          embeddingEnc: serialized.embeddingEnc,
           dim: face.embedding.length,
           model: analysis.model || 'dlib-resnet-v1',
           modelVersion: analysis.version || '2026.11',
@@ -329,6 +332,7 @@ export class FaceRecognitionService {
               ? new MongoObjectId(input.messageId)
               : undefined,
             objectKey: input.objectKey,
+            action: 'recognize',
             faces,
             model: analysis.model,
             latencyMs: outcome.latencyMs,
@@ -394,6 +398,23 @@ export class FaceRecognitionService {
     const modified = Number(
       (result as unknown as { modifiedCount?: number }).modifiedCount ?? 0
     );
+    try {
+      await this.logModel.save(
+        this.logModel.create({
+          userId: new MongoObjectId(input.userId),
+          personId: new MongoObjectId(input.personId),
+          action: 'delete',
+          deletedCount: modified,
+          faces: [],
+          createdAt: new Date(),
+        } as unknown as FaceRecognitionLogEntity)
+      );
+    } catch (error) {
+      this.logger.warn(
+        '[face] write delete audit failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
     return { deleted: modified };
   }
 
@@ -428,6 +449,10 @@ export class FaceRecognitionService {
       if (!person) {
         continue;
       }
+      const embedding = this.readEmbedding(row);
+      if (!embedding) {
+        continue;
+      }
       result.push({
         personId,
         name:
@@ -436,7 +461,7 @@ export class FaceRecognitionService {
           person.relationToUser?.trim() ||
           '家人',
         relation: person.relationToUser,
-        embedding: row.embedding,
+        embedding,
       });
     }
     return result;
@@ -559,6 +584,86 @@ export class FaceRecognitionService {
   private get maxYaw(): number {
     return Number(this.config?.maxYaw ?? 0.35);
   }
+
+
+  /** 是否启用向量加密（配置 NODE_FACE_EMBEDDING_KEY 即启用）。 */
+  private encryptionKey(): Buffer | null {
+    const raw = String(process.env.NODE_FACE_EMBEDDING_KEY ?? '').trim();
+    if (!raw) {
+      return null;
+    }
+    const buffer = /^[0-9a-fA-F]{64}$/.test(raw)
+      ? Buffer.from(raw, 'hex')
+      : Buffer.from(raw, 'base64');
+    return buffer.length === 32 ? buffer : null;
+  }
+
+  /** 存库前：有密钥则加密，否则存明文（兼容未配置的部署）。 */
+  private serializeEmbedding(embedding: number[]): {
+    embedding?: number[];
+    embeddingEnc?: string;
+  } {
+    const key = this.encryptionKey();
+    if (!key) {
+      return { embedding };
+    }
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([
+      cipher.update(Buffer.from(JSON.stringify(embedding), 'utf8')),
+      cipher.final(),
+    ]);
+    const tag = cipher.getAuthTag();
+    return {
+      embeddingEnc: [
+        'v1',
+        iv.toString('base64'),
+        tag.toString('base64'),
+        ciphertext.toString('base64'),
+      ].join(':'),
+    };
+  }
+
+  /** 读库时：密文优先解密；明文直接返回。 */
+  private readEmbedding(row: {
+    embedding?: number[];
+    embeddingEnc?: string;
+  }): number[] | null {
+    if (row.embeddingEnc) {
+      const key = this.encryptionKey();
+      if (!key) {
+        this.logger.warn(
+          '[face] encrypted embedding found but NODE_FACE_EMBEDDING_KEY missing'
+        );
+        return null;
+      }
+      try {
+        const [version, iv, tag, ciphertext] = row.embeddingEnc.split(':');
+        if (version !== 'v1') {
+          return null;
+        }
+        const decipher = createDecipheriv(
+          'aes-256-gcm',
+          key,
+          Buffer.from(iv, 'base64')
+        );
+        decipher.setAuthTag(Buffer.from(tag, 'base64'));
+        const plain = Buffer.concat([
+          decipher.update(Buffer.from(ciphertext, 'base64')),
+          decipher.final(),
+        ]);
+        return JSON.parse(plain.toString('utf8')) as number[];
+      } catch (error) {
+        this.logger.warn(
+          '[face] decrypt embedding failed, reason=%s',
+          error instanceof Error ? error.message : String(error)
+        );
+        return null;
+      }
+    }
+    return row.embedding?.length ? row.embedding : null;
+  }
+
 }
 
 function euclideanDistance(left: number[], right: number[]): number {

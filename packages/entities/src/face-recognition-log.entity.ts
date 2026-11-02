@@ -50,6 +50,18 @@ export class FaceRecognitionLogEntity extends BaseEntity {
   @Column()
   faces: FaceRecognitionFaceResult[];
 
+  /** 动作：识别 / 登记 / 删除（操作审计用） */
+  @Column()
+  action?: string;
+
+  /** 关联的人（登记/删除时） */
+  @Column()
+  personId?: MongoObjectId;
+
+  /** 被清空的模板数量（删除时） */
+  @Column()
+  deletedCount?: number;
+
   @Column()
   model?: string;
 
