@@ -171,6 +171,10 @@ export class AdminFaceService {
       }
       return payload.data as T;
     } catch (error) {
+      if (error instanceof AppError) {
+        // 业务错误（人不存在 / 参数非法等）原样抛出，保留状态码
+        throw error;
+      }
       this.logger.error('[admin-face] node call failed, path=%s', path, error);
       throw new AppError(
         'FACE_SERVICE_UNAVAILABLE',
