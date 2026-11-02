@@ -188,6 +188,8 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   closedAt?: string;
   refundedAt?: string;
   refundRequestedAt?: string;
+  refundFirstRequestedAt?: string;
+  refundRequestCount?: number;
   refundRejectedAt?: string;
   refundRejection?: {
     action: "not_refund" | "rejected";

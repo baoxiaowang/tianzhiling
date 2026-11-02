@@ -1906,7 +1906,11 @@ export class OrderService {
 
     const now = new Date();
     order.status = OrderStatus.refundRequested;
-    order.refundRequestedAt = order.refundRequestedAt ?? now;
+    // 每次申请都刷新时间，并累计次数：被驳回后再次申请时，
+    // 后台才能看到「第 2 次申请」，而不是沿用第一次的时间。
+    order.refundRequestCount = (order.refundRequestCount ?? 0) + 1;
+    order.refundFirstRequestedAt = order.refundFirstRequestedAt ?? now;
+    order.refundRequestedAt = now;
     order.updatedAt = now;
     await this.orderModel.save(order);
   }

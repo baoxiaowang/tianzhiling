@@ -148,6 +148,14 @@ export class OrderEntity extends BaseEntity {
   @Column()
   refundRejectedAt?: Date;
 
+  /** 累计退款申请次数（含被驳回后再次申请），用于后台识别「第 N 次申请」 */
+  @Column()
+  refundRequestCount?: number;
+
+  /** 首次申请退款的时间（后续再次申请只更新 refundRequestedAt） */
+  @Column()
+  refundFirstRequestedAt?: Date;
+
   /** 管理端确认开始提供声音服务的时间；未确认时保持待服务。 */
   @Column()
   voiceServiceStartedAt?: Date;

@@ -4988,6 +4988,8 @@ export class AdminOrderService {
       closedAt: this.formatDate(order.closedAt),
       refundedAt: this.formatDate(order.refundedAt),
       refundRequestedAt: this.formatDate(order.refundRequestedAt),
+      refundFirstRequestedAt: this.formatDate(order.refundFirstRequestedAt),
+      refundRequestCount: this.resolveRefundRequestCount(order),
       refundRejectedAt: this.formatDate(order.refundRejectedAt),
       refundRejection: this.getRefundRejection(order),
       agentUserMessageCount,
@@ -5001,6 +5003,16 @@ export class AdminOrderService {
         : undefined,
       updatedAt: this.formatDate(order.updatedAt),
     };
+  }
+
+  private resolveRefundRequestCount(order: OrderEntity): number {
+    if (typeof order.refundRequestCount === 'number') {
+      return order.refundRequestCount;
+    }
+    const rejectedAndPending =
+      Boolean(order.refundRejectedAt) &&
+      order.status === OrderStatus.refundRequested;
+    return rejectedAndPending ? 2 : order.refundRequestedAt ? 1 : 0;
   }
 
   private getRefundRejection(

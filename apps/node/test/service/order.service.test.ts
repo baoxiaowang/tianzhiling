@@ -2930,6 +2930,28 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(result.status).toBe(OrderStatus.refundRequested);
   });
 
+  it('驳回后再次申请退款会刷新申请时间并累计次数', async () => {
+    const { service, order, auth } = createService({
+      status: OrderStatus.completed,
+      paidAmount: 9900,
+      paidAt: NOW,
+      refundRequestedAt: new Date('2026-04-20T10:00:00.000Z'),
+      refundFirstRequestedAt: new Date('2026-04-20T10:00:00.000Z'),
+      refundRejectedAt: new Date('2026-04-25T10:00:00.000Z'),
+      refundRequestCount: 1,
+    });
+
+    const result = await service.refundUserOrder(auth, ORDER_ID);
+
+    expect(result.status).toBe(OrderStatus.refundRequested);
+    expect(order.refundRequestCount).toBe(2);
+    // 首次申请时间保留，最近申请时间刷新为本次
+    expect(order.refundFirstRequestedAt?.toISOString()).toBe(
+      '2026-04-20T10:00:00.000Z'
+    );
+    expect(order.refundRequestedAt?.toISOString()).toBe(NOW.toISOString());
+  });
+
   it('executes an admin refund for a refund requested vip order', async () => {
     const membership = createMembership();
     const entitlement = createEntitlement();

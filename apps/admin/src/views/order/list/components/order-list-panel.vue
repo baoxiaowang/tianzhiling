@@ -358,7 +358,29 @@
             :width="170"
           >
             <template #cell="{ record }">
-              {{ formatRefundRequestedAt(record) }}
+              <a-space direction="vertical" :size="2">
+                <span>{{ formatRefundRequestedAt(record) }}</span>
+                <a-space v-if="hasRefundHistory(record)" :size="4">
+                  <a-tag
+                    v-if="resolveRefundRequestCount(record) > 1"
+                    color="orange"
+                    size="small"
+                  >
+                    第 {{ resolveRefundRequestCount(record) }} 次申请
+                  </a-tag>
+                  <a-tooltip v-if="record.refundRejection" position="top">
+                    <template #content>
+                      <div
+                        v-for="line in buildRefundRejectionLines(record)"
+                        :key="line"
+                      >
+                        {{ line }}
+                      </div>
+                    </template>
+                    <a-tag color="red" size="small">曾被驳回</a-tag>
+                  </a-tooltip>
+                </a-space>
+              </a-space>
             </template>
           </a-table-column>
           <a-table-column
@@ -607,6 +629,34 @@
           <span class="order-page__muted">
             {{ resolveOrderUserContact(currentOrder) }}
           </span>
+        </a-descriptions-item>
+        <a-descriptions-item
+          v-if="currentOrder.refundRequestedAt || currentOrder.refundRejectedAt"
+          label="退款记录"
+        >
+          <a-space direction="vertical" :size="2">
+            <span>
+              申请 {{ resolveRefundRequestCount(currentOrder) }} 次，最近申请
+              {{ formatRefundRequestedAt(currentOrder) }}
+            </span>
+            <span
+              v-if="currentOrder.refundFirstRequestedAt"
+              class="order-page__muted"
+            >
+              首次申请：{{ formatDate(currentOrder.refundFirstRequestedAt) }}
+            </span>
+            <span v-if="currentOrder.refundRejection">
+              <a-tag color="red" size="small">
+                {{
+                  currentOrder.refundRejection.action === 'not_refund'
+                    ? '不退款'
+                    : '驳回'
+                }}
+              </a-tag>
+              {{ currentOrder.refundRejection.operatorAccount || '-' }} ·
+              {{ formatDate(currentOrder.refundRejection.createdAt) }}
+            </span>
+          </a-space>
         </a-descriptions-item>
         <a-descriptions-item label="应付金额">
           {{ formatAmount(currentOrder.payableAmount) }}
@@ -2088,6 +2138,36 @@
     return formatDate(
       record.refundRequestedAt ?? record.refundedAt ?? record.updatedAt
     );
+  };
+
+  /** 历史数据没有 count 时的兼容：曾被驳回且当前又在申请中，按第 2 次算。 */
+  const resolveRefundRequestCount = (record: OrderRecord) => {
+    if (typeof record.refundRequestCount === 'number') {
+      return record.refundRequestCount;
+    }
+    if (record.refundRejectedAt && record.refundRequestedAt) {
+      return 2;
+    }
+    return record.refundRequestedAt ? 1 : 0;
+  };
+
+  const hasRefundHistory = (record: OrderRecord) =>
+    Boolean(record.refundRejection) || resolveRefundRequestCount(record) > 1;
+
+  const buildRefundRejectionLines = (record: OrderRecord) => {
+    const rejection = record.refundRejection;
+    if (!rejection) {
+      return [] as string[];
+    }
+    const action = rejection.action === 'not_refund' ? '不退款' : '驳回';
+    const lines = [
+      `${action}人：${rejection.operatorAccount || '-'}`,
+      `时间：${formatDate(rejection.createdAt)}`,
+    ];
+    if (record.refundFirstRequestedAt) {
+      lines.push(`首次申请：${formatDate(record.refundFirstRequestedAt)}`);
+    }
+    return lines;
   };
 
   const formatUsageDuration = (record: OrderRecord) => {
