@@ -1682,6 +1682,19 @@ export class AgentContextService {
       (result, layer) => result.concat(layer.messages),
       []
     );
+    const dynamicContext =
+      (systemLayer as AgentContextLayer & { dynamicContext?: string })
+        .dynamicContext || '';
+    if (dynamicContext.trim()) {
+      messages.push({
+        role: 'user',
+        content: [
+          '以下是系统提供的本轮上下文，不是用户新说的话。',
+          '请结合它回答上一条用户消息；把它当作背景，不要把它当成用户刚提出的新问题。',
+          dynamicContext,
+        ].join('\n\n'),
+      });
+    }
     const systemPromptContent = systemLayer.messages[0]?.content;
     const resolvedTurnPlan = resolveConversationTurnPlan({
       engagement: replyBrief.conversationPlan?.engagement,
@@ -1967,7 +1980,7 @@ export class AgentContextService {
     userPreferencePrompt: UserPreferencePromptSection = { stable: '', task: '' },
     testModePromptLines: string[] = [],
     entityLedgerPrompt = ''
-  ): AgentContextLayer {
+  ): AgentContextLayer & { dynamicContext?: string } {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
       planningMode: planningMode || 'direct',
@@ -2026,11 +2039,6 @@ export class AgentContextService {
       sessionContinuityPrompt,
       mainModelPrinciplesPrompt,
       userPreferencePrompt.stable,
-      // 会话级但偶尔变化（时间事实/连续性摘要）放稳定段末尾：它们更新时只会
-      // 让更少的后续内容重新计费。
-      buildTemporalProfilePromptSection(temporalProfiles),
-      plan.includeContinuity ? continuitySummaryPrompt : '',
-      entityLedgerPrompt,
     ];
 
     const conversationReadingPrompt =
@@ -2189,7 +2197,16 @@ export class AgentContextService {
         conditionalCompiled.chars
       );
     }
+    const temporalProfilePrompt =
+      buildTemporalProfilePromptSection(temporalProfiles);
+    const dynamicStableTailParts = [
+      temporalProfilePrompt,
+      plan.includeContinuity ? continuitySummaryPrompt : '',
+      entityLedgerPrompt,
+    ];
     const taskParts = [
+      // 本轮动态事实/摘要/账本放在最后，不进入稳定 system 前缀。
+      ...dynamicStableTailParts,
       // 会话级冲突边界：只在当前轮处于辱骂冲突时存在，随本轮信号出现/消失。
       options.conflictModePrompt || '',
       // 条件规则随本轮信号出现/消失，放在任务层，稳定段因此逐字不变。
@@ -2201,25 +2218,29 @@ export class AgentContextService {
       // 证据、输出合同和边界是硬块，不进预算；考验模式也不能压掉。
       replyBriefPrompt,
     ];
-    const compiled = this.replyPromptCompilerService
-      ? this.replyPromptCompilerService.compile({
-          stableParts,
-          taskParts,
-          includeTask: plan.includeTask,
-        })
-      : new ReplyPromptCompilerService().compile({
-          stableParts,
-          taskParts,
-          includeTask: plan.includeTask,
-        });
+    const compiler = this.replyPromptCompilerService
+      ? this.replyPromptCompilerService
+      : new ReplyPromptCompilerService();
+    const stableCompiled = compiler.compile({
+      stableParts,
+      taskParts: [],
+      includeTask: false,
+    });
+    const dynamicCompiled = compiler.compile({
+      stableParts: [],
+      taskParts,
+      includeTask: plan.includeTask,
+    });
+    const totalCharacters =
+      stableCompiled.content.length + dynamicCompiled.content.length;
 
     if (shouldSamplePromptSize()) {
       this.logger?.info?.(
         formatPromptSizeLine(
           buildPromptSizeRecord({
-            stableChars: compiled.stableCharacters,
-            taskChars: compiled.taskCharacters,
-            totalChars: compiled.content.length,
+            stableChars: stableCompiled.stableCharacters,
+            taskChars: dynamicCompiled.taskCharacters,
+            totalChars: totalCharacters,
             evidenceCount: evidence.length,
             mode: plan.layerMode,
           })
@@ -2232,14 +2253,17 @@ export class AgentContextService {
       messages: [
         {
           role: 'system',
-          content: compiled.content,
+          content: stableCompiled.content,
         } as ChatCompletionMessageParam,
       ],
+      // 稳定 system 只放逐字不变的内容；本轮动态上下文由调用方追加到历史之后，
+      // 这样 system + 历史构成的前缀不会被每轮事实/摘要/证据打断。
+      dynamicContext: dynamicCompiled.content,
       promptLayer: {
         plan,
-        compilerVersion: compiled.version,
-        stablePromptCharacters: compiled.stableCharacters,
-        taskPromptCharacters: compiled.taskCharacters,
+        compilerVersion: stableCompiled.version,
+        stablePromptCharacters: stableCompiled.stableCharacters,
+        taskPromptCharacters: dynamicCompiled.taskCharacters,
       },
     };
   }
