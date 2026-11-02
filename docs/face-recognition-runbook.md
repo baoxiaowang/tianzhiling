@@ -32,9 +32,9 @@
 | --- | --- | --- |
 | `NODE_FACE_RECOGNITION_ENABLED` | true | 总开关（false 时聊天不调识别） |
 | `NODE_FACE_SIDECAR_URL` | `http://tzl_face_sidecar:8899` | sidecar 地址 |
-| `NODE_FACE_CONFIRM_DISTANCE` | 0.45 | 确认档距离上限 |
-| `NODE_FACE_ASK_DISTANCE` | 0.60 | 反问档距离上限 |
-| `NODE_FACE_CONFIRM_MARGIN` | 0.08 | 确认档 top1/top2 间隔 |
+| `NODE_FACE_CONFIRM_DISTANCE` | 0.38 | 确认档距离上限（真实头像标定） |
+| `NODE_FACE_ASK_DISTANCE` | 0.48 | 反问档距离上限（真实头像标定） |
+| `NODE_FACE_CONFIRM_MARGIN` | 0.10 | 确认档 top1/top2 间隔 |
 | `NODE_FACE_MIN_FACE_SIZE` | 80 | 人脸最小边长（px） |
 | `NODE_FACE_MIN_BLUR` | 40 | 拉普拉斯方差下限 |
 | `NODE_FACE_MAX_YAW` | 0.35 | 侧脸容忍度 |

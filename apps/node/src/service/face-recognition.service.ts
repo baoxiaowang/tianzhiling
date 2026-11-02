@@ -644,15 +644,15 @@ export class FaceRecognitionService {
   }
 
   private get confirmDistance(): number {
-    return Number(this.config?.confirmDistance ?? 0.45);
+    return Number(this.config?.confirmDistance ?? 0.38);
   }
 
   private get askDistance(): number {
-    return Number(this.config?.askDistance ?? 0.6);
+    return Number(this.config?.askDistance ?? 0.48);
   }
 
   private get confirmMargin(): number {
-    return Number(this.config?.confirmMargin ?? 0.08);
+    return Number(this.config?.confirmMargin ?? 0.1);
   }
 
   private get minFaceSize(): number {

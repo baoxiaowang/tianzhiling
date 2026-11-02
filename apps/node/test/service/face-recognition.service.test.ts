@@ -131,6 +131,20 @@ describe('FaceRecognitionService', () => {
     expect(result.faces[0].decision).toBe(FaceRecognitionDecision.confirmed);
   });
 
+  it('默认阈值按真实头像标定：0.38 确认 / 0.48 反问 / 0.10 间隔', async () => {
+    const { service } = createService();
+    // 不显式设阈值，走 getter 默认值
+    service.config = { enabled: true, sidecarUrl: 'http://sidecar', timeoutMs: 3000 };
+    const read = (service as unknown as {
+      confirmDistance: number;
+      askDistance: number;
+      confirmMargin: number;
+    });
+    expect(read.confirmDistance).toBe(0.38);
+    expect(read.askDistance).toBe(0.48);
+    expect(read.confirmMargin).toBe(0.1);
+  });
+
   it('距离在 ask 区间时判定为 ask', async () => {
     const { service } = createService({
       templateEmbedding: embeddingAt(8, 1),

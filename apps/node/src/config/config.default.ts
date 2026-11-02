@@ -1064,10 +1064,11 @@ export default {
       'http://tzl_face_sidecar:8899'
     ),
     timeoutMs: readNumberFrom(['NODE_FACE_SIDECAR_TIMEOUT_MS'], 15000),
-    // dlib 官方建议：欧氏距离 ≤ 0.6 视为同一人；这里拆成「确认」和「反问」两档。
-    confirmDistance: readNumberFrom(['NODE_FACE_CONFIRM_DISTANCE'], 0.45),
-    askDistance: readNumberFrom(['NODE_FACE_ASK_DISTANCE'], 0.6),
-    confirmMargin: readNumberFrom(['NODE_FACE_CONFIRM_MARGIN'], 0.08),
+    // 真实头像标定结果（27 人 / 99 同人对 / 351 跨人对）：
+    // 确认 0.38 时跨人误接受为 0；0.40 起出现误认（8 人小库模拟 4 次/99 探针）。
+    confirmDistance: readNumberFrom(['NODE_FACE_CONFIRM_DISTANCE'], 0.38),
+    askDistance: readNumberFrom(['NODE_FACE_ASK_DISTANCE'], 0.48),
+    confirmMargin: readNumberFrom(['NODE_FACE_CONFIRM_MARGIN'], 0.1),
     minFaceSize: readNumberFrom(['NODE_FACE_MIN_FACE_SIZE'], 80),
     minBlur: readNumberFrom(['NODE_FACE_MIN_BLUR'], 40),
     maxYaw: readNumberFrom(['NODE_FACE_MAX_YAW'], 0.35),
