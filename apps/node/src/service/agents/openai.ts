@@ -16,11 +16,18 @@ import { AppError } from '../../common/errors';
 import { describeErrorForLog, truncateForLog } from '../../common/log-utils';
 import { ChatTraceService } from '../chat-trace.service';
 import { logMemoryCacheStats, pickCachedTokens } from '../memory/memory-cache-stats';
+import { resolvePeakRoute } from './chat-provider-routing';
 
 export interface OpenAIServiceConfig {
   enabled?: boolean;
   apiKey?: string;
   fallback?: {
+    apiKey?: string;
+    baseURL?: string;
+    model?: string;
+  };
+  /** DeepSeek 高峰时段使用的豆包 Provider（低谷仍用主 provider）。 */
+  peak?: {
     apiKey?: string;
     baseURL?: string;
     model?: string;
@@ -179,6 +186,8 @@ export class OpenAIService {
   @Logger()
   logger: ILogger;
 
+  private peakClient?: OpenAI;
+
   @Config('openai')
   openAIConfig: OpenAIServiceConfig;
 
@@ -308,8 +317,17 @@ export class OpenAIService {
     const trace = request.trace;
     const providerRequest = { ...request };
     delete providerRequest.trace;
-    const primaryBody = this.buildChatCompletionBody(providerRequest);
-    const fallbackBody = this.buildFallbackChatCompletionBody(providerRequest);
+    const providerRoute = this.resolveTimeProviderRoute(providerRequest, options);
+    const primaryBody = this.buildChatCompletionBody({
+      ...providerRequest,
+      model: providerRoute?.primary.model || providerRequest.model,
+    });
+    const fallbackBody = providerRoute?.fallback
+      ? this.buildChatCompletionBody({
+          ...providerRequest,
+          model: providerRoute.fallback.model,
+        })
+      : this.buildFallbackChatCompletionBody(providerRequest);
     this.logger.info(
       '[openai] create chat completion, primaryModel=%s, fallbackModel=%s, messages=%s',
       primaryBody.model,
@@ -339,7 +357,9 @@ export class OpenAIService {
       return this.tryPrimaryThenFallback(
         createCompletion,
         primaryBody,
-        fallbackBody
+        fallbackBody,
+        undefined,
+        providerRoute
       );
     }
 
@@ -357,7 +377,9 @@ export class OpenAIService {
             return createCompletion(client, body, label);
           },
           primaryBody,
-          fallbackBody
+          fallbackBody,
+          undefined,
+          providerRoute
         );
         recorder.setModelUsage({
           model: response.model || primaryBody.model,
@@ -501,6 +523,58 @@ export class OpenAIService {
     };
   }
 
+  private resolvePeakProvider():
+    | { client: OpenAI; model: string }
+    | undefined {
+    const apiKey = (
+      this.openAIConfig?.peak?.apiKey ||
+      process.env.NODE_CHAT_PEAK_API_KEY ||
+      ''
+    ).trim();
+    const baseURL = (
+      this.openAIConfig?.peak?.baseURL ||
+      process.env.NODE_CHAT_PEAK_BASE_URL ||
+      ''
+    ).trim();
+    const model = (
+      this.openAIConfig?.peak?.model ||
+      process.env.NODE_CHAT_PEAK_MODEL ||
+      ''
+    ).trim();
+    if (!apiKey || !baseURL || !model) return undefined;
+    if (!this.peakClient) {
+      this.peakClient = this.createClient(apiKey, baseURL);
+    }
+    return { client: this.peakClient, model };
+  }
+
+  private resolveTimeProviderRoute(
+    request: Omit<OpenAIChatRequest, 'trace'>,
+    options?: OpenAIRequestOptions
+  ):
+    | {
+        primary: { client: OpenAI; model: string };
+        fallback?: { client: OpenAI; model: string };
+      }
+    | undefined {
+    if (
+      options?.providerOverride ||
+      request.model?.trim() ||
+      process.env.NODE_CHAT_TIME_ROUTING !== '1'
+    ) {
+      return undefined;
+    }
+    const peakProvider = this.resolvePeakProvider();
+    if (!peakProvider) return undefined;
+    const offPeakProvider = {
+      client: this.getClient(),
+      model: this.getDefaultModel(),
+    };
+    return resolvePeakRoute() === 'peak'
+      ? { primary: peakProvider, fallback: offPeakProvider }
+      : { primary: offPeakProvider, fallback: peakProvider };
+  }
+
   private async tryPrimaryThenFallback<T>(
     task: (
       client: OpenAI,
@@ -509,7 +583,11 @@ export class OpenAIService {
     ) => Promise<T>,
     primaryBody: ChatCompletionCreateParamsNonStreaming | undefined,
     fallbackBody?: ChatCompletionCreateParamsNonStreaming,
-    providerOverride?: { client: OpenAI; model: string }
+    providerOverride?: { client: OpenAI; model: string },
+    providerRoute?: {
+      primary: { client: OpenAI; model: string };
+      fallback?: { client: OpenAI; model: string };
+    }
   ): Promise<T> {
     // skipPrimary：跳过后直接降级到 secondary → fallback
     if (primaryBody === undefined) {
@@ -544,7 +622,7 @@ export class OpenAIService {
           );
         }
       }
-      const fallback = this.resolveFallbackProvider();
+      const fallback = providerRoute?.fallback || this.resolveFallbackProvider();
       if (!fallback || !fallbackBody) {
         throw new Error('No fallback provider available');
       }
@@ -555,7 +633,8 @@ export class OpenAIService {
       );
     }
 
-    const primaryClient = providerOverride?.client || this.getClient();
+    const primaryClient =
+      providerOverride?.client || providerRoute?.primary.client || this.getClient();
     const activePrimaryBody = providerOverride
       ? { ...primaryBody, model: providerOverride.model }
       : primaryBody;
@@ -571,7 +650,7 @@ export class OpenAIService {
             : new Error(String(primaryError))
         )
       );
-      const fallback = this.resolveFallbackProvider();
+      const fallback = providerRoute?.fallback || this.resolveFallbackProvider();
       if (fallback && fallbackBody) {
         try {
           return await task(fallback.client, fallbackBody, 'fallback');
