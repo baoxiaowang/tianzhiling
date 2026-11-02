@@ -9567,7 +9567,11 @@ export class ConversationService {
           message,
           runtime
         );
-        const faceHint = await this.buildFaceRecognitionHint(message, runtime);
+        // 聊天截图/非照片不跑人脸识别：既省一次推理，也减少无谓的人脸数据处理
+        const faceHint =
+          imageAnalysis?.imageType === 'chat_screenshot'
+            ? ''
+            : await this.buildFaceRecognitionHint(message, runtime);
 
         return {
           ...message,
