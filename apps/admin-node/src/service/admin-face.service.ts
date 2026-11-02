@@ -160,11 +160,14 @@ export class AdminFaceService {
       const payload =
         (raw as { data?: NodeEnvelope<T> }).data ?? (raw as NodeEnvelope<T>);
       if (!payload?.ok) {
-        throw new AppError(
-          'FACE_NODE_CALL_FAILED',
-          payload?.error || 'face service call failed',
-          502
-        );
+        const message = payload?.error || 'face service call failed';
+        // 把 node 侧的业务错误映射成合理状态码，避免全部变成 502
+        const status = /not found/i.test(message)
+          ? 404
+          : /cannot|invalid|same person|required/i.test(message)
+            ? 400
+            : 502;
+        throw new AppError('FACE_NODE_CALL_FAILED', message, status);
       }
       return payload.data as T;
     } catch (error) {
