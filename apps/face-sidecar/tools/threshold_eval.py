@@ -23,8 +23,8 @@ import numpy as np
 import face_recognition
 from PIL import Image, ImageEnhance
 
-RAW = '/tmp/face-eval/raw'
-VAR = '/tmp/face-eval/variants'
+RAW = os.environ.get('FACE_EVAL_RAW', '/tmp/face-eval/raw')
+VAR = os.environ.get('FACE_EVAL_VARIANTS', '/tmp/face-eval/variants')
 os.makedirs(VAR, exist_ok=True)
 
 
@@ -100,11 +100,12 @@ def main():
     ask = pick(5.0)      # 误接受率 <= 5%（宽松档，用于「反问」）
 
     # 小库（8 人）决策模拟：gallery = base，probe = 变体
-    gallery_ids = ids[:8]
+    gallery_ids = ids[: int(os.environ.get('FACE_EVAL_GALLERY', '8'))]
     gallery = {pid: people[pid]['base'] for pid in gallery_ids}
     decisions = {'confirmed_right': 0, 'confirmed_wrong': 0, 'ask': 0, 'unknown': 0, 'probes': 0}
-    confirm_t = confirm['threshold'] if confirm else 0.45
-    ask_t = ask['threshold'] if ask else 0.6
+    confirm_t = float(os.environ.get('FACE_EVAL_CONFIRM_T') or (confirm['threshold'] if confirm else 0.45))
+    ask_t = float(os.environ.get('FACE_EVAL_ASK_T') or (ask['threshold'] if ask else 0.6))
+    margin_t = float(os.environ.get('FACE_EVAL_MARGIN', '0.08'))
     for pid in ids:
         for name, enc in people[pid].items():
             if name == 'base':
@@ -118,7 +119,7 @@ def main():
             top2 = ranked[1] if len(ranked) > 1 else None
             margin = (top2[0] - top1[0]) if top2 else 1.0
             decisions['probes'] += 1
-            if top1[0] <= confirm_t and margin >= 0.08:
+            if top1[0] <= confirm_t and margin >= margin_t:
                 if top1[1] == pid:
                     decisions['confirmed_right'] += 1
                 else:
@@ -129,7 +130,7 @@ def main():
                 decisions['unknown'] += 1
 
     report = {
-        'dataset': 'randomuser.me 公开合成人像（AI 生成，不含真人隐私）',
+        'dataset': os.environ.get('FACE_EVAL_DATASET', 'randomuser.me 公开合成人像（AI 生成，不含真人隐私）'),
         'people': len(ids),
         'variants_per_person': {pid: len(people[pid]) for pid in ids},
         'genuine_pairs': len(genuine),
@@ -144,6 +145,7 @@ def main():
         'suggest_ask_threshold': ask_t,
         'sweep': sweep,
         'gallery_simulation': decisions,
+        'gallery_params': {'confirm_t': confirm_t, 'ask_t': ask_t, 'margin': margin_t},
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
