@@ -1567,8 +1567,6 @@ export class AgentProfileFactService {
         ) {
           continue;
         }
-        const hasCandidate = existingRegional?.status ===
-          AgentProfileFactStatus.candidate;
         await this.upsertFact({
           ...factToWrite,
           userId: options.message.userId,
@@ -1579,7 +1577,9 @@ export class AgentProfileFactService {
           trustedSource: false,
           confidence: AgentProfileFactConfidence.extracted,
           status: AgentProfileFactStatus.candidate,
-          forceCandidate: !hasCandidate,
+          // 地方词推断永远只停留在 candidate，不能靠“第二次命中”自动转
+          // active；只有用户明确说“用X话/我是X人”才走下方 active 分支。
+          forceCandidate: true,
         });
         this.regionalPreferenceCache.delete(
           `${this.stringifyObjectId(options.message.userId)}:${this.stringifyObjectId(

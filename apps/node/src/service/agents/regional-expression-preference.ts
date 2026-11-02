@@ -208,13 +208,13 @@ interface ExpressionLexiconEntry {
  * （如“整/中/啥”）不作为单条强证据，避免把正常表达误判成方言。
  */
 const EXPRESSION_LEXICON: ExpressionLexiconEntry[] = [
-  { region: '东北', dialect: '东北话', strong: ['嘎哈', '咋整', '埋汰', '唠嗑', '贼拉', '得瑟', '膈应', '敞亮'], weak: ['稀罕', '麻溜', '忽悠'] },
+  { region: '东北', dialect: '东北话', strong: ['嘎哈', '咋整', '埋汰', '贼拉', '得瑟', '膈应', '敞亮'], weak: ['稀罕', '麻溜', '忽悠', '唠嗑'] },
   { region: '四川', dialect: '四川话', strong: ['巴适得板', '摆龙门阵', '瓜娃子', '哦豁', '扯把子'], weak: ['巴适', '安逸', '啥子', '晓得', '要得', '莫得', '咋个'] },
   { region: '重庆', dialect: '重庆话', strong: ['巴适得板', '摆龙门阵', '瓜娃子', '雄起', '扯把子', '哦豁'], weak: ['巴适', '要得', '莫得', '咋个'] },
-  { region: '广东', dialect: '粤语', strong: ['唔该', '点解', '冇', '佢', '得闲', '食饭', '早晨', '唔系'], weak: ['唔', '睇', '乜'] },
+  { region: '广东', dialect: '粤语', strong: ['唔该', '点解', '冇', '佢', '得闲', '食饭', '唔系'], weak: ['唔', '睇', '乜', '早晨'] },
   { region: '上海', dialect: '上海话', strong: ['阿拉', '侬', '覅', '白相', '结棍'], weak: ['伐', '勿', '伊', '适意'] },
   { region: '湖南', dialect: '湖南话', strong: ['霸蛮', '恰饭', '嬲塞', '宝里宝气'], weak: ['咯', '哒'] },
-  { region: '河南', dialect: '河南话', strong: ['弄啥嘞', '中不中', '得劲', '俺们'], weak: ['恁', '啥', '咋'] },
+  { region: '河南', dialect: '河南话', strong: ['弄啥嘞', '中不中', '得劲'], weak: ['恁', '啥', '咋', '俺们'] },
   { region: '山东', dialect: '山东话', strong: ['拉呱', '哈啤酒', '潮巴', '得劲'], weak: ['俺', '恁', '么'] },
   { region: '陕西', dialect: '陕西话', strong: ['嫽扎咧', '克里马擦', '咥', '谝'], weak: ['额', '咋', '咧'] },
   { region: '云南', dialect: '云南话', strong: ['板扎', '给是', '整哪样'], weak: ['咋个', '咯', '甩'] },
@@ -233,6 +233,16 @@ const EXPRESSION_LEXICON: ExpressionLexiconEntry[] = [
   { region: '新疆', dialect: '新疆话', strong: ['尕', '谝'], weak: ['咋', '啥'] },
   { region: '海南', dialect: '海南话', strong: ['做乜', '加咪'], weak: ['鲁'] },
 ];
+
+function containsExpressionWord(text: string, word: string): boolean {
+  if (word === '得劲' && /不\s*得劲|没\s*得劲|不得劲儿/.test(text)) {
+    return false;
+  }
+  if (word === '阿拉' && text.includes('阿拉斯加')) {
+    return false;
+  }
+  return text.includes(word);
+}
 
 function detectExpressionLexicon(text: string): {
   region: string;
@@ -254,7 +264,7 @@ function detectExpressionLexicon(text: string): {
     // 只收多字、辨识度高的地方短语。单字（啥、咋、冇、侬等）和弱信号
     // 一律不算证据，避免把普通口语误判成常驻地方偏好。
     const strongHits = entry.strong.filter(
-      word => word.length >= 2 && text.includes(word)
+      word => word.length >= 2 && containsExpressionWord(text, word)
     );
     if (!strongHits.length) continue;
     const expressions = Array.from(new Set(strongHits));

@@ -136,6 +136,27 @@ describe('regional expression recognition expansion', () => {
     });
   });
 
+  it('rejects substring, time-word and weak-word false positives', () => {
+    expect(detectRegionalExpressionPreference('是阿拉斯加')).toBeUndefined();
+    expect(
+      detectRegionalExpressionPreference('爹，我不得劲儿，想哭')
+    ).toBeUndefined();
+    expect(
+      detectRegionalExpressionPreference(
+        '一宿啊，昨天两点半睡的，早晨四点就醒了'
+      )
+    ).toBeUndefined();
+    expect(
+      detectRegionalExpressionPreference('你不知道俺们都咋过的')
+    ).toBeUndefined();
+    expect(
+      detectRegionalExpressionPreference('阳阳搭手弄得，海勇也不用俺们帮忙')
+    ).toBeUndefined();
+    expect(
+      detectRegionalExpressionPreference('可我想听听你的声音跟你唠唠嗑')
+    ).toBeUndefined();
+  });
+
   it('does not treat ordinary Mandarin as local expression', () => {
     expect(detectRegionalExpressionPreference('今天天气真好')).toBeUndefined();
     expect(detectRegionalExpressionPreference('在那边待着咋说，缺啥跟我说')).toBeUndefined();
