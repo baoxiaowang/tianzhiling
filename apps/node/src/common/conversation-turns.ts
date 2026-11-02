@@ -8,14 +8,25 @@
  * 纯函数，不碰存储、不调模型，便于单测与离线轨迹复核。
  */
 
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
 /** 首期候选：最近多少个完整轮次进入历史窗口。参数可通过成本/行为对照调整。 */
-export const RECENT_HISTORY_TURNS = 8;
+export const RECENT_HISTORY_TURNS = readPositiveIntegerEnv(
+  'NODE_RECENT_HISTORY_TURNS',
+  8
+);
 
 /**
  * 完整轮次可能比原 16 条气泡带入更多文字，这里保留一个消息条数硬上限，
  * 避免超大用户连发把上下文拉爆。
  */
-export const RECENT_HISTORY_MESSAGE_CAP = 32;
+export const RECENT_HISTORY_MESSAGE_CAP = readPositiveIntegerEnv(
+  'NODE_RECENT_HISTORY_MESSAGE_CAP',
+  32
+);
 
 export interface ConversationTurnLike {
   role: string;

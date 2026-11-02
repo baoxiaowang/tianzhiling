@@ -806,7 +806,15 @@ export function isInjectableMemoryEvidenceLoose(
   return true;
 }
 // 上下文构建只需要最近若干轮；长会话不再全量加载，避免 V8 堆顶满。
-const CONVERSATION_MESSAGE_LOAD_LIMIT = 50;
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+const CONVERSATION_MESSAGE_LOAD_LIMIT = readPositiveIntegerEnv(
+  'NODE_CONVERSATION_MESSAGE_LOAD_LIMIT',
+  50
+);
 // 有界余量：多取一小段，尽量让最旧一轮的加载边界落在轮首，而不是轮中。
 const CONVERSATION_BOUNDARY_FETCH_LIMIT = 16;
 const RELEVANCE_TOKEN_LIMIT = 48;
