@@ -433,8 +433,10 @@ export class OpenAIService {
     const thinking =
       request.thinking ??
       (/deepseek/i.test(model) ? { type: 'disabled' as const } : undefined);
+    const messages = this.ensureJsonPromptKeyword(request);
     return {
       ...request,
+      messages,
       model,
       ...(thinking ? { thinking } : {}),
       temperature: this.normalizeTemperature(request.temperature),
@@ -449,6 +451,36 @@ export class OpenAIService {
       ),
       reasoning_split: this.resolveReasoningSplit(request.reasoningSplit),
     } as unknown as ChatCompletionCreateParamsNonStreaming;
+  }
+
+  /**
+   * DeepSeek 在 response_format=json_object 时要求 prompt 里出现 "json"，
+   * 否则直接 400。结构化抽取的调用方不一定写了这个词，这里统一补一个
+   * 系统约束，避免每次先失败再 fallback。
+   */
+  private ensureJsonPromptKeyword(
+    request: Omit<OpenAIChatRequest, 'trace'>
+  ): ChatCompletionMessageParam[] {
+    if (request.response_format?.type !== 'json_object') {
+      return request.messages;
+    }
+    const hasJson = request.messages.some(message => {
+      const content = (message as { content?: unknown }).content;
+      if (typeof content === 'string') return /json/i.test(content);
+      if (!Array.isArray(content)) return false;
+      return content.some(part => {
+        const text = (part as { text?: unknown }).text;
+        return typeof text === 'string' && /json/i.test(text);
+      });
+    });
+    if (hasJson) return request.messages;
+    return [
+      {
+        role: 'system',
+        content: 'Return only a valid JSON object.',
+      },
+      ...request.messages,
+    ];
   }
 
   private buildFallbackChatCompletionBody(
