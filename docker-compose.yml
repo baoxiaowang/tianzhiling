@@ -196,7 +196,8 @@ services:
   tzl_voice_sep:
     profiles: ["prod"]
     container_name: tzl_voice_sep
-    mem_limit: 1500m
+    # 分窗处理（8s/0.5s 交叠）后单窗口峰值约 2.5G，留 1G 余量
+    mem_limit: 3500m
     build:
       context: apps/voice-separator
       dockerfile: Dockerfile
@@ -205,6 +206,8 @@ services:
     environment:
       - SEP_THREADS=${VOICE_SEP_THREADS:-2}
       - SEP_MAX_SECONDS=${VOICE_SEP_MAX_SECONDS:-120}
+      - SEP_CHUNK_SECONDS=${VOICE_SEP_CHUNK_SECONDS:-4}
+      - SEP_OVERLAP_SECONDS=${VOICE_SEP_OVERLAP_SECONDS:-0.4}
     expose:
       - "8900"
     networks:

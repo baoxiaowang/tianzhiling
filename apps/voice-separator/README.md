@@ -32,12 +32,17 @@ onnx.save(m, 'UVR-MDX-NET-Voc_FT.onnx')
 
 模型文件放在服务器 `volumes/models/uvr/UVR-MDX-NET-Voc_FT.onnx`（gitignore，不进仓库）。
 
-## 性能（服务器 4 核实测）
+## 性能与内存（服务器 4 核实测）
 
-| 线程 | 30s 音频耗时 | RTF |
+UVR 模型的内存消耗约 **200MB / 秒音频**，整段处理不可行：
+
+| 处理方式 | 峰值内存 | 34s 音频耗时 |
 | --- | --- | --- |
-| 2 | ~50s | 1.68 |
-| 4 | ~40s | 1.33 |
-| 8 | ~63s | 2.12 |
+| 整段 | 7.2G | 75s |
+| 8s 分窗 | 4.9G | 24s |
+| **4s 分窗（默认）** | **2.5G** | 28s |
 
-默认 `SEP_THREADS=2`：给 node 留 CPU。素材超过 `SEP_MAX_SECONDS`（默认 120）只处理前段。
+因此 sidecar 默认按 **4 秒窗口 + 0.4 秒交叠** 分窗处理再 crossfade 拼接；
+实测分离质量与整段一致（人声相关性 0.997，伴奏降低 11.1dB）。
+
+compose 里 `mem_limit: 3500m` 是硬上限，超过会被 cgroup 杀掉并自动重启。

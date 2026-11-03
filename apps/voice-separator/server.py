@@ -31,6 +31,10 @@ MODEL_PATH = os.environ.get("SEP_MODEL_PATH", "/models/UVR-MDX-NET-Voc_FT.onnx")
 THREADS = int(os.environ.get("SEP_THREADS", "2"))
 MAX_SECONDS = int(os.environ.get("SEP_MAX_SECONDS", "120"))
 OUTPUT_SAMPLE_RATE = 24000
+# 分窗处理：UVR 模型内存≈200MB/秒音频，整段处理 34s 峰值 7.2G、8s 窗口 4.9G；
+# 实测 4 秒窗口（0.4 秒交叠）峰值约 2.5G，宿主机扛得住，且分离质量与整段一致。
+CHUNK_SECONDS = float(os.environ.get("SEP_CHUNK_SECONDS", "4"))
+OVERLAP_SECONDS = float(os.environ.get("SEP_OVERLAP_SECONDS", "0.4"))
 MODEL_SAMPLE_RATE = 44100
 
 _separator = None
@@ -99,6 +103,47 @@ def write_wav_bytes(samples: np.ndarray, sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
+def separate_chunked(separator, samples: np.ndarray, sr: int) -> np.ndarray:
+    """把整段音频切成带交叠的窗口分别分离，crossfade 拼接。"""
+    total = len(samples)
+    win = int(CHUNK_SECONDS * sr)
+    ov = max(1, int(OVERLAP_SECONDS * sr))
+    hop = max(1, win - ov)
+
+    if total <= win:
+        out = separator.process(sr, samples.reshape(1, -1))
+        return np.asarray(out.stems[0].data[0], dtype=np.float32)[:total]
+
+    merged = np.zeros(total, dtype=np.float32)
+    weight = np.zeros(total, dtype=np.float32)
+    fade_in = np.linspace(0.0, 1.0, ov, dtype=np.float32)
+    fade_out = 1.0 - fade_in
+
+    start = 0
+    while start < total:
+        end = min(start + win, total)
+        seg = samples[start:end]
+        if len(seg) < sr // 2:  # 尾巴太短，跳过
+            break
+        out = separator.process(sr, seg.reshape(1, -1))
+        voc = np.asarray(out.stems[0].data[0], dtype=np.float32)[: len(seg)]
+        weights = np.ones(len(voc), dtype=np.float32)
+        if start > 0:
+            weights[:ov] = fade_in[: min(ov, len(weights))]
+        if end < total:
+            tail = min(ov, len(weights))
+            weights[-tail:] *= fade_out[-tail:]
+        merged[start : start + len(voc)] += voc * weights
+        weight[start : start + len(voc)] += weights
+        if end >= total:
+            break
+        start += hop
+
+    mask = weight > 1e-6
+    merged[mask] /= weight[mask]
+    return merged
+
+
 def separate(raw: bytes) -> dict:
     started = time.time()
     wav_path, tmpdir = decode_to_wav(raw)
@@ -113,11 +158,9 @@ def separate(raw: bytes) -> dict:
     truncated = duration >= MAX_SECONDS - 0.5
 
     separator = get_separator()
-    output = separator.process(
-        MODEL_SAMPLE_RATE, np.asarray(samples, dtype=np.float32).reshape(1, -1)
+    vocals = separate_chunked(
+        separator, np.asarray(samples, dtype=np.float32), MODEL_SAMPLE_RATE
     )
-    stems = output.stems
-    vocals = np.asarray(stems[0].data[0], dtype=np.float32)
     cost_ms = int((time.time() - started) * 1000)
     return {
         "ok": True,
@@ -155,6 +198,8 @@ class Handler(BaseHTTPRequestHandler):
                     "threads": THREADS,
                     "maxSeconds": MAX_SECONDS,
                     "outputSampleRate": OUTPUT_SAMPLE_RATE,
+                    "chunkSeconds": CHUNK_SECONDS,
+                    "overlapSeconds": OVERLAP_SECONDS,
                 },
             )
         return self._send(404, {"ok": False, "error": "not_found"})
