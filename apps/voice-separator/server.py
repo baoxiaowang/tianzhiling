@@ -16,6 +16,7 @@
 
 import base64
 import io
+import threading
 import json
 import os
 import subprocess
@@ -35,6 +36,11 @@ OUTPUT_SAMPLE_RATE = 24000
 # 实测 4 秒窗口（0.4 秒交叠）峰值约 2.5G，宿主机扛得住，且分离质量与整段一致。
 CHUNK_SECONDS = float(os.environ.get("SEP_CHUNK_SECONDS", "4"))
 OVERLAP_SECONDS = float(os.environ.get("SEP_OVERLAP_SECONDS", "0.4"))
+# onnxruntime 的 CPU arena 用完不还给系统（实测跑完 34s 仍占 2.5G）；
+# 默认每次请求处理完就退出，由容器 restart 策略拉起，内存回到个位数 MB。
+EXIT_AFTER_REQUEST = str(os.environ.get("SEP_EXIT_AFTER_REQUEST", "1")).strip().lower() not in (
+    "0", "false", "off", "no",
+)
 MODEL_SAMPLE_RATE = 44100
 
 _separator = None
@@ -200,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
                     "outputSampleRate": OUTPUT_SAMPLE_RATE,
                     "chunkSeconds": CHUNK_SECONDS,
                     "overlapSeconds": OVERLAP_SECONDS,
+                    "exitAfterRequest": EXIT_AFTER_REQUEST,
                 },
             )
         return self._send(404, {"ok": False, "error": "not_found"})
@@ -217,7 +224,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"ok": False, "error": "invalid_request", "detail": str(exc)})
 
         try:
-            return self._send(200, separate(raw))
+            response = separate(raw)
+            self._send(200, response)
+            if EXIT_AFTER_REQUEST:
+                # 先让响应 flush，再退出进程；容器 restart=unless-stopped 会自动拉起
+                threading.Timer(0.5, lambda: os._exit(0)).start()
+            return None
         except subprocess.CalledProcessError as exc:
             return self._send(422, {"ok": False, "error": "decode_failed", "detail": str(exc)})
         except Exception as exc:  # noqa: BLE001

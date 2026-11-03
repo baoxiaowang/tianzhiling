@@ -208,6 +208,8 @@ services:
       - SEP_MAX_SECONDS=${VOICE_SEP_MAX_SECONDS:-120}
       - SEP_CHUNK_SECONDS=${VOICE_SEP_CHUNK_SECONDS:-4}
       - SEP_OVERLAP_SECONDS=${VOICE_SEP_OVERLAP_SECONDS:-0.4}
+      # 处理完即退出，规避 onnxruntime arena 不归还内存（容器自动重启）
+      - SEP_EXIT_AFTER_REQUEST=${VOICE_SEP_EXIT_AFTER_REQUEST:-1}
     expose:
       - "8900"
     networks:
