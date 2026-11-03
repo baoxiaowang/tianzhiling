@@ -12,6 +12,7 @@ import {
   type VoiceAnalysisSentence,
 } from './dashscope-voice-analysis.service';
 import { TencentCosService } from './tencent-cos.service';
+import { VoiceSeparationService } from './voice-separation.service';
 import {
   VoiceFfmpegService,
   type VoiceFfmpegFilteredClip,
@@ -270,35 +271,77 @@ export class VoiceClippingService {
   @Inject()
   dashScopeVoiceAnalysisService: DashScopeVoiceAnalysisService;
 
+  @Inject()
+  voiceSeparationService: VoiceSeparationService;
+
   /**
-   * 切片前的降噪处理：成功则返回降噪后的音频，失败时记录日志并回退原始素材。
-   * 降噪属于质量增强，不能因为它失败让整批素材被跳过。
+   * 切片前的音频增强：先降噪（去稳态噪声），再做一次人声分离（去背景音乐）。
+   * 两步都属于质量增强，任何一步失败都回退到上一步的音频，不能阻断训练。
    */
   private async prepareDenoisedSource(
     buffer: Buffer,
     fileName: string
   ): Promise<{ buffer: Buffer; fileName: string }> {
-    if (!this.voiceFfmpegService.isDenoiseEnabled?.()) {
+    let current = { buffer, fileName };
+
+    if (this.voiceFfmpegService.isDenoiseEnabled?.()) {
+      try {
+        const startedAt = Date.now();
+        const denoised = await this.voiceFfmpegService.denoiseAudio({
+          buffer,
+          fileName,
+        });
+        this.logger.info(
+          '[voice-clipping] denoised before clipping, fileName=%s, inBytes=%s, outBytes=%s, costMs=%s',
+          fileName,
+          buffer.length,
+          denoised.buffer.length,
+          Date.now() - startedAt
+        );
+        current = { buffer: denoised.buffer, fileName: denoised.fileName };
+      } catch (error) {
+        this.logger.warn(
+          '[voice-clipping] denoise failed, fallback to raw material, fileName=%s, reason=%s',
+          fileName,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+
+    return this.prepareSeparatedVocals(current.buffer, current.fileName);
+  }
+
+  /**
+   * 去背景音乐：把人声轨分离出来再切片/送训。
+   * 失败（sidecar 不可用、超时、格式异常）时回退到已降噪的音频，不阻断训练。
+   */
+  private async prepareSeparatedVocals(
+    buffer: Buffer,
+    fileName: string
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    if (!this.voiceSeparationService?.isEnabled?.()) {
       return { buffer, fileName };
     }
 
     try {
       const startedAt = Date.now();
-      const denoised = await this.voiceFfmpegService.denoiseAudio({
+      const separated = await this.voiceSeparationService.separateToVocals({
         buffer,
         fileName,
       });
       this.logger.info(
-        '[voice-clipping] denoised before clipping, fileName=%s, inBytes=%s, outBytes=%s, costMs=%s',
+        '[voice-clipping] vocals separated, fileName=%s, inBytes=%s, outBytes=%s, audioSeconds=%s, truncated=%s, costMs=%s',
         fileName,
         buffer.length,
-        denoised.buffer.length,
+        separated.buffer.length,
+        separated.durationSeconds ?? '-',
+        separated.truncated === true,
         Date.now() - startedAt
       );
-      return { buffer: denoised.buffer, fileName: denoised.fileName };
+      return { buffer: separated.buffer, fileName: separated.fileName };
     } catch (error) {
       this.logger.warn(
-        '[voice-clipping] denoise failed, fallback to raw material, fileName=%s, reason=%s',
+        '[voice-clipping] voice separation failed, keep denoised audio, fileName=%s, reason=%s',
         fileName,
         error instanceof Error ? error.message : String(error)
       );

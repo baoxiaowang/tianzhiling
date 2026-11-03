@@ -21,6 +21,72 @@ function material(
   };
 }
 
+describe('VoiceClippingService 人声分离', () => {
+  it('分离成功时使用人声轨', async () => {
+    const service = new VoiceClippingService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    service.voiceFfmpegService = {
+      isDenoiseEnabled: () => false,
+    } as never;
+    service.voiceSeparationService = {
+      isEnabled: () => true,
+      separateToVocals: jest.fn(async () => ({
+        buffer: Buffer.from('vocals'),
+        fileName: 'a-vocals.wav',
+        durationSeconds: 30,
+        truncated: false,
+      })),
+    } as never;
+
+    const result = await (service as unknown as {
+      prepareDenoisedSource: (b: Buffer, n: string) => Promise<{ buffer: Buffer; fileName: string }>;
+    }).prepareDenoisedSource(Buffer.from('raw'), 'a.mp4');
+
+    expect(result.fileName).toBe('a-vocals.wav');
+    expect(result.buffer.toString()).toBe('vocals');
+  });
+
+  it('分离失败时回退到降噪后的音频', async () => {
+    const service = new VoiceClippingService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    service.voiceFfmpegService = {
+      isDenoiseEnabled: () => true,
+      denoiseAudio: jest.fn(async () => ({
+        buffer: Buffer.from('denoised'),
+        fileName: 'a-denoised.wav',
+      })),
+    } as never;
+    service.voiceSeparationService = {
+      isEnabled: () => true,
+      separateToVocals: jest.fn(async () => {
+        throw new Error('sidecar down');
+      }),
+    } as never;
+
+    const result = await (service as unknown as {
+      prepareDenoisedSource: (b: Buffer, n: string) => Promise<{ buffer: Buffer; fileName: string }>;
+    }).prepareDenoisedSource(Buffer.from('raw'), 'a.mp4');
+
+    expect(result.fileName).toBe('a-denoised.wav');
+    expect(result.buffer.toString()).toBe('denoised');
+  });
+
+  it('分离开关关闭时不调用 sidecar', async () => {
+    const service = new VoiceClippingService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    service.voiceFfmpegService = { isDenoiseEnabled: () => false } as never;
+    const separate = jest.fn();
+    service.voiceSeparationService = { isEnabled: () => false, separateToVocals: separate } as never;
+
+    const result = await (service as unknown as {
+      prepareDenoisedSource: (b: Buffer, n: string) => Promise<{ buffer: Buffer; fileName: string }>;
+    }).prepareDenoisedSource(Buffer.from('raw'), 'a.mp4');
+
+    expect(separate).not.toHaveBeenCalled();
+    expect(result.buffer.toString()).toBe('raw');
+  });
+});
+
 describe('VoiceClippingService', () => {
   it.each([
     ['去掉开头 2 秒', 10, { startSeconds: 2, endSeconds: 10 }],

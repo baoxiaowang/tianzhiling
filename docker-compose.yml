@@ -185,6 +185,25 @@ services:
       - tzl-network
     restart: always
 
+  # 人声分离 sidecar：UVR-MDX-NET（onnx）去背景音乐，供声音训练切片前使用。
+  # 模型放在 volumes/models/uvr/（不进 git），只读挂载。
+  tzl_voice_sep:
+    profiles: ["prod"]
+    container_name: tzl_voice_sep
+    build:
+      context: apps/voice-separator
+      dockerfile: Dockerfile
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/models/uvr:/models:ro
+    environment:
+      - SEP_THREADS=${VOICE_SEP_THREADS:-2}
+      - SEP_MAX_SECONDS=${VOICE_SEP_MAX_SECONDS:-120}
+    expose:
+      - "8900"
+    networks:
+      - tzl-network
+    restart: unless-stopped
+
   # 自建人脸识别 sidecar：只做检测 / 质量分 / 128 维编码（CPU，无 GPU）。
   # 由 tzl_node 通过 http://tzl_face_sidecar:8899 调用。
   tzl_face_sidecar:

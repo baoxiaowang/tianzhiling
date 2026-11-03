@@ -1077,6 +1077,15 @@ export default {
     maxYaw: readNumberFrom(['NODE_FACE_MAX_YAW'], 0.35),
     logEnabled: readBooleanFrom(['NODE_FACE_LOG_ENABLED'], true),
   },
+  // 人声分离（去背景音乐）：独立 sidecar 跑 UVR-MDX-NET，CPU。
+  voiceSeparation: {
+    enabled: readBooleanFrom(['NODE_VOICE_SEPARATION_ENABLED'], true),
+    sidecarUrl: readStringFrom(
+      ['NODE_VOICE_SEPARATION_URL'],
+      'http://tzl_voice_sep:8900'
+    ),
+    timeoutMs: readNumberFrom(['NODE_VOICE_SEPARATION_TIMEOUT_MS'], 240000),
+  },
   voiceClipping: {
     binaryPath: readStringFrom(['NODE_FFMPEG_BINARY_PATH'], 'ffmpeg'),
     // 切片前降噪：默认开启，可用 NODE_VOICE_DENOISE_ENABLED=false 关闭；
