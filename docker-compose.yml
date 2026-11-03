@@ -190,6 +190,7 @@ services:
   tzl_voice_sep:
     profiles: ["prod"]
     container_name: tzl_voice_sep
+    mem_limit: 1500m
     build:
       context: apps/voice-separator
       dockerfile: Dockerfile
@@ -209,6 +210,7 @@ services:
   tzl_face_sidecar:
     profiles: ["prod"]
     container_name: tzl_face_sidecar
+    mem_limit: 800m
     build:
       context: apps/face-sidecar
       dockerfile: Dockerfile
