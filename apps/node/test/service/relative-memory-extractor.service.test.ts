@@ -546,3 +546,130 @@ describe('RelativeMemoryExtractorService terse family apposition', () => {
     );
   });
 });
+
+describe('RelativeMemoryExtractorService relationship boundaries', () => {
+  function buildService() {
+    const service = new RelativeMemoryExtractorService();
+    service.logger = { info: jest.fn(), warn: jest.fn() } as never;
+    service.agentModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+    } as never;
+    service.personTemporalMemoryService = {
+      recordExplicitPersonDate: jest.fn().mockResolvedValue(null),
+    } as never;
+    return service;
+  }
+
+  it('does not create persons for collective or household relations', async () => {
+    const service = buildService();
+    const upsert = jest.fn();
+    const recordFact = jest.fn();
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue(null),
+      countKnownPeopleByRelation: jest.fn().mockResolvedValue(0),
+      upsertKnownPersonDeclaration: upsert,
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn(),
+      recordFact,
+    } as never;
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000801'),
+      userId: new MongoObjectId('665000000000000000000802'),
+      agentId: new MongoObjectId('665000000000000000000803'),
+      createdAt: new Date('2026-11-03T04:16:21.156Z'),
+    });
+
+    await service.capturePreExtracted(
+      message,
+      '舅舅让爸爸搬过去和外公外婆住，和舅舅家只能维持表面关系',
+      [
+        { referenceName: '外公外婆', relationToUser: '外公外婆', facts: [] },
+        { referenceName: '舅舅家', relationToUser: '舅舅家', facts: [] },
+      ]
+    );
+
+    expect(upsert).not.toHaveBeenCalled();
+    expect(recordFact).not.toHaveBeenCalled();
+  });
+
+  it('keeps facts on the acting person and ignores ambiguous leaving', async () => {
+    const service = buildService();
+    const uncle = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000811'),
+    });
+    const father = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000812'),
+    });
+    const persons: Record<string, UserKnownPersonEntity> = {
+      舅舅: uncle,
+      爸爸: father,
+    };
+    const recordFact = jest.fn();
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue(null),
+      countKnownPeopleByRelation: jest.fn().mockResolvedValue(0),
+      upsertKnownPersonDeclaration: jest
+        .fn()
+        .mockImplementation(async input => persons[input.declaration.relationToUser]),
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn(),
+      recordFact,
+    } as never;
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000813'),
+      userId: new MongoObjectId('665000000000000000000814'),
+      agentId: new MongoObjectId('665000000000000000000815'),
+      createdAt: new Date('2026-11-03T04:16:21.156Z'),
+    });
+
+    await service.capturePreExtracted(
+      message,
+      '最气人的是，舅舅让爸爸搬过去和外公外婆住照顾他俩；现在舅舅都要走了',
+      [
+        {
+          referenceName: '舅舅',
+          relationToUser: '舅舅',
+          facts: [
+            {
+              domain: UserRelativeFactDomain.relationship,
+              key: 'request.father_move_in',
+              value: '舅舅让爸爸搬过去和外公外婆住照顾他俩',
+            },
+            {
+              domain: UserRelativeFactDomain.other,
+              key: 'status.leaving',
+              value: '用户说舅舅都要走了',
+            },
+          ],
+        },
+        {
+          referenceName: '爸爸',
+          relationToUser: '爸爸',
+          facts: [
+            {
+              domain: UserRelativeFactDomain.routine,
+              key: 'plan.move_in_with_grandparents',
+              value: '舅舅让爸爸搬过去和外公外婆住照顾他俩',
+            },
+          ],
+        },
+      ]
+    );
+
+    expect(recordFact).toHaveBeenCalledTimes(1);
+    expect(recordFact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        personId: uncle.id,
+        key: 'request.father_move_in',
+      })
+    );
+    expect(recordFact).not.toHaveBeenCalledWith(
+      expect.objectContaining({ personId: father.id })
+    );
+    expect(recordFact).not.toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'status.leaving' })
+    );
+  });
+});

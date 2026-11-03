@@ -42,6 +42,20 @@ const SAFE_NAME = /^[\u4e00-\u9fa5A-Za-z·]{1,24}$/;
 const USER_BIRTH_ASSERTION =
   /我(?:的)?生日(?:是|在|为)?\s*(?:(\d{4})\s*年)?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)|我(?:是|于)?\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)?\s*出生/u;
 const QUESTION_OR_NEGATION = /[？?]|吗|是不是|不是|没(?:有)?|不记得|忘了/u;
+// 这些不是“一个人”，不能建 known_person：
+// - 外公外婆/爸爸妈妈/舅舅舅妈：并称的两个人；
+// - 舅舅家/家人/家里人：家庭单位或集体称谓。
+const UNSUPPORTED_RELATIVE_RELATIONS = new Set([
+  '父母',
+  '爸妈',
+  '家长',
+  '家人',
+  '家里人',
+  '亲人',
+  '亲戚',
+  '兄弟姐妹',
+]);
+const HOUSEHOLD_RELATION_SUFFIX = /(?:家|一家|家人|家里人|那边)$/;
 
 function collectMatches(text: string, pattern: RegExp): RegExpExecArray[] {
   const matches: RegExpExecArray[] = [];
@@ -204,7 +218,19 @@ export class RelativeMemoryExtractorService {
     );
     for (const item of extracted.slice(0, 4)) {
       const relation = item.relationToUser?.trim();
-      if (!relation || !isRelativeRelation(relation)) continue;
+      if (
+        !relation ||
+        !isRelativeRelation(relation) ||
+        this.isUnsupportedRelativeRelation(relation)
+      ) {
+        if (relation && this.isUnsupportedRelativeRelation(relation)) {
+          this.logger?.info?.(
+            '[relative-memory] collective/household relation skipped, relation=%s',
+            relation
+          );
+        }
+        continue;
+      }
       const realName = this.cleanName(item.realName);
       const aliases = (item.aliases || [])
         .map(value => this.cleanName(value))
@@ -458,6 +484,22 @@ export class RelativeMemoryExtractorService {
         const key = fact.key?.trim();
         const value = fact.value?.trim();
         if (!key || !value) continue;
+        if (this.isFactForDifferentSubject(value, relation, referenceName, personAliases)) {
+          this.logger?.info?.(
+            '[relative-memory] fact subject mismatch skipped, relation=%s, key=%s',
+            relation,
+            key
+          );
+          continue;
+        }
+        if (this.isAmbiguousLeavingFact(key, value)) {
+          this.logger?.info?.(
+            '[relative-memory] ambiguous leaving fact skipped, relation=%s, key=%s',
+            relation,
+            key
+          );
+          continue;
+        }
         await this.userRelativeProfileService.recordFact({
           userId: message.userId,
           personId: person.id,
@@ -523,6 +565,45 @@ export class RelativeMemoryExtractorService {
         rawText: sourceText,
       });
     return profile ? 1 : 0;
+  }
+
+  private isUnsupportedRelativeRelation(relation: string): boolean {
+    const normalized = relation.replace(/\s+/g, '').trim();
+    if (!normalized) return true;
+    if (UNSUPPORTED_RELATIVE_RELATIONS.has(normalized)) return true;
+    if (HOUSEHOLD_RELATION_SUFFIX.test(normalized)) return true;
+    // 并称（外公外婆/爸爸妈妈/舅舅舅妈）包含多个不同亲属组，不是一个人。
+    return kinshipGroupsIn(normalized).size > 1;
+  }
+
+  private isFactForDifferentSubject(
+    value: string,
+    relation: string,
+    referenceName: string,
+    aliases: string[]
+  ): boolean {
+    const terms = kinshipTermsIn(value)
+      .map(term => ({ term, index: value.indexOf(term) }))
+      .filter(item => item.index >= 0)
+      .sort((a, b) => a.index - b.index);
+    if (!terms.length) return false;
+    const first = terms[0].term;
+    // 只有称谓出现在句首（允许“你/我/他”等 1–2 字前缀）才判断主体，
+    // 避免把句中顺带提到的亲属误当成事实主体。
+    const index = terms[0].index;
+    if (index > 3) return false;
+    const allowed = new Set(
+      [relation, referenceName, ...aliases].filter(Boolean)
+    );
+    return !allowed.has(first);
+  }
+
+  private isAmbiguousLeavingFact(key: string, value: string): boolean {
+    if (!/^status\.leaving/.test(key)) return false;
+    // “都要走了/把东西拿走了/离开房间”不是离婚、断联或搬走；
+    // 只有明确的分离语义才保留。
+    if (!/(?:都要?走了|走了|离开)/.test(value)) return false;
+    return !/(?:离婚|分开|分居|断联|搬走|不再来往)/.test(value);
   }
 
   private extractExplicitFamilyAppositions(
@@ -596,6 +677,9 @@ export class RelativeMemoryExtractorService {
           '只抽取用户明确陈述或纠正的现实亲友信息；疑问、否定、猜测、角色虚构不写入。',
           '只抽取用户本人以外的亲友；不要抽取用户本人的处境（工作、收入、养育、健康、情绪）。',
           '同一人物输出一项。referenceName是原话中的称呼；正式姓名与昵称分开。保留用户在原话中的称谓，不要把它映射成另一种亲属关系（如把“大爸爸/二爸/幺爹”改成父亲/叔叔），也不要判断多个称谓是否同一人；未被用户明确证实为同一人的两个称谓（如“婆婆”和“奶奶”）不得合并。',
+          'relationToUser必须是一个具体人物，不能写“外公外婆/爸爸妈妈/舅舅舅妈”这类并称，也不能写“舅舅家/家人/家里人/亲戚”这类家庭单位或集体称谓；并称拆成两个人，无法拆分的家庭单位不建人物。',
+          '每条fact必须只描述当前人物本人是主体；不要把另一个人的动作、请求或状态写到当前人物名下（例如“舅舅让爸爸搬过去”应归到舅舅，不能挂到爸爸名下）。',
+          '“舅舅都要走了/把东西拿走了/离开房间”不表示离世、离婚或断联；不要写status.leaving。只有原话明确说离婚、分开、分居、断联或搬走，才写对应关系状态。',
           'personCallsUser只在该亲友被明确说明如何称呼用户时填写（如“爸爸叫我湾呐”）。它属于这位亲友对用户的称呼，绝不是当前对话角色对用户的称呼，不得影响当前角色的默认称呼；转述、疑问、否定不填。',
           '同一人物可有多个事实，按命题分别放入facts；每个事实用能区分命题的稳定短键（如work.pension、work.busy、plan.mid_autumn_visit），不同事实不得共用同一个key互相覆盖。',
           '疑问、否定、假设、祈愿不写成已发生的事实；愿望与计划写status=uncertain并保留原意。“团聚/重逢”类问句不得写成已经团聚；关系称谓本身若明确可记，但未明确说某人已故时不要写成已故事实。',
