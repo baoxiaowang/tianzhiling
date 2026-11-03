@@ -842,6 +842,28 @@ export class UserIdentityMemoryService {
       existing = people.find(
         person => person.identityKey === stableIdentityKey
       );
+    // “我爸/爸爸/父亲”这类只有称谓、没有具体姓名的声明，在同一个用户下
+    // 不应因为别名写法不同而新建人物。关系已归一的唯一无名人直接复用。
+    if (!existing && !declaration.realName) {
+      const hasConcreteAlias = (declaration.aliases || []).some(alias => {
+        const value = alias?.trim();
+        return Boolean(
+          value &&
+            !isRelativeRelation(value) &&
+            !canonicalKinshipRelation(value)
+        );
+      });
+      if (!hasConcreteAlias) {
+        const unnamedSameRelation = people.filter(
+          person =>
+            !person.realName &&
+            normalizeRelation(person.relationToUser || '') === relation
+        );
+        if (unnamedSameRelation.length === 1) {
+          existing = unnamedSameRelation[0];
+        }
+      }
+    }
 
     const now = new Date();
     if (existing) {

@@ -301,6 +301,43 @@ describe('UserIdentityMemoryService', () => {
     expect(service.knownPersonModel.save).toHaveBeenCalledWith(existing);
   });
 
+  it('reuses the only unnamed person for the same normalized relation', async () => {
+    const service = new UserIdentityMemoryService();
+    const existing = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000241'),
+      userId: USER_ID,
+      identityKey: 'person:existing-father',
+      relationToUser: '父亲',
+      realName: '',
+      aliases: ['爸爸'],
+      status: 'active',
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    service.knownPersonModel = {
+      find: jest.fn().mockResolvedValue([existing]),
+      save: jest.fn(async value => value),
+    } as never;
+    service.userRelativeProfileService = {
+      ensureForKnownPerson: jest.fn().mockResolvedValue(null),
+    } as never;
+
+    const result = await service.upsertKnownPersonDeclaration({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      messageId: new MongoObjectId('665000000000000000000242'),
+      sourceText: '我爸当时说了一句',
+      declaration: {
+        identityKey: '',
+        aliases: ['我爸'],
+        relationToUser: '爸爸',
+      },
+    });
+
+    expect(result.id).toEqual(existing.id);
+    expect(service.knownPersonModel.save).toHaveBeenCalledWith(existing);
+  });
+
   it('keeps an agent-specific preferred address out of global aliases', async () => {
     const service = new UserIdentityMemoryService();
     const save = jest.fn(async value => value);
