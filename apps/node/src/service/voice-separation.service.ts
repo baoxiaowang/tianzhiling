@@ -66,7 +66,7 @@ export class VoiceSeparationService {
     }
 
     const controller = new AbortController();
-    const timeoutMs = Number(this.config?.timeoutMs) || 240000;
+    const timeoutMs = Number(this.config?.timeoutMs) || 360000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {

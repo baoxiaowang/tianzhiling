@@ -1084,7 +1084,7 @@ export default {
       ['NODE_VOICE_SEPARATION_URL'],
       'http://tzl_voice_sep:8900'
     ),
-    timeoutMs: readNumberFrom(['NODE_VOICE_SEPARATION_TIMEOUT_MS'], 240000),
+    timeoutMs: readNumberFrom(['NODE_VOICE_SEPARATION_TIMEOUT_MS'], 360000),
   },
   voiceClipping: {
     binaryPath: readStringFrom(['NODE_FFMPEG_BINARY_PATH'], 'ffmpeg'),
