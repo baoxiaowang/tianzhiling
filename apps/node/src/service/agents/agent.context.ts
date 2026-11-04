@@ -2618,9 +2618,12 @@ export class AgentContextService {
       evidenceContract: replyBrief.evidenceContract,
       deliberateLongReplyCandidate,
     });
-    const chatToolPrompt = chatToolPlan
-      ? buildAgentChatToolPrompt(chatToolPlan)
-      : '';
+    // shadow 模式的工具决策提示只用于离线评估，不能进入正常回复提示词；
+    // 否则模型会把“无需调用工具”当成回复正文发给用户。
+    const chatToolPrompt =
+      chatToolPlan?.mode === 'active'
+        ? buildAgentChatToolPrompt(chatToolPlan)
+        : '';
     const realityDependencyLines = replyBrief.realityDependencies.length
       ? [
           '# 现实能力边界',
