@@ -1,5 +1,6 @@
 import { Body, Controller, Inject, Post } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
+import { RedisService } from '@midwayjs/redis';
 import {
   VoiceServiceMaterialItem,
   VoiceServiceProcessingMode,
@@ -31,6 +32,9 @@ export class VoiceClippingInternalController {
 
   @Inject()
   voiceClippingService: VoiceClippingService;
+
+  @Inject()
+  redisService: RedisService;
 
   @Post('/voice-clipping')
   async clip(
@@ -68,6 +72,36 @@ export class VoiceClippingInternalController {
     if (cached && Date.now() - cached.at < CLIP_CACHE_TTL_MS) {
       return { ...(cached.result as Record<string, unknown>), cached: true };
     }
+
+    // 跨进程去重（PM2 4 个实例）：Redis 存「进行中」锁与最近结果
+    const redisKey = `voice:clip:${cacheKey.length > 80 ? cacheKey.slice(0, 80) : cacheKey}:${userId}`;
+    try {
+      const stored = await this.redisService.get(`voice:clip:result:${redisKey}`);
+      if (stored) {
+        return { ...(JSON.parse(stored) as Record<string, unknown>), cached: true };
+      }
+      const locked = await this.redisService.set(
+        `voice:clip:lock:${redisKey}`,
+        String(Date.now()),
+        'EX',
+        900,
+        'NX'
+      );
+      if (!locked) {
+        // 另一实例正在跑：最多等 60s 拿结果
+        for (let i = 0; i < 60; i += 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const ready = await this.redisService.get(`voice:clip:result:${redisKey}`);
+          if (ready) {
+            return { ...(JSON.parse(ready) as Record<string, unknown>), cached: true };
+          }
+        }
+        return { ok: false, error: 'CLIPPING_IN_PROGRESS' };
+      }
+    } catch (error) {
+      // Redis 异常不影响主流程，退化为进程内去重
+    }
+
     const running = clipInFlight.get(cacheKey);
     if (running) {
       return (await running) as Record<string, unknown>;
@@ -108,6 +142,17 @@ export class VoiceClippingInternalController {
       metrics: result.metrics,
     };
     clipRecent.set(cacheKey, { at: Date.now(), result: payload });
+    try {
+      await this.redisService.set(
+        `voice:clip:result:${redisKey}`,
+        JSON.stringify(payload),
+        'EX',
+        600
+      );
+      await this.redisService.del(`voice:clip:lock:${redisKey}`);
+    } catch (error) {
+      // 忽略缓存写入失败
+    }
     return payload;
   }
 
