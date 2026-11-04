@@ -102,6 +102,8 @@ describe('AgentContextService', () => {
 
     expect(prompt).toContain('# 当前时间与联系间隔');
     expect(prompt).toContain('现在：');
+    expect(prompt).toContain('时间问题回答');
+    expect(prompt).toContain('用户问现在几点');
     expect(prompt).not.toContain('距上一次联系');
   });
 
