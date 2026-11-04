@@ -295,6 +295,7 @@ export type VoiceServiceEventTypeDTO =
   | "returned_to_materials"
   | "returned_to_review"
   | "review_clips_ready"
+  | "target_speaker_selected"
   | "clip_reviewed"
   | "clip_recut_requested"
   | "clip_recut_completed"
