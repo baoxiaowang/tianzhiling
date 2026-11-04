@@ -179,6 +179,10 @@ import {
   type ConversationReturnContext,
 } from './conversation-return-context';
 import {
+  selectCurrentSessionHistory,
+  type CurrentSessionResult,
+} from './conversation-session';
+import {
   buildRitualTriggerPrompt,
   resolveAgentDeathWindow,
   resolveRitualTrigger,
@@ -243,6 +247,8 @@ export interface BuildConversationContextOptions {
   deliberateLongReplyExecutionPrompt?: string;
   pinnedHistoryMessageIds?: string[];
   conversationReturnContext?: ConversationReturnContext;
+  /** 本次上下文是否刚跨过 6 小时间隔；跨段时不把上一段连续性摘要当当前状态。 */
+  sessionBoundary?: boolean;
   /**
    * 本地记忆候选（隔离工作副本）：由入口传入材料，上下文构造负责去重、渲染与来源/时间标注。
    * 这些是“候选”而不是已确认事实：assertionPolicy=context_only、useMode=hypothesis。
@@ -946,14 +952,31 @@ export class AgentContextService {
         conversationMessages,
         options.currentTurnMessageIds
       );
+    const currentTurnAt = currentTurnMessages
+      .map(message => message.createdAt)
+      .filter(
+        (value): value is Date =>
+          value instanceof Date && Number.isFinite(value.getTime())
+      )
+      .sort((left, right) => left.getTime() - right.getTime())[0];
+    const session: CurrentSessionResult<MessageEntity> = currentTurnAt
+      ? selectCurrentSessionHistory(
+          historicalConversationMessages,
+          currentTurnAt
+        )
+      : { messages: historicalConversationMessages, boundary: false };
+    const sessionMessageIds = new Set(
+      session.messages.map(message => this.stringifyObjectId(message.id))
+    );
+    const pinnedInSession = pinnedHistoryMessageIds.filter(id =>
+      sessionMessageIds.has(id)
+    );
     const routingHistoryMessages = selectRecentHistoryTurns({
-      messages: this.filterEligibleHistoryMessages(
-        historicalConversationMessages
-      ),
+      messages: this.filterEligibleHistoryMessages(session.messages),
       turnLimit: RECENT_HISTORY_TURNS,
       messageCap: RECENT_HISTORY_MESSAGE_CAP,
       stringifyId: message => this.stringifyObjectId(message.id),
-      pinnedMessageIds: pinnedHistoryMessageIds,
+      pinnedMessageIds: pinnedInSession,
     }).messages;
     const [
       rawProfileFacts,
@@ -1153,7 +1176,7 @@ export class AgentContextService {
       planningMode: replyPlanningDecision.mode,
       agent: options.agent,
       profileFacts,
-      conversationMessages: historicalConversationMessages,
+      conversationMessages: session.messages,
       intent: replyRoute.intent ?? replyIntent,
       route: replyRoute,
       confirmedFacts: [
@@ -1458,16 +1481,14 @@ export class AgentContextService {
       modeLimit: modePolicy.historyMessageLimit,
     });
     const historySelection = selectRecentHistoryTurns({
-      messages: this.filterEligibleHistoryMessages(
-        historicalConversationMessages
-      ),
+      messages: this.filterEligibleHistoryMessages(session.messages),
       turnLimit: modePolicy.historyTurnLimit,
       messageCap: effectiveHistoryLimit,
       coveredMessageId: this.stringifyObjectId(
         options.conversation.continuitySummaryCoveredMessageId
       ),
       stringifyId: message => this.stringifyObjectId(message.id),
-      pinnedMessageIds: options.pinnedHistoryMessageIds,
+      pinnedMessageIds: pinnedInSession,
       loadBoundaryTruncated: historyLoadBoundaryTruncated,
     });
     const recentHistoryMessages = historySelection.messages;
@@ -1555,7 +1576,7 @@ export class AgentContextService {
         ? options.localMemoryCandidates
         : this.buildLocalCandidatesFromAutoPrefetch(
             retrievedMemories,
-            historicalConversationMessages
+            session.messages
           );
     // 去重（对最近历史、候选之间）并转成“候选”证据：
     // assertionPolicy=context_only + useMode=hypothesis，避免把检索结果升级成确认事实。
@@ -1617,7 +1638,7 @@ export class AgentContextService {
       'prompt.build_layers',
       () =>
         this.buildSystemLayer(
-          options,
+          session.boundary ? { ...options, sessionBoundary: true } : options,
           evidence,
           replyBrief,
           persona,
@@ -2008,10 +2029,12 @@ export class AgentContextService {
       agent: options.agent,
       identityContract: identity,
     });
-    const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
-      options.conversation,
-      historyCoveragePrompt
-    );
+    const continuitySummaryPrompt = options.sessionBoundary
+      ? ''
+      : this.buildContinuitySummaryPrompt(
+          options.conversation,
+          historyCoveragePrompt
+        );
     const sessionContinuityPrompt =
       this.buildSessionContinuityPromptFromConversation(
         options.conversation,
