@@ -38,6 +38,30 @@ describe('transient state memory', () => {
     ).toBe(false);
   });
 
+  it('does not treat historical contrast or ordinary "today" memories as transient', () => {
+    expect(
+      isTransientStateFact({
+        type: 'memory',
+        key: '用户现在学着做饭',
+        value: '用户现在学着逝去亲人的样子给爸爸做饭',
+      })
+    ).toBe(false);
+    expect(
+      isTransientStateFact({
+        type: 'memory',
+        key: '幼儿园放学',
+        value: '用户小时候上幼儿园，角色放学接用户，回家路上买豆包',
+      })
+    ).toBe(false);
+    expect(
+      isTransientStateFact({
+        type: 'memory',
+        key: '生日记忆',
+        value: '今天是角色生日',
+      })
+    ).toBe(false);
+  });
+
   it('uses a six hour ttl', () => {
     const now = new Date('2026-11-04T00:00:00.000Z');
     expect(transientStateValidUntil(now)).toBe('2026-11-04T06:00:00.000Z');
