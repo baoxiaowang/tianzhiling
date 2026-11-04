@@ -23,6 +23,7 @@ import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { TencentCosService } from './tencent-cos.service';
 import { TencentVrsVoiceService } from './tencent-vrs-voice.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
+import { selectDominantSpeakerClips } from './voice-training-clip-selection';
 
 export const DEFAULT_VOICE_PREVIEW_TEXT =
   '最近过得好吗？有没有好好吃饭，好好睡觉？';
@@ -457,10 +458,17 @@ export class VoiceModelTrainingService {
           (Number(left.clip.qualityScore) || 0);
         return scoreDifference || left.index - right.index;
       });
+    // 同一段视频里可能有两个人。只用一个说话人的片段训练，避免克隆音色串音。
+    const dominantClips = new Set(
+      selectDominantSpeakerClips(accepted.map(item => item.clip))
+    );
+    const selectedSpeakerClips = accepted.filter(item =>
+      dominantClips.has(item.clip)
+    );
     const selected = [] as typeof accepted;
     let durationSeconds = 0;
 
-    for (const item of accepted) {
+    for (const item of selectedSpeakerClips) {
       const clip = item.clip;
       const clipDuration = Math.max(1, clip.durationSeconds || 12);
       const separatorSeconds = selected.length > 0 ? 0.2 : 0;
