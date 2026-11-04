@@ -1170,6 +1170,19 @@ export class VoiceServiceService {
       );
     }
 
+    // 切片阶段已经知道 speakerId：默认只让主说话人进入训练，
+    // 其他说话人的片段保留在列表中，用户可随时切换。
+    const targetSpeakerId = this.resolveDominantSpeakerId(normalizedClips);
+    session.targetSpeakerId = targetSpeakerId;
+    if (targetSpeakerId) {
+      for (const clip of normalizedClips) {
+        if (clip.speakerId && clip.speakerId !== targetSpeakerId) {
+          clip.reviewStatus = VoiceServiceClipReviewStatus.rejected;
+          clip.rejectionReason = 'other_speaker';
+          clip.reviewedAt = now;
+        }
+      }
+    }
     session.reviewClips = normalizedClips;
     session.filteredClips = normalizedFilteredClips;
     session.status = VoiceServiceSessionStatus.reviewing;
@@ -1190,9 +1203,15 @@ export class VoiceServiceService {
       volumeAdjustedClipCount: normalizedClips.filter(
         item => item.qualityMetrics?.volumeAdjusted
       ).length,
-      reviewedClipCount: 0,
-      acceptedClipCount: 0,
-      rejectedClipCount: 0,
+      reviewedClipCount: normalizedClips.filter(
+        item => item.reviewStatus !== VoiceServiceClipReviewStatus.pending
+      ).length,
+      acceptedClipCount: normalizedClips.filter(
+        item => item.reviewStatus === VoiceServiceClipReviewStatus.accepted
+      ).length,
+      rejectedClipCount: normalizedClips.filter(
+        item => item.reviewStatus === VoiceServiceClipReviewStatus.rejected
+      ).length,
       userAdoptionRate: undefined,
     };
     const clippingAttempt = this.findProcessingAttempt(
@@ -1219,6 +1238,10 @@ export class VoiceServiceService {
       VoiceServiceMessageRole.assistant,
       normalizedClips.length > 0
         ? `我整理出了 ${normalizedClips.length} 段可能属于他的声音。${
+            targetSpeakerId
+              ? '系统先按说话人分组，默认选中主说话人；如果选错了，你可以在下方切换。'
+              : ''
+          }${
             normalizedFilteredClips.length
               ? `另有 ${normalizedFilteredClips.length} 段因时长、静音、削波、音量或背景噪声问题已提前排除。`
               : ''
@@ -2966,6 +2989,97 @@ export class VoiceServiceService {
     );
   }
 
+  /**
+   * 人工切换目标说话人。只允许在片段确认阶段切换；
+   * 目标组回到 pending，其他组自动 rejected，训练只会拿到目标组。
+   */
+  async selectTargetSpeaker(
+    auth: AuthenticatedUserPayload,
+    sessionId: string,
+    speakerId: string
+  ): Promise<VoiceServiceSessionDTO> {
+    const session = await this.getUserSession(auth, sessionId);
+    if (session.status !== VoiceServiceSessionStatus.reviewing) {
+      throw new AppError(
+        'VOICE_SERVICE_NOT_REVIEWING',
+        'voice clips are not ready for review',
+        400
+      );
+    }
+    const target = this.normalizeText(speakerId, 40);
+    const clips = session.reviewClips ?? [];
+    if (!target || !clips.some(clip => clip.speakerId === target)) {
+      throw new AppError(
+        'VOICE_SERVICE_SPEAKER_NOT_FOUND',
+        'target speaker not found',
+        404
+      );
+    }
+
+    const now = new Date();
+    session.targetSpeakerId = target;
+    for (const clip of clips) {
+      if (!clip.speakerId) continue;
+      if (clip.speakerId === target) {
+        if (clip.rejectionReason === 'other_speaker') {
+          clip.reviewStatus = VoiceServiceClipReviewStatus.pending;
+          clip.rejectionReason = '';
+          clip.reviewedAt = undefined;
+        }
+        continue;
+      }
+      clip.reviewStatus = VoiceServiceClipReviewStatus.rejected;
+      clip.rejectionReason = 'other_speaker';
+      clip.reviewedAt = now;
+    }
+    const acceptedCount = clips.filter(
+      clip => clip.reviewStatus === VoiceServiceClipReviewStatus.accepted
+    ).length;
+    const rejectedCount = clips.filter(
+      clip => clip.reviewStatus === VoiceServiceClipReviewStatus.rejected
+    ).length;
+    this.updateReviewObservability(
+      session,
+      acceptedCount,
+      rejectedCount,
+      clips.length
+    );
+    session.updatedAt = now;
+    session.events = this.appendEvent(
+      session.events,
+      VoiceServiceEventType.targetSpeakerSelected,
+      `切换目标说话人：${target}`,
+      now,
+      { targetSpeakerId: target }
+    );
+    await this.voiceServiceSessionModel.save(session);
+    return this.buildSessionRecord(session);
+  }
+
+  private resolveDominantSpeakerId(
+    clips: Array<{ speakerId?: string; durationSeconds?: number }>
+  ): string | undefined {
+    const groups = new Map<string, number>();
+    for (const clip of clips) {
+      const speakerId = clip.speakerId?.trim();
+      if (!speakerId) continue;
+      groups.set(
+        speakerId,
+        (groups.get(speakerId) || 0) +
+          Math.max(1, Number(clip.durationSeconds) || 1)
+      );
+    }
+    let target: string | undefined;
+    let targetDuration = -1;
+    for (const [speakerId, duration] of groups) {
+      if (duration > targetDuration) {
+        target = speakerId;
+        targetDuration = duration;
+      }
+    }
+    return target;
+  }
+
   private isClipRecutActive(status: string | undefined): boolean {
     return status === 'queued' || status === 'processing';
   }
@@ -3270,6 +3384,7 @@ export class VoiceServiceService {
       id: this.stringifyObjectId(session.id),
       status: session.status,
       processingMode: session.processingMode,
+      targetSpeakerId: session.targetSpeakerId,
       materials: (session.materials ?? []).map(item => ({
         id: item.id,
         name: item.name,

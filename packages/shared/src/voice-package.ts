@@ -322,12 +322,18 @@ export interface VoiceServiceEventDTO {
   createdAt: string;
 }
 
+export interface SelectVoiceServiceTargetSpeakerDTO {
+  speakerId: string;
+}
+
 export interface VoiceServiceSessionDTO {
   id: string;
   status: VoiceServiceSessionStatusDTO;
   processingMode?: VoiceServiceProcessingModeDTO;
   materials: VoiceServiceMaterialDTO[];
   reviewClips: VoiceServiceReviewClipDTO[];
+  /** 当前默认/选中的说话人；用户可切换。 */
+  targetSpeakerId?: string;
   filteredClips?: VoiceServiceFilteredClipDTO[];
   messages: VoiceServiceMessageDTO[];
   events: VoiceServiceEventDTO[];

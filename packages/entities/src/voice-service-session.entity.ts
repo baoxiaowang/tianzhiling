@@ -52,6 +52,7 @@ export enum VoiceServiceEventType {
   returnedToMaterials = "returned_to_materials",
   returnedToReview = "returned_to_review",
   reviewClipsReady = "review_clips_ready",
+  targetSpeakerSelected = "target_speaker_selected",
   clipReviewed = "clip_reviewed",
   clipRecutRequested = "clip_recut_requested",
   clipRecutCompleted = "clip_recut_completed",
@@ -292,6 +293,10 @@ export class VoiceServiceSessionEntity extends BaseEntity {
 
   @Column()
   reviewClips?: VoiceServiceReviewClipItem[];
+
+  /** 当前选中的目标说话人；切片完成时默认主说话人，可人工切换。 */
+  @Column()
+  targetSpeakerId?: string;
 
   @Column()
   filteredClips?: VoiceServiceFilteredClipItem[];

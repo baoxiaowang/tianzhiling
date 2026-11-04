@@ -5,6 +5,7 @@ import type {
   ReviewVoiceServiceClipDTO,
   SelectAgentVoiceTimbreDTO,
   SelectVoiceServiceAgentDTO,
+  SelectVoiceServiceTargetSpeakerDTO,
   SendVoiceServiceMessageDTO,
   StartVoiceServiceTrainingDTO,
   SubmitVoiceServiceMaterialsDTO,
@@ -34,6 +35,12 @@ export class ReviewVoiceServiceClipBodyDTO
 {
   reviewStatus: ReviewVoiceServiceClipDTO['reviewStatus'];
   rejectionReason?: string;
+}
+
+export class SelectVoiceServiceTargetSpeakerBodyDTO
+  implements SelectVoiceServiceTargetSpeakerDTO
+{
+  speakerId: string;
 }
 
 export class RecutVoiceServiceClipBodyDTO implements RecutVoiceServiceClipDTO {

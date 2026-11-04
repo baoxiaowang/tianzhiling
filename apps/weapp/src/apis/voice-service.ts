@@ -160,6 +160,18 @@ export function reviewVoiceServiceClip(
   );
 }
 
+export function selectVoiceServiceTargetSpeaker(
+  sessionId: string,
+  speakerId: string
+) {
+  return patch<VoiceServiceSessionDTO>(
+    `/api/voice-services/${encodeURIComponent(
+      sessionId
+    )}/target-speaker`,
+    { speakerId }
+  );
+}
+
 export function recutVoiceServiceClip(
   sessionId: string,
   clipId: string,

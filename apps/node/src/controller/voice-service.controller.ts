@@ -21,6 +21,7 @@ import {
   ReviewVoiceServiceClipBodyDTO,
   SelectAgentVoiceTimbreBodyDTO,
   SelectVoiceServiceAgentBodyDTO,
+  SelectVoiceServiceTargetSpeakerBodyDTO,
   SendVoiceServiceMessageBodyDTO,
   StartVoiceServiceTrainingBodyDTO,
   SubmitVoiceServiceMaterialsBodyDTO,
@@ -142,6 +143,18 @@ export class VoiceServiceController {
       this.requireAuth(),
       sessionId,
       body
+    );
+  }
+
+  @Patch('/:sessionId/target-speaker')
+  async selectTargetSpeaker(
+    @Param('sessionId') sessionId: string,
+    @Body() body: SelectVoiceServiceTargetSpeakerBodyDTO
+  ) {
+    return this.voiceServiceService.selectTargetSpeaker(
+      this.requireAuth(),
+      sessionId,
+      body.speakerId
     );
   }
 

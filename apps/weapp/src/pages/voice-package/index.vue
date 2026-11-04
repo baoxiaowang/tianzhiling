@@ -279,8 +279,8 @@
           </view>
           <text class="voice-service-section-heading__meta">
             {{
-              reviewClips.length
-                ? `${reviewedClipCount}/${reviewClips.length}`
+              visibleReviewClips.length
+                ? `${reviewedClipCount}/${visibleReviewClips.length}`
                 : "0 段可用"
             }}
           </text>
@@ -300,7 +300,7 @@
           <text>{{ isReturningToMaterials ? "正在返回" : "返回上一步" }}</text>
         </view>
 
-        <view v-if="reviewClips.length" class="voice-service-selection-guide">
+        <view v-if="visibleReviewClips.length" class="voice-service-selection-guide">
           <view class="voice-service-selection-guide__row">
             <text class="voice-service-selection-guide__selected">
               已选 {{ acceptedClipDurationText }}
@@ -317,6 +317,32 @@
           </view>
         </view>
 
+        <view v-if="speakerGroups.length > 1" class="voice-service-speaker-select">
+          <view class="voice-service-speaker-select__heading">
+            <text class="voice-service-speaker-select__title">这段是谁的声音？</text>
+            <text class="voice-service-speaker-select__desc">
+              默认选中主说话人，可切换；其他说话人不会参加训练
+            </text>
+          </view>
+          <view class="voice-service-speaker-select__options">
+            <view
+              v-for="speaker in speakerGroups"
+              :key="speaker.speakerId"
+              class="voice-service-speaker-select__option"
+              :class="{
+                'voice-service-speaker-select__option--active':
+                  selectedSpeakerId === speaker.speakerId,
+              }"
+              @tap="handleSelectSpeaker(speaker.speakerId)"
+            >
+              <text>{{ speaker.label }}</text>
+              <text class="voice-service-speaker-select__count">
+                {{ speaker.clipCount }} 段
+              </text>
+            </view>
+          </view>
+        </view>
+
         <view v-if="acceptedClipCount" class="voice-service-review-start">
           <nut-button
             block
@@ -330,7 +356,7 @@
         </view>
 
         <view
-          v-for="(clip, index) in reviewClips"
+          v-for="(clip, index) in visibleReviewClips"
           :key="clip.id"
           :id="`voice-service-clip-${clip.id}`"
           class="voice-service-clip"
@@ -1035,6 +1061,7 @@ import {
   returnVoiceServiceToReview,
   reviewVoiceServiceClip,
   selectVoiceServiceAgent,
+  selectVoiceServiceTargetSpeaker,
   sendVoiceServiceMessage,
   startVoiceServiceTraining,
   startVoiceServiceSession,
@@ -1150,6 +1177,8 @@ const isSubmittingMaterials = ref(false);
 const isSendingMessage = ref(false);
 const isStartingTraining = ref(false);
 const isReviewingClip = ref(false);
+const isSwitchingSpeaker = ref(false);
+const selectedSpeakerId = ref("");
 const isSubmittingRecut = ref(false);
 const isRecutDialogVisible = ref(false);
 const recutTargetClipId = ref("");
@@ -1275,6 +1304,41 @@ const canRemoveMaterials = computed(() => {
   );
 });
 const reviewClips = computed(() => session.value?.reviewClips ?? []);
+const speakerGroups = computed(() => {
+  const groups = new Map<
+    string,
+    {
+      speakerId: string;
+      label: string;
+      clipCount: number;
+      durationSeconds: number;
+    }
+  >();
+  for (const clip of reviewClips.value) {
+    const speakerId = clip.speakerId?.trim();
+    if (!speakerId) continue;
+    const current = groups.get(speakerId) ?? {
+      speakerId,
+      label: `说话人 ${groups.size + 1}`,
+      clipCount: 0,
+      durationSeconds: 0,
+    };
+    current.clipCount += 1;
+    current.durationSeconds +=
+      clip.qualityMetrics?.durationSeconds ?? clip.durationSeconds ?? 0;
+    groups.set(speakerId, current);
+  }
+  return Array.from(groups.values()).sort(
+    (left, right) => right.durationSeconds - left.durationSeconds
+  );
+});
+const visibleReviewClips = computed(() => {
+  if (!selectedSpeakerId.value) return reviewClips.value;
+  const filtered = reviewClips.value.filter(
+    (clip) => clip.speakerId === selectedSpeakerId.value
+  );
+  return filtered.length ? filtered : reviewClips.value;
+});
 const activeRecutClipCount = computed(
   () => reviewClips.value.filter((item) => isClipRecutActive(item)).length
 );
@@ -1290,15 +1354,17 @@ const recutTargetDurationText = computed(() =>
 );
 const filteredClips = computed(() => session.value?.filteredClips ?? []);
 const reviewedClipCount = computed(() => {
-  return reviewClips.value.filter((item) => item.reviewStatus !== "pending")
-    .length;
+  return visibleReviewClips.value.filter(
+    (item) => item.reviewStatus !== "pending"
+  ).length;
 });
 const acceptedClipCount = computed(() => {
-  return reviewClips.value.filter((item) => item.reviewStatus === "accepted")
-    .length;
+  return visibleReviewClips.value.filter(
+    (item) => item.reviewStatus === "accepted"
+  ).length;
 });
 const acceptedClipDurationSeconds = computed(() =>
-  getAcceptedVoiceClipDurationSeconds(reviewClips.value)
+  getAcceptedVoiceClipDurationSeconds(visibleReviewClips.value)
 );
 const acceptedClipDurationText = computed(() =>
   acceptedClipDurationSeconds.value > 0
@@ -1331,8 +1397,8 @@ const audioPlaybackProgressPercent = computed(() => {
 });
 const allClipsReviewed = computed(() => {
   return (
-    reviewClips.value.length > 0 &&
-    reviewedClipCount.value === reviewClips.value.length
+    visibleReviewClips.value.length > 0 &&
+    reviewedClipCount.value === visibleReviewClips.value.length
   );
 });
 const showReviewSummary = computed(() => {
@@ -1481,6 +1547,17 @@ async function refreshSession(
         previousRecutClipIds.has(item.id) && item.recutStatus === "failed"
     );
     session.value = nextSession;
+    const nextSpeakerId =
+      nextSession?.targetSpeakerId || speakerGroups.value[0]?.speakerId || "";
+    if (
+      nextSpeakerId &&
+      (!selectedSpeakerId.value ||
+        !speakerGroups.value.some(
+          (speaker) => speaker.speakerId === selectedSpeakerId.value
+        ))
+    ) {
+      selectedSpeakerId.value = nextSpeakerId;
+    }
     if (completedRecut) {
       selectionAssistantPrompt.value = VOICE_SERVICE_PROMPTS.recutCompleted;
       shouldShowResumePrompt.value = false;
@@ -2186,6 +2263,36 @@ async function handleRetryFailed() {
   }
 
   await handleSubmitMaterials(session.value?.processingMode ?? "assisted");
+}
+
+async function handleSelectSpeaker(speakerId: string) {
+  const currentSession = session.value;
+  if (
+    !currentSession ||
+    !speakerId ||
+    speakerId === selectedSpeakerId.value ||
+    isSwitchingSpeaker.value
+  ) {
+    return;
+  }
+  isSwitchingSpeaker.value = true;
+  try {
+    session.value = await selectVoiceServiceTargetSpeaker(
+      currentSession.id,
+      speakerId
+    );
+    selectedSpeakerId.value = speakerId;
+    await handleSessionChanged();
+  } catch (error) {
+    if (await handleAuthError(error)) {
+      return;
+    }
+    showToast(
+      error instanceof ApiException ? error.message : "切换说话人失败，请稍后重试"
+    );
+  } finally {
+    isSwitchingSpeaker.value = false;
+  }
 }
 
 async function handleReviewClip(
@@ -4319,6 +4426,62 @@ function buildAgentFallback(name: string) {
     opacity: 1;
     transform: translateY(-3px);
   }
+}
+
+/* 目标说话人切换：默认主说话人，用户可改 */
+.voice-service-speaker-select {
+  margin: 20px 24px 0;
+  padding: 18px 18px 16px;
+  border-radius: 18px;
+  background: #f7f4f1;
+}
+
+.voice-service-speaker-select__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.voice-service-speaker-select__title {
+  color: #403b3a;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.voice-service-speaker-select__desc {
+  color: #8b817e;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.voice-service-speaker-select__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.voice-service-speaker-select__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid #e4ddd8;
+  border-radius: 999px;
+  background: #fff;
+  color: #6f6561;
+  font-size: 13px;
+}
+
+.voice-service-speaker-select__option--active {
+  border-color: #9d4c55;
+  background: #f6e9e6;
+  color: #7f3d46;
+}
+
+.voice-service-speaker-select__count {
+  color: #a09490;
+  font-size: 11px;
 }
 
 @keyframes voice-service-spin {
