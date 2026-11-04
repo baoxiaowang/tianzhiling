@@ -17,6 +17,10 @@ import {
 import { OpenAIService } from './openai';
 import { UserIdentityMemoryService } from './user-identity-memory.service';
 import { isMemoryCurrent, isCanonicalUserNameEvidence } from './memory-value';
+import {
+  isTransientStateFact,
+  transientStateValidUntil,
+} from './transient-state-memory';
 import { MemoryValueService } from './memory-value.service';
 import { memoryValueModeForUser } from './memory-value-rollout';
 import { detectUserRequest } from './user-request-router';
@@ -1201,14 +1205,12 @@ export class AgentProfileFactService {
             AgentProfileFactStatus.candidate,
           ],
         },
-        ...(valueActive
-          ? {
-              $or: [
-                { 'governance.validUntil': null },
-                { 'governance.validUntil': { $gt: new Date().toISOString() } },
-              ],
-            }
-          : {}),
+        // asOf：过期状态不参与当前提示词，也不占用 limit 名额。
+        $or: [
+          { 'governance.validUntil': { $exists: false } },
+          { 'governance.validUntil': null },
+          { 'governance.validUntil': { $gt: new Date().toISOString() } },
+        ],
         ...(options.durableOnly
           ? { 'governance.retention': { $ne: 'session' } }
           : {}),
@@ -3061,6 +3063,7 @@ export class AgentProfileFactService {
       : existing?.conflictingValues || [];
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
+    this.stampTransientStateGovernance(fact, now);
 
     // 称呼类事实记录来源发生时间，供后续乱序判定（复用 governance.sourceOccurredAt）。
     if (isPreferredNameKey && input.sourceOccurredAt) {
@@ -3146,6 +3149,44 @@ export class AgentProfileFactService {
     superseded.updatedAt = now;
     this.stampFactGovernance(superseded, { reason, sourceOccurredAt });
     await this.factModel.save(superseded);
+  }
+
+  /**
+   * 瞬时状态必须有有效期：
+   * - 不覆盖已有的 durable/core 治理；
+   * - 只在未设置 validUntil 时补 session + 6h TTL；
+   * - 读取侧 isMemoryCurrent 会过滤过期事实，durableOnly 合成画像会排除 session。
+   */
+  private stampTransientStateGovernance(
+    fact: AgentProfileFactEntity,
+    now: Date
+  ): void {
+    if (
+      !isTransientStateFact({
+        type: fact.type,
+        key: fact.key,
+        value: fact.value,
+      })
+    ) {
+      return;
+    }
+    const current = fact.governance as Partial<MemoryGovernance> | undefined;
+    if (
+      current?.retention === 'core' ||
+      current?.retention === 'durable' ||
+      current?.validUntil
+    ) {
+      return;
+    }
+    fact.governance = {
+      ...(current || {}),
+      retention: 'session',
+      timeKind: 'current',
+      validUntil: transientStateValidUntil(now),
+      reason: current?.reason || '瞬时状态，六小时后不再作为当前事实',
+      revision: (current?.revision || 0) + 1,
+      sourceOccurredAt: current?.sourceOccurredAt || now.toISOString(),
+    } as MemoryGovernance;
   }
 
   /**

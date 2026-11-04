@@ -1406,3 +1406,62 @@ describe('AgentProfileFactService', () => {
     );
   });
 });
+
+describe('AgentProfileFactService transient state governance', () => {
+  it('stamps acute current state with a session ttl', async () => {
+    const service = new AgentProfileFactService();
+    const saved: any[] = [];
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async value => {
+        saved.push(value);
+        return value;
+      }),
+    } as never;
+
+    await (service as any).upsertFact({
+      userId: new MongoObjectId('665000000000000000000901'),
+      agentId: new MongoObjectId('665000000000000000000902'),
+      type: AgentProfileFactType.memory,
+      key: 'health.current',
+      value: '今天心脏难受，要去医院',
+      polarity: AgentProfileFactPolarity.positive,
+      confidence: AgentProfileFactConfidence.extracted,
+      priority: 2,
+    });
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0].governance).toMatchObject({
+      retention: 'session',
+      timeKind: 'current',
+    });
+    expect(Date.parse(saved[0].governance.validUntil)).toBeGreaterThan(
+      Date.now()
+    );
+  });
+
+  it('does not expire a stable chronic fact', async () => {
+    const service = new AgentProfileFactService();
+    const saved: any[] = [];
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async value => {
+        saved.push(value);
+        return value;
+      }),
+    } as never;
+
+    await (service as any).upsertFact({
+      userId: new MongoObjectId('665000000000000000000903'),
+      agentId: new MongoObjectId('665000000000000000000904'),
+      type: AgentProfileFactType.memory,
+      key: 'health.chronic',
+      value: '糖尿病多年，一直吃药',
+      polarity: AgentProfileFactPolarity.positive,
+      confidence: AgentProfileFactConfidence.extracted,
+      priority: 2,
+    });
+
+    expect(saved[0].governance).toBeUndefined();
+  });
+});
