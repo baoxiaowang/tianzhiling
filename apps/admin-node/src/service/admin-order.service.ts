@@ -1762,6 +1762,54 @@ export class AdminOrderService {
     }
   }
 
+  /**
+   * 后台补单的会员/声音服务购买提示。
+   * 后台补单不走主服务 OrderService.grantVipMembership，必须在这里主动通知小使者。
+   */
+  private async notifyPurchaseMessengerEvent(
+    order: OrderEntity,
+    eventType: 'membership_purchase' | 'voice_purchase' | 'voice_package_purchase'
+  ): Promise<void> {
+    const baseUrl =
+      process.env.TZL_NODE_API_URL?.trim() || 'http://tzl_node:7001';
+    const secret = process.env.INTERNAL_API_SECRET?.trim();
+    if (!secret) {
+      this.logger?.warn?.(
+        '[admin-order] purchase messenger event skipped, INTERNAL_API_SECRET not configured'
+      );
+      return;
+    }
+    try {
+      const response = await fetch(`${baseUrl}/api/system/messenger-event`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-internal-secret': secret,
+        },
+        body: JSON.stringify({
+          eventType,
+          userId: String(order.userId || ''),
+          orderId: String(order.id || ''),
+        }),
+      });
+      const text = await response.text();
+      this.logger?.info?.(
+        '[admin-order] purchase messenger event notified, orderId=%s eventType=%s status=%d body=%s',
+        String(order.id || ''),
+        eventType,
+        response.status,
+        text.slice(0, 200)
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[admin-order] purchase messenger event notify failed, orderId=%s eventType=%s reason=%s',
+        String(order.id || ''),
+        eventType,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
   private async notifyMessengerEvent(
     order: OrderEntity,
     downgrade: VoiceMembershipDowngradeSnapshot
@@ -2416,6 +2464,7 @@ export class AdminOrderService {
 
     if (order.orderType === OrderType.voicePackage) {
       await this.createVoiceTrainingTask(order);
+      await this.notifyPurchaseMessengerEvent(order, 'voice_package_purchase');
       return;
     }
 
@@ -4228,6 +4277,11 @@ export class AdminOrderService {
 
     await this.userMembershipModel.save(membership);
     await this.grantVipEntitlements(order, membership, snapshot, now);
+    const planCode = String(order.targetCode || snapshot.code || '');
+    await this.notifyPurchaseMessengerEvent(
+      order,
+      planCode.startsWith('voice_') ? 'voice_purchase' : 'membership_purchase'
+    );
   }
 
   private async grantVipEntitlements(
