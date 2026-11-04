@@ -2030,7 +2030,10 @@ export class AgentContextService {
       identityContract: identity,
     });
     const continuitySummaryPrompt = options.sessionBoundary
-      ? ''
+      ? this.buildPastSessionSummaryPrompt(
+          options.conversation,
+          historyCoveragePrompt
+        )
       : this.buildContinuitySummaryPrompt(
           options.conversation,
           historyCoveragePrompt
@@ -4357,6 +4360,25 @@ export class AgentContextService {
           .map(object => object.binding)
       )
     );
+  }
+
+  /**
+   * 跨段后连续性摘要仍然保留，但明确标成“上一次会话”。
+   * 回访机制需要知道上次聊到哪儿；当前状态不能被上一段替代。
+   */
+  private buildPastSessionSummaryPrompt(
+    conversation: ConversationEntity,
+    historyCoveragePrompt = ''
+  ): string {
+    const summaryPrompt = this.buildContinuitySummaryPrompt(
+      conversation,
+      historyCoveragePrompt
+    );
+    if (!summaryPrompt) return '';
+    return [
+      summaryPrompt.replace('# 对话连续性摘要', '# 上一次会话（过去）'),
+      '（以上是上一次会话的摘要，只作过去背景，不是用户当前状态；不要续演上一段的具体场景。）',
+    ].join('\n');
   }
 
   private buildContinuitySummaryPrompt(

@@ -138,6 +138,20 @@ describe('AgentContextService', () => {
     expect(prompt).not.toContain('时间问题');
   });
 
+  it('labels the previous session summary as past after a boundary', () => {
+    const service = new AgentContextService();
+    const conversation = new ConversationEntity();
+    conversation.continuitySummary = '用户昨晚说心脏难受，要去医院。';
+
+    const prompt = (service as any).buildPastSessionSummaryPrompt(
+      conversation,
+      ''
+    );
+
+    expect(prompt).toContain('# 上一次会话（过去）');
+    expect(prompt).toContain('只作过去背景，不是用户当前状态');
+  });
+
   it('adds the compact tool decision contract only to sampled shadow turns', () => {
     const service = new AgentContextService();
     const replyBrief = buildReplyBrief({
