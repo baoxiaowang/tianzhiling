@@ -23,7 +23,9 @@ const TRANSIENT_KEY_PREFIX =
 const DURABLE_KEY_PREFIX =
   /^(?:profile_source\.|identity\.|relationship\.|style\.|family\.|correction\.|promise\.|keepsake\.|taboo\.|memory\.rejected_assistant)/i;
 const RESOLUTION_SIGNAL =
-  /(?:现在不|现在没|现在已|现在不再|现在能|已经好转|好转了|康复|出院)/;
+  /(?:现在不|现在没|现在已|现在不再|现在能|现在好转|已经好转|好转了|康复|出院)/;
+const HISTORICAL_CONTEXT_SIGNAL =
+  /(?:去世时|离世时|离世|去世|逝去|生前|小时候|以前|去年|前年|当时|那时候|后来|曾经|过去|婚后|第二天)/;
 
 export interface TransientStateInput {
   type?: AgentProfileFactType | string;
@@ -39,7 +41,9 @@ export function isTransientStateFact(input: TransientStateInput): boolean {
   if (DURABLE_KEY_PREFIX.test(key)) return false;
   if (RESOLUTION_SIGNAL.test(value)) return false;
   if (TRANSIENT_KEY_PREFIX.test(key)) return true;
+  if (value.length > 120) return false;
   if (STABLE_STATE_SIGNAL.test(value)) return false;
+  if (HISTORICAL_CONTEXT_SIGNAL.test(value)) return false;
   return CURRENT_STATE_SIGNAL.test(value) && ACUTE_STATE_SIGNAL.test(value);
 }
 
