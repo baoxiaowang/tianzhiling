@@ -175,8 +175,9 @@ import {
   CONVERSATION_TIME_MATERIAL_MIN_GAP_MS,
   describeElapsedTime,
   formatBeijingDateTime,
+  isTimeQuestionQuery,
+  type ConversationReturnContext,
 } from './conversation-return-context';
-import type { ConversationReturnContext } from './conversation-return-context';
 import {
   buildRitualTriggerPrompt,
   resolveAgentDeathWindow,
@@ -2018,7 +2019,8 @@ export class AgentContextService {
       );
     const conversationReturnContextPrompt =
       this.buildConversationReturnContextPrompt(
-        options.conversationReturnContext
+        options.conversationReturnContext,
+        options.currentQuery
       );
     const doubaoAdaptation = options.effectiveChatModel?.includes('doubao')
       ? '\n不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。'
@@ -2383,7 +2385,8 @@ export class AgentContextService {
   }
 
   private buildConversationReturnContextPrompt(
-    context?: ConversationReturnContext
+    context?: ConversationReturnContext,
+    currentQuery = ''
   ): string {
     // 时间是常态参考材料：每一轮都告诉模型"现在是什么时候"；有上一次联系时，
     // 再给出上一次双方说话的时间和中间隔了多久。上一次聊了什么本来就在最近的
@@ -2392,9 +2395,13 @@ export class AgentContextService {
     const lines = [
       '# 当前时间与联系间隔',
       `现在：${formatBeijingDateTime(nowAt)}`,
-      '上面的时段（凌晨/早上/上午/中午/下午/晚上/深夜）是理解用户当前处境的背景。',
-      '时间问题回答：用户问现在几点、今天几号、星期几，或问“你那边的时间是否一样”时，先按上面的时间直接回答，再回到关心；不要回答“这边没有时间概念/不知道时间/你看看现在几点了”。时间以系统提供的为准，不能声称自己看过钟表。',
     ];
+    if (isTimeQuestionQuery(currentQuery)) {
+      // 只在用户真的问时间时支付这段指令；平时只保留一行时间。
+      lines.push(
+        '时间问题：先按上面的时间直接回答，不要说自己没有时间概念；不能声称看过钟表。'
+      );
+    }
 
     if (context) {
       const previousAt = new Date(context.previousContactAt);

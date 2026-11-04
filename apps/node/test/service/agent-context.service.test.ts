@@ -98,12 +98,15 @@ describe('AgentContextService', () => {
 
   it('gives the current time even when there is no previous contact', () => {
     const service = new AgentContextService();
-    const prompt = (service as any).buildConversationReturnContextPrompt();
+    const prompt = (service as any).buildConversationReturnContextPrompt(
+      undefined,
+      '现在几点了'
+    );
 
     expect(prompt).toContain('# 当前时间与联系间隔');
     expect(prompt).toContain('现在：');
-    expect(prompt).toContain('时间问题回答');
-    expect(prompt).toContain('用户问现在几点');
+    expect(prompt).toContain('时间问题');
+    expect(prompt).toContain('先按上面的时间直接回答');
     expect(prompt).not.toContain('距上一次联系');
   });
 
@@ -122,6 +125,17 @@ describe('AgentContextService', () => {
     expect(prompt).toContain('现在：2026年9月5日（周六）20:00');
     expect(prompt).not.toContain('距上一次联系');
     expect(prompt).not.toContain('用户上一次说话');
+  });
+
+  it('does not add the time-answer instruction for ordinary turns', () => {
+    const service = new AgentContextService();
+    const prompt = (service as any).buildConversationReturnContextPrompt(
+      undefined,
+      '我今天有点累'
+    );
+
+    expect(prompt).toContain('# 当前时间与联系间隔');
+    expect(prompt).not.toContain('时间问题');
   });
 
   it('adds the compact tool decision contract only to sampled shadow turns', () => {

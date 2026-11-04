@@ -9,6 +9,18 @@ export const CONVERSATION_RETURN_MIN_GAP_MS = 36 * 60 * 60 * 1000;
 // 时间材料只是噪声。现在时间本身仍然常态给。
 export const CONVERSATION_TIME_MATERIAL_MIN_GAP_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * 只有用户本轮真的在问时间，才追加“直接报时”的指令。
+ * 平时只保留一行当前时间，避免把常驻提示词撑大。
+ */
+export function isTimeQuestionQuery(query?: string): boolean {
+  const value = (query || '').trim();
+  if (!value) return false;
+  return /(?:现在|这会儿|当前|今天|你那边|你那里|这边).{0,12}(?:几点|几号|几月几号|星期几|什么时间|时间|钟点)/.test(
+    value
+  );
+}
+
 export interface ConversationReturnContext {
   version: typeof CONVERSATION_RETURN_CONTEXT_VERSION;
   currentTurnAt: string;
