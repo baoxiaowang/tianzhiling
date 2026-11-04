@@ -42,7 +42,12 @@ export class AdminVoiceClippingService {
 
     let response: Response;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 120 * 1000);
+    // 剪辑链路现在包含「降噪 + 人声分离 + AI 转录」，60s 视频约 60~70s，
+    // 120s 视频会超过 120s；超时会让后台显示失败、但 node 仍在跑并产出片段，
+    // 用户重试就会重复生成片段。默认放宽到 300s，可用环境变量覆盖。
+    const timeoutMs =
+      Number(process.env.ADMIN_VOICE_CLIPPING_TIMEOUT_MS) || 300 * 1000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       response = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
