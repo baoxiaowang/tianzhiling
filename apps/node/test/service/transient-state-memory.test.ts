@@ -62,6 +62,23 @@ describe('transient state memory', () => {
     ).toBe(false);
   });
 
+  it('does not expire profile source or resolved states', () => {
+    expect(
+      isTransientStateFact({
+        type: 'memory',
+        key: 'profile_source.shared_memories',
+        value: '一起聊现在的生活，虽然生病了但身体目前还不错',
+      })
+    ).toBe(false);
+    expect(
+      isTransientStateFact({
+        type: 'memory',
+        key: 'memory.rejected_assistant.x',
+        value: '用户否认：现在不疼了，别挂心',
+      })
+    ).toBe(false);
+  });
+
   it('uses a six hour ttl', () => {
     const now = new Date('2026-11-04T00:00:00.000Z');
     expect(transientStateValidUntil(now)).toBe('2026-11-04T06:00:00.000Z');

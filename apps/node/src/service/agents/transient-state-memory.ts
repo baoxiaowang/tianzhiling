@@ -19,6 +19,12 @@ const STABLE_STATE_SIGNAL =
 const TRANSIENT_KEY_PREFIX =
   /^(?:status|state|current|location|emotion|mood|health\.(?:current|today|symptom|pain|fever|hospital|condition)|symptom)\./i;
 
+// 这些是长期画像/身份/关系来源，不是瞬时状态。
+const DURABLE_KEY_PREFIX =
+  /^(?:profile_source\.|identity\.|relationship\.|style\.|family\.|correction\.|promise\.|keepsake\.|taboo\.|memory\.rejected_assistant)/i;
+const RESOLUTION_SIGNAL =
+  /(?:现在不|现在没|现在已|现在不再|现在能|已经好转|好转了|康复|出院)/;
+
 export interface TransientStateInput {
   type?: AgentProfileFactType | string;
   key?: string;
@@ -30,6 +36,8 @@ export function isTransientStateFact(input: TransientStateInput): boolean {
   const value = (input.value || '').trim();
   if (!key || !value) return false;
   if (input.type && input.type !== AgentProfileFactType.memory) return false;
+  if (DURABLE_KEY_PREFIX.test(key)) return false;
+  if (RESOLUTION_SIGNAL.test(value)) return false;
   if (TRANSIENT_KEY_PREFIX.test(key)) return true;
   if (STABLE_STATE_SIGNAL.test(value)) return false;
   return CURRENT_STATE_SIGNAL.test(value) && ACUTE_STATE_SIGNAL.test(value);
