@@ -69,7 +69,36 @@ echo "== 构建品牌 [$BRAND] 目标 [$TARGET] =="
 
 case "$TARGET" in
   weapp)
-    pnpm --filter ./apps/weapp build:weapp
+    # 小程序包里的接口地址/资源地址必须跟着品牌走：
+    # apps/weapp/.env.production 里的默认值是「天之灵」，dotenv 不会覆盖已存在的
+    # 环境变量，所以这里显式 export，保证未了言构建出来的包指向 voloian.cn。
+    export TARO_APP_API_BASE_URL="https://${BRAND_DOMAIN}"
+    export TARO_APP_ASSET_BASE_URL="https://${BRAND_DOMAIN}"
+    export TARO_APP_MEDIA_BASE_URL="https://oss.${BRAND_DOMAIN}"
+    export BRAND_DOMAIN
+    # 注意：这里直接调 taro build，不走 package.json 的 build:weapp
+    # （那个脚本会在构建后立刻校验 appid，而 appid 需要先按品牌改写）。
+    pnpm --filter ./apps/weapp exec taro build --type weapp
+    # Taro 只是原样拷贝 project.config.json，appid 不会随品牌变，这里构建后改写，
+    # 否则未了言的包会带着天之灵的 appid，上传时没有权限。
+    node - "$BRAND_WEAPP_APPID" <<'NODE'
+const fs = require('fs')
+const appid = process.argv[2]
+const files = [
+  'apps/weapp/dist/weapp/project.config.json',
+  'apps/weapp/dist/weapp/project.private.config.json',
+]
+for (const file of files) {
+  if (!fs.existsSync(file)) continue
+  const config = JSON.parse(fs.readFileSync(file, 'utf8'))
+  if (config.appid !== appid) {
+    config.appid = appid
+    fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n')
+    console.log(`[brand] ${file} appid -> ${appid}`)
+  }
+}
+NODE
+    node apps/weapp/scripts/verify-weapp-release.mjs
     ;;
   app)
     # Flutter 编译注入品牌；如需出 Android 包:

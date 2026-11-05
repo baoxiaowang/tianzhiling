@@ -92,9 +92,9 @@ import {
   isIosClientPlatform,
   isWechatPaymentCancel,
   requestWechatVirtualPayment,
-  reportPayFailure,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
+import { reportPayFailure } from '../../apis/order'
 import VipMemberView from './components/vip-member-view.vue'
 import VipPurchaseView from './components/vip-purchase-modern-view.vue'
 

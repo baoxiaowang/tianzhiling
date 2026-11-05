@@ -30,11 +30,14 @@ const scannableFiles = files.filter((file) =>
   scannableExtensions.has(path.extname(file))
 )
 const violations = []
+const expectedDomain = (process.env.BRAND_DOMAIN || 'tianzhiling.chat').trim()
+const expectedOrigin = `https://${expectedDomain}`
+const expectedAppid = (process.env.BRAND_WEAPP_APPID || '').trim()
 let hasProductionOrigin = false
 
 for (const file of scannableFiles) {
   const content = await readFile(file, 'utf8')
-  hasProductionOrigin ||= content.includes('https://tianzhiling.chat')
+  hasProductionOrigin ||= content.includes(expectedOrigin)
 
   for (const origin of forbiddenOrigins) {
     if (content.includes(origin)) {
@@ -50,7 +53,19 @@ if (violations.length > 0) {
 }
 
 if (!hasProductionOrigin) {
-  throw new Error('发布包未包含生产接口地址 https://tianzhiling.chat')
+  throw new Error(`发布包未包含本品牌生产接口地址 ${expectedOrigin}`)
 }
 
-console.log('微信小程序发布包检查通过：未发现本地服务地址。')
+if (expectedAppid) {
+  const projectConfigPath = path.join(releaseRoot, 'project.config.json')
+  const projectConfig = JSON.parse(await readFile(projectConfigPath, 'utf8'))
+  if (projectConfig.appid !== expectedAppid) {
+    throw new Error(
+      `发布包 appid 不正确：期望 ${expectedAppid}，实际 ${projectConfig.appid}`
+    )
+  }
+}
+
+console.log(
+  `微信小程序发布包检查通过：${expectedDomain}，appid=${expectedAppid || '(默认)'}，未发现本地服务地址。`
+)

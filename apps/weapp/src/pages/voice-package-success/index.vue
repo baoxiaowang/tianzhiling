@@ -115,9 +115,9 @@ import {
   isIosClientPlatform,
   isWechatPaymentCancel,
   requestWechatVirtualPayment,
-  reportPayFailure,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
+import { reportPayFailure } from '../../apis/order'
 
 const agentId = ref('')
 const voicePackageCenter = ref<AgentVoicePackageCenter | null>(null)
