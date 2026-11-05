@@ -5,6 +5,7 @@ import { RedisService } from '@midwayjs/redis';
 import { createDecipheriv, createHmac } from 'crypto';
 import * as https from 'https';
 import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { Init } from '@midwayjs/core';
 import { Formatter, Rsa, Wechatpay } from 'wechatpay-axios-plugin';
 
@@ -223,14 +224,34 @@ export class WechatPayService {
       process.env.NODE_WECHAT_PAY_CERT_PATH?.trim() ||
       'resource/cert/apiclient_cert.pem';
 
-    let pem: string;
-    try {
-      pem = readFileSync(certPath, 'utf8');
-    } catch (error) {
+    // 相对路径在不同进程 cwd 下解析结果不同（PM2 cwd=/workspace/apps/node，
+    // compose 里挂载在 /workspace/resource/cert），这里按候选路径逐个尝试。
+    const candidates = Array.from(
+      new Set([
+        certPath,
+        resolve(process.cwd(), certPath),
+        resolve(__dirname, '../../../../', certPath),
+        '/workspace/resource/cert/apiclient_cert.pem',
+      ])
+    );
+
+    let pem = '';
+    let loadedPath = '';
+    let lastError: unknown;
+    for (const candidate of candidates) {
+      try {
+        pem = readFileSync(candidate, 'utf8');
+        loadedPath = candidate;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!loadedPath) {
       this.logger?.warn?.(
         '[wechat-pay] cert guard skipped: cannot read %s, reason=%s',
         certPath,
-        error instanceof Error ? error.message : String(error)
+        lastError instanceof Error ? lastError.message : String(lastError)
       );
       return;
     }
@@ -249,8 +270,9 @@ export class WechatPayService {
 
     if (cn === mchId) {
       this.logger?.info?.(
-        '[wechat-pay] merchant certificate verified, mchid=%s',
-        mchId
+        '[wechat-pay] merchant certificate verified, mchid=%s, cert=%s',
+        mchId,
+        loadedPath
       );
       return;
     }
