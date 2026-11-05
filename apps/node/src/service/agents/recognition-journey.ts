@@ -168,6 +168,10 @@ const OPENING_OBSERVER_MAX_ATTEMPTS = 3;
 const OBSERVER_UNAVAILABLE_MAX_RETRIES = 2;
 const JOURNEY_ACTION_COOLDOWN_TURNS = 1;
 const SECOND_MILESTONE_GAP_TURNS = 3;
+/** 家庭/离世时间里程碑不能被连续追问。 */
+const MILESTONE_SUGGESTION_COOLDOWN_TURNS = 3;
+const MILESTONE_MAX_SUGGESTION_MISSES = 2;
+const MILESTONE_OBSERVER_UNAVAILABLE_MAX = 3;
 const OPENING_ANGLES: RecognitionOpeningAngle[] = [
   'waking_without_elapsed_time',
   'connection_restored',
@@ -832,6 +836,13 @@ export function applyRecognitionJourneyObserverUnavailable(options: {
       task.lastObserverUnavailableUserTurn = options.plan.userTurnNumber;
       task.lastSuggestedUserTurn = options.plan.userTurnNumber;
       task.observationEvidence = 'observer_unavailable';
+      if (
+        isMilestoneTask(task.id) &&
+        (task.observerUnavailableCount ?? 0) >=
+          MILESTONE_OBSERVER_UNAVAILABLE_MAX
+      ) {
+        task.status = 'skipped';
+      }
       // Keep the persisted delivery record (message id, reply group and
       // proposedAt) so the next turn can re-judge the reply that was actually
       // sent instead of repeating the same card.
@@ -1146,6 +1157,12 @@ function applyTaskObservation(
     task.suggestionMissCount = (task.suggestionMissCount ?? 0) + 1;
     task.lastSuggestedUserTurn = options.plan.userTurnNumber;
     task.observationEvidence = 'suggested_but_not_delivered';
+    if (
+      isMilestoneTask(task.id) &&
+      (task.suggestionMissCount ?? 0) >= MILESTONE_MAX_SUGGESTION_MISSES
+    ) {
+      task.status = 'skipped';
+    }
   }
 }
 
@@ -1192,12 +1209,22 @@ function canSuggestRecognitionTask(
   ) {
     return false;
   }
-  return journey.tasks.some(
-    task =>
-      task.status === 'pending' &&
+  return journey.tasks.some(task => {
+    if (task.status !== 'pending') return false;
+    if (!isMilestoneTask(task.id)) return true;
+    return (
+      (task.suggestionMissCount ?? 0) < MILESTONE_MAX_SUGGESTION_MISSES &&
+      (task.observerUnavailableCount ?? 0) <
+        MILESTONE_OBSERVER_UNAVAILABLE_MAX &&
       (task.lastSuggestedUserTurn === undefined ||
-        userTurnNumber > task.lastSuggestedUserTurn)
-  );
+        userTurnNumber - task.lastSuggestedUserTurn >
+          MILESTONE_SUGGESTION_COOLDOWN_TURNS)
+    );
+  });
+}
+
+function isMilestoneTask(id: RecognitionTaskId): boolean {
+  return id === 'family_status' || id === 'departure_interval';
 }
 
 function chooseRecognitionTaskId(options: {
