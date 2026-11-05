@@ -92,6 +92,7 @@ import {
   isIosClientPlatform,
   isWechatPaymentCancel,
   requestWechatVirtualPayment,
+  reportPayFailure,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
@@ -357,9 +358,22 @@ async function handlePurchaseTap() {
           throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        await requestWechatVirtualPayment(result.virtualPayment, {
-          orderId: result.order.id,
-        })
+        // iOS/安卓都在拉起支付前先关掉 loading：iOS 上带 mask 的 loading 会挡住支付面板
+        void Taro.hideLoading()
+        try {
+          await requestWechatVirtualPayment(result.virtualPayment, {
+            orderId: result.order.id,
+          })
+        } catch (error) {
+          void reportPayFailure({
+            orderId: result.order.id,
+            orderNo: result.order.orderNo,
+            stage: 'virtual_payment',
+            channel: 'virtual',
+            errMsg: (error as { errMsg?: string })?.errMsg || String(error),
+          })
+          throw error
+        }
       }
     } else {
       const result = await createVipPlanOrder({
@@ -372,7 +386,19 @@ async function handlePurchaseTap() {
           throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        await Taro.requestPayment(result.payment)
+        void Taro.hideLoading()
+        try {
+          await Taro.requestPayment(result.payment)
+        } catch (error) {
+          void reportPayFailure({
+            orderId: result.order.id,
+            orderNo: result.order.orderNo,
+            stage: 'request_payment',
+            channel: 'wechat_pay',
+            errMsg: (error as { errMsg?: string })?.errMsg || String(error),
+          })
+          throw error
+        }
       }
       paidOrderId = result.order.id
     }

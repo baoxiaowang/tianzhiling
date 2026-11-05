@@ -92,6 +92,27 @@ export class OrderController {
     );
   }
 
+  @Post('/pay-failure')
+  async reportPayFailure(
+    @Body()
+    body: {
+      orderId?: string;
+      orderNo?: string;
+      stage?: string;
+      platform?: string;
+      channel?: string;
+      errMsg?: string;
+      sdkVersion?: string;
+      weappVersion?: string;
+      extra?: Record<string, unknown>;
+    }
+  ) {
+    return this.orderService.recordClientPayFailure(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body ?? {}
+    );
+  }
+
   @Post('/:orderId/refund')
   async refundOrder(@Param('orderId') orderId: string) {
     return this.orderService.refundUserOrder(

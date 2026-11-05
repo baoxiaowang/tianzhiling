@@ -53,6 +53,7 @@ import {
   VoiceTrainingTaskEntity,
   UserKnownPersonFaceEntity,
   FaceRecognitionLogEntity,
+  ClientPayFailureLogEntity,
 } from '@tzl/entities';
 import { MessageUserCountSubscriber } from '../subscriber/message-user-count.subscriber';
 import { SiteMessageEntity } from '../entity/site-message.entity';
@@ -1255,6 +1256,7 @@ export default {
           UserKnownPersonEntity,
           UserKnownPersonFaceEntity,
           FaceRecognitionLogEntity,
+          ClientPayFailureLogEntity,
           UserRelativeFactEntity,
           UserRelativeProfileEntity,
           UserSelfFactEntity,

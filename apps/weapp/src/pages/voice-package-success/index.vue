@@ -115,6 +115,7 @@ import {
   isIosClientPlatform,
   isWechatPaymentCancel,
   requestWechatVirtualPayment,
+  reportPayFailure,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 
@@ -334,9 +335,20 @@ async function handlePay() {
           throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        await requestWechatVirtualPayment(result.virtualPayment, {
-          orderId: result.order.id,
-        })
+        try {
+          await requestWechatVirtualPayment(result.virtualPayment, {
+            orderId: result.order.id,
+          })
+        } catch (error) {
+          void reportPayFailure({
+            orderId: result.order.id,
+            orderNo: result.order.orderNo,
+            stage: 'virtual_payment',
+            channel: 'virtual',
+            errMsg: (error as { errMsg?: string })?.errMsg || String(error),
+          })
+          throw error
+        }
       }
     } else {
       const result = await createVoicePackageOrder({
@@ -345,7 +357,21 @@ async function handlePay() {
         jsCode: code,
       })
 
-      await Taro.requestPayment(result.payment)
+      if (!result.payment) {
+        throw new Error('支付参数获取失败，请稍后重试')
+      }
+      try {
+        await Taro.requestPayment(result.payment)
+      } catch (error) {
+        void reportPayFailure({
+          orderId: result.order.id,
+          orderNo: result.order.orderNo,
+          stage: 'request_payment',
+          channel: 'wechat_pay',
+          errMsg: (error as { errMsg?: string })?.errMsg || String(error),
+        })
+        throw error
+      }
       paidOrderId = result.order.id
     }
     voicePackagePopupVisible.value = false

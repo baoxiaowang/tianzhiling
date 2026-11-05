@@ -360,3 +360,25 @@ export type {
   WechatPaymentParamsDTO,
   WechatVirtualPaymentParamsDTO,
 }
+
+/** 上报支付拉起失败，便于后端定位「点支付没反应」 */
+export async function reportPayFailure(payload: {
+  orderId?: string
+  orderNo?: string
+  stage: string
+  platform?: string
+  channel?: string
+  errMsg?: string
+  sdkVersion?: string
+  weappVersion?: string
+  extra?: Record<string, unknown>
+}) {
+  try {
+    await post('/api/orders/pay-failure', {
+      ...payload,
+      platform: payload.platform || getClientPlatform(),
+    })
+  } catch {
+    // 上报失败不影响主流程
+  }
+}

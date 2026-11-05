@@ -28,6 +28,7 @@ import {
   VoiceTrainingTaskEntity,
   VoiceTrainingTaskStatus,
   VoiceTrainingTaskTrainingStrategy,
+  ClientPayFailureLogEntity,
 } from '@tzl/entities';
 import type {
   CreateVipPlanOrderDTO,
@@ -155,6 +156,9 @@ export class OrderService {
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
+
+  @InjectEntityModel(ClientPayFailureLogEntity)
+  clientPayFailureLogModel: MongoRepository<ClientPayFailureLogEntity>;
 
   @InjectEntityModel(OrderRefundEntity)
   orderRefundModel: MongoRepository<OrderRefundEntity>;
@@ -957,6 +961,49 @@ export class OrderService {
     }
 
     return this.buildOrderRecord(order);
+  }
+
+  /** 记录客户端「拉起支付失败」，用于定位 iOS/安卓支付弹不出来的问题。 */
+  async recordClientPayFailure(
+    auth: AuthenticatedUserPayload,
+    payload: {
+      orderId?: string;
+      orderNo?: string;
+      stage?: string;
+      platform?: string;
+      channel?: string;
+      errMsg?: string;
+      sdkVersion?: string;
+      weappVersion?: string;
+      extra?: Record<string, unknown>;
+    }
+  ): Promise<{ ok: boolean }> {
+    try {
+      await this.clientPayFailureLogModel.save(
+        this.clientPayFailureLogModel.create({
+          userId: this.parseObjectId(auth.sub),
+          orderId:
+            payload?.orderId && MongoObjectId.isValid(payload.orderId)
+              ? new MongoObjectId(payload.orderId)
+              : undefined,
+          orderNo: payload?.orderNo,
+          stage: payload?.stage || 'unknown',
+          platform: payload?.platform || 'unknown',
+          channel: payload?.channel,
+          errMsg: String(payload?.errMsg || '').slice(0, 500),
+          sdkVersion: payload?.sdkVersion,
+          weappVersion: payload?.weappVersion,
+          extra: payload?.extra,
+          createdAt: new Date(),
+        } as unknown as ClientPayFailureLogEntity)
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[order] record client pay failure failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    return { ok: true };
   }
 
   async refundUserOrder(
