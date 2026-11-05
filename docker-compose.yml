@@ -53,7 +53,7 @@ services:
     expose:
       - "7001"
     volumes:
-      - ./resource/cert:/workspace/resource/cert:ro
+      - ${TZL_CERTS_DIR:-/etc/tzl/certs}:/workspace/resource/cert:ro
     depends_on:
       - tzl_redis
       - tzl_mongo
@@ -110,7 +110,7 @@ services:
         "./scripts/memory-worker-bootstrap.js",
       ]
     volumes:
-      - ./resource/cert:/workspace/resource/cert:ro
+      - ${TZL_CERTS_DIR:-/etc/tzl/certs}:/workspace/resource/cert:ro
     depends_on:
       - tzl_redis
       - tzl_mongo
@@ -148,7 +148,7 @@ services:
     expose:
       - "7101"
     volumes:
-      - ./resource/cert:/workspace/resource/cert:ro
+      - ${TZL_CERTS_DIR:-/etc/tzl/certs}:/workspace/resource/cert:ro
     depends_on:
       - tzl_redis
       - tzl_mongo

@@ -36,3 +36,6 @@ _patch_cos.mjs
 
 # 任务协议自动生成的证据文件（不入库）
 .task-evidence/
+
+# 商户证书/私钥只放服务器 /etc/tzl/certs，绝不进 git
+/resource/cert/

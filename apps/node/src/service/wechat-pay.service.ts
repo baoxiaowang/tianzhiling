@@ -4,6 +4,8 @@ import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { createDecipheriv, createHmac } from 'crypto';
 import * as https from 'https';
+import { readFileSync } from 'fs';
+import { Init } from '@midwayjs/core';
 import { Formatter, Rsa, Wechatpay } from 'wechatpay-axios-plugin';
 
 interface WechatPayConfig {
@@ -198,6 +200,69 @@ const WECHAT_ACCESS_TOKEN_INVALID_ERRCODES = new Set([40001, 40014, 42001]);
 
 @Provide()
 export class WechatPayService {
+
+  /**
+   * 启动守卫：商户 API 证书的 CN 必须等于配置的 mchid。
+   * 2026-11-05 未了言事故：resource/cert 被换成天之灵的证书，
+   * 微信返回 SIGN_ERROR，支付全部拉不起来，但服务照常启动、没有任何告警。
+   * 默认 strict（不匹配直接起不来），可用 NODE_WECHAT_PAY_CERT_GUARD=warn|off 降级。
+   */
+  @Init()
+  assertMerchantCertificateMatches(): void {
+    const mode = String(process.env.NODE_WECHAT_PAY_CERT_GUARD || 'strict')
+      .trim()
+      .toLowerCase();
+    if (['off', '0', 'false', 'no'].includes(mode)) {
+      return;
+    }
+    const mchId = this.wechatPayConfig?.mchId?.trim();
+    if (!this.wechatPayConfig?.enabled || !mchId) {
+      return;
+    }
+    const certPath =
+      process.env.NODE_WECHAT_PAY_CERT_PATH?.trim() ||
+      'resource/cert/apiclient_cert.pem';
+
+    let pem: string;
+    try {
+      pem = readFileSync(certPath, 'utf8');
+    } catch (error) {
+      this.logger?.warn?.(
+        '[wechat-pay] cert guard skipped: cannot read %s, reason=%s',
+        certPath,
+        error instanceof Error ? error.message : String(error)
+      );
+      return;
+    }
+
+    let cn = '';
+    try {
+      const subject = readCertificateSubject(pem);
+      cn = subject.match(/CN=([^\n,]+)/)?.[1]?.trim() || '';
+    } catch (error) {
+      this.logger?.warn?.(
+        '[wechat-pay] cert guard skipped: invalid certificate %s',
+        certPath
+      );
+      return;
+    }
+
+    if (cn === mchId) {
+      this.logger?.info?.(
+        '[wechat-pay] merchant certificate verified, mchid=%s',
+        mchId
+      );
+      return;
+    }
+
+    const message = `[wechat-pay] 商户证书与配置不匹配：证书 CN=${cn || '(空)'}，配置 mchid=${mchId}，证书=${certPath}。请检查 resource/cert 是否被其他品牌覆盖。`;
+    if (mode === 'warn') {
+      this.logger?.error?.(message);
+      return;
+    }
+    throw new Error(message);
+  }
+
   @Logger()
   logger: ILogger;
 
@@ -1216,4 +1281,16 @@ export class WechatPayService {
       };
     }
   }
+}
+
+/** 读取 X.509 证书的 subject（@types/node 较老时没有 X509Certificate 类型）。 */
+function readCertificateSubject(pem: string): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const nodeCrypto = require('crypto') as {
+    X509Certificate?: new (value: string) => { subject: string };
+  };
+  if (!nodeCrypto.X509Certificate) {
+    throw new Error('X509Certificate is not available in this node version');
+  }
+  return new nodeCrypto.X509Certificate(pem).subject;
 }
