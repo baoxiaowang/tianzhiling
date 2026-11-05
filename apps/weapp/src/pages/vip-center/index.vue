@@ -301,7 +301,16 @@ function handleAgreementTap(type: AgreementDocumentType) {
   void openAgreementDocument(type)
 }
 
+const PAY_TAP_LOCK_MS = 2000
+let lastPayTapAt = 0
+
 async function handlePurchaseTap() {
+  if (Date.now() - lastPayTapAt < PAY_TAP_LOCK_MS) {
+    showToast('操作太频繁，请稍后再试')
+    return
+  }
+  lastPayTapAt = Date.now()
+
   if (
     isCheckingAuth.value ||
     isLoading.value ||
@@ -426,12 +435,18 @@ async function handlePurchaseTap() {
       return
     }
 
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : '支付失败，请稍后重试'
+    const rawMessage =
+      error instanceof Error && error.message ? error.message : ''
+    const errMsg = (error as { errMsg?: string })?.errMsg || rawMessage
+    const isInvokeFailure =
+      /requestPayment:fail|requestVirtualPayment|支付参数获取失败/i.test(errMsg) ||
+      !rawMessage
 
-    showToast(message)
+    showToast(
+      isInvokeFailure
+        ? '微信支付未弹出，请稍后重试；多次失败请升级微信'
+        : rawMessage || '支付失败，请稍后重试'
+    )
   } finally {
     void Taro.hideLoading()
     isPaying.value = false

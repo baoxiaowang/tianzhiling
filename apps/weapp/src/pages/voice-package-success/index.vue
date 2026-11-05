@@ -298,7 +298,16 @@ function handlePackageSelect(packageId: string) {
   selectedPackageId.value = packageId
 }
 
+const PAY_TAP_LOCK_MS = 2000
+let lastPayTapAt = 0
+
 async function handlePay() {
+  if (Date.now() - lastPayTapAt < PAY_TAP_LOCK_MS) {
+    showToast('操作太频繁，请稍后再试')
+    return
+  }
+  lastPayTapAt = Date.now()
+
   const voicePackage = selectedPackage.value
 
   if (!voicePackage || !agentId.value || isPaying.value) {
@@ -388,12 +397,18 @@ async function handlePay() {
       return
     }
 
+    const invokeFailure = /requestPayment:fail|requestVirtualPayment|支付参数获取失败/i.test(
+      (error as { errMsg?: string })?.errMsg || (error instanceof Error ? error.message : '')
+    )
+
     const message =
       error instanceof ApiException && error.code === 'VOICE_TRAINING_TASK_EXISTS'
         ? '已有声音训练任务处理中，请完成后再购买其他套餐'
-        : error instanceof ApiException || error instanceof Error
-          ? error.message
-          : '支付失败，请稍后重试'
+        : invokeFailure
+          ? '微信支付未弹出，请稍后重试；多次失败请升级微信'
+          : error instanceof ApiException || error instanceof Error
+            ? error.message
+            : '支付失败，请稍后重试'
 
     showToast(message || '支付失败，请稍后重试')
   } finally {
