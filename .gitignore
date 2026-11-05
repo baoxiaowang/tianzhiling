@@ -42,3 +42,6 @@ _patch_cos.mjs
 
 # SSL 证书与私钥只放服务器 /etc/tzl/ssl，绝不进 git
 /apps/gateway/ssl/
+
+# 生产环境变量只放服务器 /etc/tzl/env/.env，绝不进 git
+/.env

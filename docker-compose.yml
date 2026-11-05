@@ -30,7 +30,11 @@ services:
       args:
         RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     env_file:
-      - .env
+      # /etc/tzl/env/.env 是权威配置（不进 git）；仓库内 .env 仅作开发默认，可缺省。
+      - path: .env
+        required: false
+      - path: ${TZL_ENV_FILE:-/etc/tzl/env/.env}
+        required: true
     environment:
       NODE_PORT: 7001
       NODE_REDIS_HOST: tzl_redis
@@ -79,7 +83,11 @@ services:
     # 注意这不是上限（上限是上面的 cpus），只是争抢时的相对比例。
     cpu_shares: 128
     env_file:
-      - .env
+      # /etc/tzl/env/.env 是权威配置（不进 git）；仓库内 .env 仅作开发默认，可缺省。
+      - path: .env
+        required: false
+      - path: ${TZL_ENV_FILE:-/etc/tzl/env/.env}
+        required: true
     environment:
       NODE_PORT: 7001
       NODE_REDIS_HOST: tzl_redis
@@ -128,7 +136,11 @@ services:
       args:
         RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     env_file:
-      - .env
+      # /etc/tzl/env/.env 是权威配置（不进 git）；仓库内 .env 仅作开发默认，可缺省。
+      - path: .env
+        required: false
+      - path: ${TZL_ENV_FILE:-/etc/tzl/env/.env}
+        required: true
     environment:
       ADMIN_API_PORT: 7101
       RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
