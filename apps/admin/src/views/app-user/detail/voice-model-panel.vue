@@ -424,6 +424,30 @@
               片段 {{ index + 1 }} ·
               {{ formatClipDuration(clip.durationSeconds) }}
             </div>
+            <div class="voice-model-panel__clip-order">
+              <a-button
+                size="mini"
+                type="text"
+                aria-label="上移片段"
+                :disabled="index === 0"
+                @click="moveClip(index, -1)"
+              >
+                <template #icon>
+                  <icon-arrow-up />
+                </template>
+              </a-button>
+              <a-button
+                size="mini"
+                type="text"
+                aria-label="下移片段"
+                :disabled="index === voiceClips.length - 1"
+                @click="moveClip(index, 1)"
+              >
+                <template #icon>
+                  <icon-arrow-down />
+                </template>
+              </a-button>
+            </div>
             <audio
               :src="clip.publicUrl"
               controls
@@ -1532,6 +1556,34 @@
     );
   };
 
+  /**
+   * 上移 / 下移训练片段。
+   * 合并训练音频按 voiceClips 的顺序拼接，所以移动后同时把顺序保存到素材，
+   * 保证「提交训练」时后端拿到的顺序与界面一致。
+   */
+  const moveClip = async (index: number, delta: number) => {
+    const targetIndex = index + delta;
+    if (targetIndex < 0 || targetIndex >= voiceClips.value.length) {
+      return;
+    }
+    const clips = voiceClips.value.slice();
+    const [moved] = clips.splice(index, 1);
+    clips.splice(targetIndex, 0, moved);
+    voiceClips.value = clips;
+    const materialIds = Array.from(
+      new Set(
+        [moved.sourceMaterialId, clips[targetIndex]?.sourceMaterialId].filter(
+          Boolean
+        ) as string[]
+      )
+    );
+    try {
+      await Promise.all(materialIds.map((id) => persistMaterialClips(id)));
+    } catch (error) {
+      Message.error('片段顺序保存失败');
+    }
+  };
+
   const setClipReviewStatus = async (
     clip: VoiceClip,
     value: string | number | boolean
@@ -2406,6 +2458,21 @@
     &__clip-title {
       min-width: 180px;
       font-weight: 500;
+    }
+
+    &__clip-order {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-left: -6px;
+
+      :deep(.arco-btn) {
+        width: 20px;
+        min-width: 20px;
+        height: 18px;
+        padding: 0;
+        line-height: 18px;
+      }
     }
 
     &__agents {
