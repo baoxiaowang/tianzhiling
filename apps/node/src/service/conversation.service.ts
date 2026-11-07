@@ -281,6 +281,20 @@ const LIGHTWEIGHT_REPLY_TOP_P = 0.9;
 const LIGHTWEIGHT_REPLY_HISTORY_LIMIT = 12;
 const LIGHTWEIGHT_REPLY_HISTORY_CHARACTER_LIMIT = 1400;
 const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
+
+/**
+ * 语音自动回复的“长回复”按单个气泡判断，不能把多个短气泡相加。
+ * 否则一次 3 个 20 字的气泡会被误判为长回复，用户接入音色后几乎每轮都是语音。
+ */
+export function hasAutoVoiceLongReply(replySegments: string[]): boolean {
+  return replySegments
+    .slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
+    .some(
+      segment =>
+        countReplyVisibleCharacters([segment]) >=
+        ASSISTANT_AUTO_VOICE_MIN_CHARACTERS
+    );
+}
 const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'fact_audit';
 const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
   /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
@@ -10600,10 +10614,7 @@ export class ConversationService {
     };
     routing?: ReplyRoutingAudit;
   }): Promise<MessageEntity[] | undefined> {
-    const hasLongReply =
-      countReplyVisibleCharacters(
-        options.replySegments.slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
-      ) >= ASSISTANT_AUTO_VOICE_MIN_CHARACTERS;
+    const hasLongReply = hasAutoVoiceLongReply(options.replySegments);
 
     if (
       options.before.messagePayload.type !== MessageType.voice &&

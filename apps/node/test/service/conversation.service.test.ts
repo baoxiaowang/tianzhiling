@@ -19,6 +19,7 @@ import {
 import {
   CONVERSATION_REPLY_QUEUE,
   ConversationService,
+  hasAutoVoiceLongReply,
 } from '../../src/service/conversation.service';
 import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import {
@@ -6059,5 +6060,16 @@ describe('ConversationService reply lock renewal', () => {
     await service.renewConversationReplyLock('conversation-1', 'token-1');
 
     expect(pexpire).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('hasAutoVoiceLongReply', () => {
+  it('does not combine multiple short bubbles into a long reply', () => {
+    expect(hasAutoVoiceLongReply(['你'.repeat(20), '好'.repeat(20), '呀'.repeat(20)])).toBe(false);
+  });
+
+  it('triggers when one bubble itself reaches the threshold', () => {
+    expect(hasAutoVoiceLongReply(['你'.repeat(55)])).toBe(true);
   });
 });
