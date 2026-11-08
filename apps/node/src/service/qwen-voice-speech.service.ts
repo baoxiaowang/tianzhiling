@@ -9,6 +9,7 @@ import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
 import { AppError } from '../common/errors';
+import { normalizeWavAudioBuffer } from './voice-wav-output.util';
 
 interface QwenVoiceConfig {
   enabled?: boolean;
@@ -168,14 +169,19 @@ export class QwenVoiceSpeechService {
       );
       return {
         ...downloaded,
+        audioBuffer: this.normalizeSpeechBuffer(
+          downloaded.audioBuffer,
+          downloaded.mimeType
+        ),
         nativeSpeechSpeedApplied: qwenAudio,
       };
     }
 
     if (data) {
+      const rawBuffer = Buffer.from(data, 'base64');
       return {
         audioUrl: '',
-        audioBuffer: Buffer.from(data, 'base64'),
+        audioBuffer: this.normalizeSpeechBuffer(rawBuffer, 'audio/wav'),
         mimeType: 'audio/wav',
         requestId: response.request_id?.trim() || undefined,
         nativeSpeechSpeedApplied: qwenAudio,
@@ -188,6 +194,45 @@ export class QwenVoiceSpeechService {
       502,
       response
     );
+  }
+
+  /**
+   * 流式 wav 的头部长度字段是占位值（约 2GB），按头部解码的播放器会拿到
+   * 几十小时的错误时长，个别设备会在结尾提前停止播放，听感上像「最后几个字没声」。
+   * 这里重写头部并补一小段静音，让所有播放器都能完整播完。
+   */
+  private normalizeSpeechBuffer(buffer: Buffer, mimeType?: string): Buffer {
+    const isWav =
+      /wav|wave/i.test(mimeType || '') ||
+      buffer.toString('ascii', 8, 12) === 'WAVE';
+
+    if (!isWav) {
+      return buffer;
+    }
+
+    const tailSilenceMs = this.resolveTailSilenceMs();
+
+    try {
+      return normalizeWavAudioBuffer(buffer, { tailSilenceMs });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[qwen-voice-speech] normalize wav failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+      return buffer;
+    }
+  }
+
+  private resolveTailSilenceMs(): number {
+    const raw = process.env.NODE_VOICE_TTS_TAIL_SILENCE_MS?.trim();
+
+    if (!raw) {
+      return 300;
+    }
+
+    const value = Number(raw);
+
+    return Number.isFinite(value) ? value : 300;
   }
 
   private ensureEnabled(): void {
