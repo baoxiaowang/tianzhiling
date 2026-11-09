@@ -95,6 +95,15 @@ describe('retrospective self-blame false positives', () => {
     );
   });
 
+  it('does not silence a denial phrased as “哪里舍得骂你”', () => {
+    expect(
+      assessPermanentAgentSilence(['就是啊我哪里舍得骂你']).shouldSilence
+    ).toBe(false);
+    expect(assessPermanentAgentSilence(['我哪里舍得骂你']).shouldSilence).toBe(
+      false
+    );
+  });
+
   it('still silences future or ongoing malicious intent', () => {
     for (const turn of [
       '我以后天天骂你',
