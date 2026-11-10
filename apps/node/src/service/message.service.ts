@@ -198,7 +198,12 @@ export class MessageService {
         .filter(Boolean)
     );
 
-    if (!automaticBatchIds.size) {
+    // 普通对话列表里没有 importBatchId 时也要继续查一次：自动导入的
+    // 源截图可能因为批处理链路丢失关联字段，但 objectKey 仍在 batch.assets 里。
+    const needsAutomaticImportLookup =
+      automaticBatchIds.size > 0 ||
+      messages.some(message => message.type === MessageType.image);
+    if (!needsAutomaticImportLookup) {
       return messages;
     }
 
@@ -207,34 +212,56 @@ export class MessageService {
         conversationId,
       } as never,
     });
-    const batchById = new Map(
-      batches
-        .filter(
-          batch =>
-            batch.clientRequestId?.startsWith('automatic-image:') &&
-            automaticBatchIds.has(this.stringifyObjectId(batch.id))
-        )
-        .map(batch => [this.stringifyObjectId(batch.id), batch] as const)
+    const automaticBatches = batches.filter(batch =>
+      batch.clientRequestId?.startsWith('automatic-image:')
     );
+    const batchById = new Map(
+      automaticBatches.map(
+        batch => [this.stringifyObjectId(batch.id), batch] as const
+      )
+    );
+    const batchByAssetKey = new Map<string, (typeof automaticBatches)[number]>();
+    for (const batch of automaticBatches) {
+      for (const asset of batch.assets || []) {
+        const objectKey = asset.objectKey?.trim();
+        if (objectKey) {
+          batchByAssetKey.set(objectKey, batch);
+        }
+      }
+    }
 
     return messages.filter(message => {
       const batchId = message.importBatchId
         ? this.stringifyObjectId(message.importBatchId)
         : '';
-      const batch = batchById.get(batchId);
+      const objectKey = message.mediaObjectKey?.trim() || '';
+      const batch =
+        batchById.get(batchId) ||
+        (objectKey ? batchByAssetKey.get(objectKey) : undefined);
+      const isImportedMessage = message.source === MessageSource.wechatImport;
+      const hasImportScreenshotAnalysis =
+        message.type === MessageType.image &&
+        /"imageType"\s*:\s*"chat_screenshot"/u.test(
+          message.mediaAnalysis || ''
+        );
+      const isSourceScreenshot =
+        !isImportedMessage &&
+        message.type === MessageType.image &&
+        (!message.importBatchId ||
+          message.replyTrigger === false ||
+          hasImportScreenshotAnalysis);
 
       if (!batch) {
+        // 自动导入的源截图可能因批处理失败没有 importBatchId；
+        // 只要图片已被识别为聊天截图，且会话里存在自动导入，就不在对话流展示。
+        if (hasImportScreenshotAnalysis && automaticBatches.length > 0) {
+          return false;
+        }
         return true;
       }
 
-      const isImportedMessage = message.source === MessageSource.wechatImport;
-      const isSourceMessage =
-        !isImportedMessage &&
-        message.type === MessageType.image &&
-        message.replyTrigger === false;
-
       if (batch.confirmedAt) {
-        return !isSourceMessage;
+        return !isSourceScreenshot;
       }
 
       return !isImportedMessage;
