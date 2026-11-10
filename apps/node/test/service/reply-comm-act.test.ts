@@ -55,7 +55,6 @@ describe('reply comm act', () => {
     expect(plan.steps.some(step => step.act === 'echo_content')).toBe(false);
     expect(plan.targetUnit).toBeUndefined();
     expect(buildReplyCommActPrompt(plan)).not.toContain('复述用户说的具体内容');
-    expect(buildReplyCommActPrompt(plan)).toContain('不要为了接话复述');
   });
 
   it('uses natural close when the user is withdrawing from the conversation', () => {

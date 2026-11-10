@@ -257,11 +257,7 @@ export function buildReplyCommActPrompt(plan?: ReplyCommActPlan): string {
   const followUpHint = hasFollowUpProbe
     ? '追问最多一个，先接住或点出这件事再问；不让用户重讲已经说清的内容，不审问，不把表达责任推回用户。'
     : '';
-  const noEchoHint = plan.avoidEcho
-    ? '不要为了接话复述用户刚说过的原话，也不要换词回放或先总结原话；直接回应这句话里的感受、含义、判断或下一步。'
-    : '';
-
-  return `沟通姿态：${steps}。${followUpHint}${noEchoHint}用自然口吻完成，不输出这些字段；若与用户原话或当前关系分寸冲突，以用户原话为准。`;
+  return `沟通姿态：${steps}。${followUpHint}用自然口吻完成，不输出这些字段；若与用户原话或当前关系分寸冲突，以用户原话为准。`;
 }
 
 export function verifyReplyCommActEcho(
