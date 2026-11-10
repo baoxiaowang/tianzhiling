@@ -90,8 +90,10 @@ describe('reply content units', () => {
 
     expect(prompt).toContain('person:"你女婿"');
     expect(prompt).toContain('event:"下班莫名掉眼泪"');
-    expect(prompt).toContain('先照着其中一件具体的事回应');
+    expect(prompt).toContain('先把其中一件具体的事当作理解背景');
+    expect(prompt).toContain('不要整句回放或换词重复');
     expect(prompt).toContain('不要跳过这些事');
+    expect(prompt).not.toContain('比如复述');
   });
 
   it('recognizes when a reply echoes a short mention or a long anchor fragment', () => {
@@ -170,6 +172,6 @@ describe('reply content units', () => {
     ]);
     expect(brief.prompt).toContain('本轮用户说了具体的事');
     expect(brief.prompt).toContain('person:"你女婿"');
-    expect(brief.prompt).toContain('先照着其中一件具体的事回应');
+    expect(brief.prompt).toContain('先把其中一件具体的事当作理解背景');
   });
 });

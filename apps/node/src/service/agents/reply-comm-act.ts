@@ -57,8 +57,8 @@ const STATE_DEFAULTS: Record<
   ConversationUserState,
   { L1: CommActKind; L2: CommActKind; L3: CommActKind }
 > = {
-  opening: { L1: 'echo_content', L2: 'reflect_feeling', L3: 'invite' },
-  exploring: { L1: 'echo_content', L2: 'concretize', L3: 'invite' },
+  opening: { L1: 'concretize', L2: 'reflect_feeling', L3: 'invite' },
+  exploring: { L1: 'concretize', L2: 'reflect_feeling', L3: 'invite' },
   deepening: { L1: 'concretize', L2: 'reflect_feeling', L3: 'silence_hold' },
   repairing: { L1: 'validate', L2: 'reflect_feeling', L3: 'share_stance' },
   withdrawing: { L1: 'reflect_feeling', L2: 'validate', L3: 'leave_space' },
@@ -73,11 +73,12 @@ const STRATEGY_TO_L3: Partial<
   grounded_detail: 'concretize',
   topic_transition: 'redirect',
   leave_space: 'leave_space',
-  answer: 'echo_content',
+  answer: 'concretize',
 };
 
 const ACT_TEXT: Record<CommActKind, string> = {
-  echo_content: '复述用户说的具体内容',
+  // 保留旧枚举值仅用于兼容历史审计；当前不再生成 echo_content。
+  echo_content: '复述用户说的具体内容（已停用）',
   concretize: '贴着一个具体细节展开',
   reflect_feeling: '把情绪放回那个情境里回应',
   validate: '肯定这份感受的合理性',

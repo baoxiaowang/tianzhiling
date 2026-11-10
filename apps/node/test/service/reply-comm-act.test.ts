@@ -25,13 +25,25 @@ describe('reply comm act', () => {
     });
 
     expect(plan.steps.map(step => step.act)).toEqual([
-      'echo_content',
       'concretize',
+      'reflect_feeling',
       'invite',
     ]);
     expect(plan.targetUnit?.text).toBe('你女婿');
-    expect(buildReplyCommActPrompt(plan)).toContain('L1=复述用户说的具体内容');
+    expect(buildReplyCommActPrompt(plan)).toContain('L1=贴着一个具体细节展开');
     expect(buildReplyCommActPrompt(plan)).toContain('锚点：你女婿');
+  });
+
+  it('never generates echo_content, including for answer strategy', () => {
+    const plan = resolveReplyCommAct({
+      currentQuery: '你吃饭了吗',
+      state: 'opening',
+      contentUnits: [{ kind: 'event', text: '吃饭', source: 'utterance' }],
+      strategyQuality: { preferredAlternative: 'answer' } as never,
+    });
+
+    expect(plan.steps.some(step => step.act === 'echo_content')).toBe(false);
+    expect(buildReplyCommActPrompt(plan)).not.toContain('复述用户说的具体内容');
   });
 
   it('uses natural close when the user is withdrawing from the conversation', () => {

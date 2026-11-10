@@ -153,7 +153,7 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery, intent });
     const brief = buildReplyBrief({ currentQuery, intent, route });
 
-    expect(brief.commAct?.steps[0].act).toBe('echo_content');
+    expect(brief.commAct?.steps[0].act).toBe('concretize');
     expect(brief.commAct?.steps[2].act).toBe('follow_up_probe');
     expect(brief.prompt).toContain('追问最多一个');
   });
