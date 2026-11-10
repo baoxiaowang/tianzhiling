@@ -34,29 +34,6 @@ describe('reply comm act', () => {
     expect(buildReplyCommActPrompt(plan)).toContain('锚点：你女婿');
   });
 
-  it('can suppress echo content for agents that must not parrot the user', () => {
-    const units = collectContentUnits({
-      objectPlan: {
-        objects: [
-          { ref: 'o1', mention: '你女婿', kind: 'other_person', binding: 'unknown', confidence: 'high' },
-        ],
-        focusRefs: ['o1'],
-        ambiguousMentions: [],
-      },
-      anchors: [{ text: '前两天下班回家莫名眼眶红了', importance: 'high' }],
-    });
-    const plan = resolveReplyCommAct({
-      currentQuery: '前两天下班回家莫名眼眶红了，你女婿问怎么了',
-      state: 'exploring',
-      contentUnits: units,
-      avoidEcho: true,
-    });
-
-    expect(plan.steps.some(step => step.act === 'echo_content')).toBe(false);
-    expect(plan.targetUnit).toBeUndefined();
-    expect(buildReplyCommActPrompt(plan)).not.toContain('复述用户说的具体内容');
-  });
-
   it('uses natural close when the user is withdrawing from the conversation', () => {
     expect(resolveConversationState({ currentQuery: '我先睡了，晚安' })).toBe(
       'closing'

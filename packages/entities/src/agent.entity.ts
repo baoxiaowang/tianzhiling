@@ -181,13 +181,6 @@ export class AgentEntity extends BaseEntity {
   customContext?: string;
 
   /**
-   * 该智能体不要求通过复述用户原话来接话。
-   * 仅影响沟通姿态，不改变事实、边界和记忆。
-   */
-  @Column()
-  avoidEchoingUserContent?: boolean;
-
-  /**
    * Optional chat-derived style profile. It guides expression only and never
    * overrides confirmed facts, capability boundaries, or released clients.
    */

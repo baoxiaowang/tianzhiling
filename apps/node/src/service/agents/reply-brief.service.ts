@@ -501,7 +501,6 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
           riskLevel,
           questionNeed: conversationPlan?.questionNeed,
           preferAsk: conversationPlan?.moves.some(move => move.type === 'ask'),
-          avoidEcho: Boolean(options.agent?.avoidEchoingUserContent),
         });
   const careMotivation = resolveReplyCareMotivationPlan({
     currentQuery,

@@ -38,7 +38,6 @@ export interface ReplyCommActPlan {
   state: ConversationUserState;
   steps: CommActStep[];
   targetUnit?: ContentUnit;
-  avoidEcho?: boolean;
 }
 
 interface ResolveReplyCommActOptions {
@@ -52,7 +51,6 @@ interface ResolveReplyCommActOptions {
   riskLevel?: string;
   questionNeed?: 'none' | 'helpful' | 'necessary';
   preferAsk?: boolean;
-  avoidEcho?: boolean;
 }
 
 const STATE_DEFAULTS: Record<
@@ -193,29 +191,18 @@ function resolveL3(
 
 function buildSteps(options: ResolveReplyCommActOptions): CommActStep[] {
   const defaults = STATE_DEFAULTS[options.state];
-  const targetUnit = options.avoidEcho
-    ? undefined
-    : resolveTargetUnit(options.contentUnits);
-  let L3 = resolveL3(options.state, options.strategyQuality, options);
-  if (options.avoidEcho && L3 === 'echo_content') {
-    L3 = 'concretize';
-  }
-  const L1 =
-    options.avoidEcho && defaults.L1 === 'echo_content'
-      ? defaults.L2 === 'reflect_feeling'
-        ? 'concretize'
-        : 'reflect_feeling'
-      : defaults.L1;
+  const targetUnit = resolveTargetUnit(options.contentUnits);
+  const L3 = resolveL3(options.state, options.strategyQuality, options);
 
   const steps: CommActStep[] = [];
   if (options.contentUnits?.length) {
-    steps.push({ layer: 'L1', act: L1, targetUnit });
+    steps.push({ layer: 'L1', act: defaults.L1, targetUnit });
   } else if (options.currentQuery.trim().length >= 8) {
     // 没有结构化的具体内容时，L1 轻量回落到"具体化"，让模型贴着原话选一个点。
     steps.push({ layer: 'L1', act: 'concretize', targetUnit });
   }
 
-  if (defaults.L2 !== L1 || !options.contentUnits?.length) {
+  if (defaults.L2 !== defaults.L1 || !options.contentUnits?.length) {
     steps.push({ layer: 'L2', act: defaults.L2 });
   }
   steps.push({ layer: 'L3', act: L3, targetUnit });
@@ -234,8 +221,7 @@ export function resolveReplyCommAct(
     version: COMM_ACT_VERSION,
     state,
     steps: buildSteps({ ...options, state }),
-    targetUnit: options.avoidEcho ? undefined : targetUnit,
-    ...(options.avoidEcho ? { avoidEcho: true } : {}),
+    targetUnit,
   };
 }
 
@@ -257,6 +243,7 @@ export function buildReplyCommActPrompt(plan?: ReplyCommActPlan): string {
   const followUpHint = hasFollowUpProbe
     ? '追问最多一个，先接住或点出这件事再问；不让用户重讲已经说清的内容，不审问，不把表达责任推回用户。'
     : '';
+
   return `沟通姿态：${steps}。${followUpHint}用自然口吻完成，不输出这些字段；若与用户原话或当前关系分寸冲突，以用户原话为准。`;
 }
 
