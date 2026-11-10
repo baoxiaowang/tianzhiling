@@ -235,6 +235,7 @@ export interface ReplyBrief {
   conversationProtection: ConversationProtectionState;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
+  avoidEchoingUserContent?: boolean;
   prompt: string;
 }
 
@@ -719,6 +720,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     conversationProtection,
     lengthPlan,
     bubblePlan,
+    avoidEchoingUserContent: Boolean(options.agent?.avoidEchoingUserContent),
   };
 
   return {
@@ -2163,6 +2165,13 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     brief.commAct && needsStructuredConversationGuidance
       ? [buildReplyCommActPrompt(brief.commAct)]
       : [];
+  const avoidEchoLines = brief.avoidEchoingUserContent
+    ? [
+        '## 接话方式',
+        '不要为了接话复述用户刚说过的原话，也不要换词回放或先总结原话。先理解，再直接回应这句话里的感受、含义、判断、行动或下一步；需要锚定时只带极短关键词，不整句重复。',
+        '',
+      ]
+    : [];
   const participationLines = brief.participationStrategy
     ? [
         '## 短轮参与',
@@ -2296,6 +2305,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...contentUnitLines,
     ...objectPlanLines,
     ...conversationPlanLines,
+    ...avoidEchoLines,
     ...commActLines,
     ...careMotivationLines,
     ...stateProtocolLines,
