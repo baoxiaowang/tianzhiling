@@ -14,6 +14,7 @@ export enum TableName {
   face_recognition_log = "face_recognition_log",
   client_pay_failure_log = "client_pay_failure_log",
   user_relative_profile = "user_relative_profile",
+  user_interview = "user_interview",
   user_relative_fact = "user_relative_fact",
   user_self_fact = "user_self_fact",
   person_temporal_assertion = "person_temporal_assertion",

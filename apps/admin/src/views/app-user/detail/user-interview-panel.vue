@@ -1,0 +1,664 @@
+<template>
+  <div
+    class="user-interview-panel"
+    :class="{ 'user-interview-panel--embedded': embedded }"
+  >
+    <template v-if="mode === 'list'">
+      <a-card
+        class="user-interview-panel__card"
+        :class="{ 'user-interview-panel__card--embedded': embedded }"
+        :bordered="false"
+      >
+        <div class="user-interview-panel__toolbar">
+          <div class="user-interview-panel__toolbar-copy">
+            <a-typography-text bold>用户访谈</a-typography-text>
+            <a-typography-text type="secondary">
+              上传访谈逐字稿，AI
+              会按《用户访谈提问大纲》整理成表单，可再手动修改。
+            </a-typography-text>
+          </div>
+          <a-space>
+            <a-button :loading="loading" @click="fetchList">刷新</a-button>
+            <a-button type="primary" @click="openCreate">新建访谈</a-button>
+          </a-space>
+        </div>
+
+        <a-table
+          row-key="id"
+          :data="records"
+          :loading="loading"
+          :pagination="{ pageSize: 10, showTotal: true }"
+          :scroll="{ x: 'max-content' }"
+        >
+          <template #empty>
+            <a-empty
+              description="还没有访谈记录，点右上角「新建访谈」上传逐字稿"
+            />
+          </template>
+          <template #columns>
+            <a-table-column
+              title="访谈日期"
+              data-index="interviewDate"
+              :width="120"
+            />
+            <a-table-column title="标题" data-index="title" :width="220">
+              <template #cell="{ record }">
+                <a-link @click="openDetail(record)">{{
+                  record.title || '未命名访谈'
+                }}</a-link>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record }">
+                <a-tag
+                  :color="record.status === 'structured' ? 'green' : 'gray'"
+                >
+                  {{ record.status === 'structured' ? '已整理' : '草稿' }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="逐字稿" :width="110">
+              <template #cell="{ record }"
+                >{{ record.transcriptChars || 0 }} 字</template
+              >
+            </a-table-column>
+            <a-table-column title="更新时间" :width="170">
+              <template #cell="{ record }">{{
+                formatDate(record.updatedAt)
+              }}</template>
+            </a-table-column>
+            <a-table-column title="操作" :width="180" fixed="right">
+              <template #cell="{ record }">
+                <a-space>
+                  <a-link @click="openDetail(record)">查看</a-link>
+                  <a-popconfirm
+                    content="确认删除这条访谈记录？"
+                    @ok="removeRecord(record)"
+                  >
+                    <a-link status="danger">删除</a-link>
+                  </a-popconfirm>
+                </a-space>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
+      </a-card>
+    </template>
+
+    <template v-else>
+      <a-card
+        class="user-interview-panel__card"
+        :class="{ 'user-interview-panel__card--embedded': embedded }"
+        :bordered="false"
+      >
+        <div class="user-interview-panel__detail-head">
+          <div class="user-interview-panel__detail-copy">
+            <a-space>
+              <a-button size="small" @click="backToList">返回列表</a-button>
+              <a-typography-text bold>
+                {{ current?.title || '访谈记录' }}
+              </a-typography-text>
+              <a-tag
+                :color="current?.status === 'structured' ? 'green' : 'gray'"
+              >
+                {{ current?.status === 'structured' ? '已整理' : '草稿' }}
+              </a-tag>
+            </a-space>
+            <a-typography-text type="secondary">
+              访谈日期 {{ current?.interviewDate || '-' }} · 逐字稿
+              {{ current?.transcriptChars || 0 }} 字
+              <template v-if="current?.model">
+                · 模型 {{ current.model }}</template
+              >
+            </a-typography-text>
+          </div>
+          <a-space>
+            <a-button
+              type="primary"
+              :loading="structuring"
+              :disabled="!current?.transcript"
+              @click="runStructure"
+            >
+              {{ current?.status === 'structured' ? '重新整理' : 'AI 整理' }}
+            </a-button>
+            <a-button :loading="saving" @click="saveAnswers">保存</a-button>
+          </a-space>
+        </div>
+
+        <a-alert
+          v-if="current?.lastError"
+          type="warning"
+          class="user-interview-panel__alert"
+        >
+          {{ current.lastError }}
+        </a-alert>
+
+        <a-collapse class="user-interview-panel__transcript" :bordered="false">
+          <a-collapse-item key="transcript" header="查看原始逐字稿">
+            <pre class="user-interview-panel__transcript-text">{{
+              current?.transcript
+            }}</pre>
+          </a-collapse-item>
+        </a-collapse>
+
+        <div
+          v-for="section in sections"
+          :key="section.title"
+          class="user-interview-panel__section"
+        >
+          <a-typography-title
+            :heading="6"
+            class="user-interview-panel__section-title"
+          >
+            {{ section.title }}
+          </a-typography-title>
+          <div
+            v-for="item in sectionQuestions(section)"
+            :key="item.no"
+            class="user-interview-panel__question"
+          >
+            <div class="user-interview-panel__question-title">
+              <span class="user-interview-panel__question-no">{{
+                item.no
+              }}</span>
+              <span>{{ item.question }}</span>
+            </div>
+            <a-textarea
+              v-model="answerText[item.no]"
+              :auto-size="{ minRows: 2, maxRows: 8 }"
+              placeholder="未提及 / 手动补充"
+              class="user-interview-panel__answer"
+            />
+            <div
+              v-if="answerQuotes[item.no]?.length"
+              class="user-interview-panel__quotes"
+            >
+              <a-typography-text
+                v-for="(quote, index) in answerQuotes[item.no]"
+                :key="index"
+                type="secondary"
+                class="user-interview-panel__quote"
+              >
+                “{{ quote }}”
+              </a-typography-text>
+            </div>
+          </div>
+        </div>
+      </a-card>
+    </template>
+
+    <a-modal
+      v-model:visible="createVisible"
+      title="新建用户访谈"
+      :width="720"
+      :mask-closable="false"
+      :ok-loading="creating"
+      ok-text="创建并整理"
+      @ok="submitCreate"
+    >
+      <a-form :model="form" layout="vertical">
+        <a-form-item label="访谈日期">
+          <a-date-picker
+            v-model="form.interviewDate"
+            value-format="YYYY-MM-DD"
+            style="width: 220px"
+          />
+        </a-form-item>
+        <a-form-item label="标题（可选）">
+          <a-input
+            v-model="form.title"
+            placeholder="默认使用「日期 + 用户访谈」"
+          />
+        </a-form-item>
+        <a-form-item label="访谈逐字稿">
+          <div class="user-interview-panel__upload">
+            <input
+              ref="fileInputRef"
+              type="file"
+              accept=".txt,.md,.csv,.docx"
+              class="user-interview-panel__file-input"
+              @change="handleFileChange"
+            />
+            <a-button @click="triggerFilePick"
+              >选择文件（.txt / .md / .docx）</a-button
+            >
+            <a-typography-text type="secondary">
+              {{ form.transcriptFileName || '也可以直接把逐字稿粘贴到下面' }}
+            </a-typography-text>
+          </div>
+          <a-textarea
+            v-model="form.transcript"
+            :auto-size="{ minRows: 10, maxRows: 22 }"
+            placeholder="粘贴访谈逐字稿…"
+          />
+          <a-typography-text type="secondary">
+            已输入 {{ form.transcript.length }} 字（上限 20 万字）
+          </a-typography-text>
+        </a-form-item>
+      </a-form>
+    </a-modal>
+  </div>
+</template>
+
+<script lang="ts" setup>
+  import { computed, onMounted, reactive, ref, watch } from 'vue';
+  import { Message } from '@arco-design/web-vue';
+  import {
+    createUserInterview,
+    deleteUserInterview,
+    extractInterviewDocx,
+    getInterviewOutline,
+    listUserInterviews,
+    structureUserInterview,
+    updateUserInterview,
+  } from '@/api/user-interview';
+  import type {
+    InterviewAnswer,
+    InterviewOutlineItem,
+    InterviewSection,
+    UserInterviewRecord,
+  } from '@/api/user-interview';
+
+  const props = defineProps<{
+    userId?: string;
+    embedded?: boolean;
+  }>();
+
+  const loading = ref(false);
+  const saving = ref(false);
+  const creating = ref(false);
+  const structuring = ref(false);
+  const records = ref<UserInterviewRecord[]>([]);
+  const current = ref<UserInterviewRecord | null>(null);
+  const mode = ref<'list' | 'detail'>('list');
+  const outline = ref<InterviewOutlineItem[]>([]);
+  const sections = ref<InterviewSection[]>([]);
+  const answerText = reactive<Record<number, string>>({});
+  const answerQuotes = reactive<Record<number, string[]>>({});
+
+  const createVisible = ref(false);
+  const fileInputRef = ref<HTMLInputElement>();
+  const form = reactive({
+    interviewDate: '',
+    title: '',
+    transcript: '',
+    transcriptFileName: '',
+  });
+
+  const apiError = (error: unknown, fallback: string) => {
+    const data = (error as { response?: { data?: { message?: string } } })
+      ?.response?.data;
+    return data?.message || fallback;
+  };
+
+  function todayString() {
+    const now = new Date();
+    const month = `${now.getMonth() + 1}`.padStart(2, '0');
+    const day = `${now.getDate()}`.padStart(2, '0');
+    return `${now.getFullYear()}-${month}-${day}`;
+  }
+
+  function formatDate(value?: string | null) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    const pad = (input: number) => `${input}`.padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+      date.getDate()
+    )} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  const sectionQuestions = (section: InterviewSection) =>
+    outline.value.filter(
+      (item) => item.no >= section.from && item.no <= section.to
+    );
+
+  async function fetchOutline() {
+    try {
+      const { data } = await getInterviewOutline();
+      outline.value = data.outline;
+      sections.value = data.sections;
+    } catch (error) {
+      Message.error(apiError(error, '加载访谈大纲失败'));
+    }
+  }
+
+  async function fetchList() {
+    if (!props.userId) {
+      records.value = [];
+      return;
+    }
+    loading.value = true;
+    try {
+      const { data } = await listUserInterviews(props.userId);
+      records.value = data;
+    } catch (error) {
+      Message.error(apiError(error, '加载访谈记录失败'));
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  function applyAnswers(answers: InterviewAnswer[]) {
+    const map = new Map(answers.map((item) => [item.no, item]));
+    outline.value.forEach((item) => {
+      const hit = map.get(item.no);
+      answerText[item.no] = hit?.answer || '';
+      answerQuotes[item.no] = hit?.quotes?.length ? hit.quotes : [];
+    });
+  }
+
+  function openDetail(record: UserInterviewRecord) {
+    current.value = record;
+    applyAnswers(record.answers || []);
+    mode.value = 'detail';
+  }
+
+  function backToList() {
+    mode.value = 'list';
+    current.value = null;
+    fetchList();
+  }
+
+  function openCreate() {
+    form.interviewDate = todayString();
+    form.title = '';
+    form.transcript = '';
+    form.transcriptFileName = '';
+    createVisible.value = true;
+  }
+
+  function triggerFilePick() {
+    fileInputRef.value?.click();
+  }
+
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const buffer = reader.result as ArrayBuffer;
+        const bytes = new Uint8Array(buffer);
+        const chunk = 0x8000;
+        const parts: string[] = [];
+        Array.from(
+          { length: Math.ceil(bytes.length / chunk) },
+          (_, index) => index
+        ).forEach((index) => {
+          parts.push(
+            String.fromCharCode(
+              ...bytes.subarray(index * chunk, (index + 1) * chunk)
+            )
+          );
+        });
+        resolve(btoa(parts.join('')));
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function handleFileChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      Message.error('文件超过 20MB，请拆分后再上传');
+      input.value = '';
+      return;
+    }
+    const lower = file.name.toLowerCase();
+    try {
+      if (lower.endsWith('.docx')) {
+        const base64 = await fileToBase64(file);
+        const { data } = await extractInterviewDocx({
+          fileName: file.name,
+          base64,
+        });
+        form.transcript = data.text;
+        Message.success(`已解析 ${data.chars} 字`);
+      } else if (
+        lower.endsWith('.txt') ||
+        lower.endsWith('.md') ||
+        lower.endsWith('.csv')
+      ) {
+        form.transcript = await file.text();
+        Message.success(`已读取 ${form.transcript.length} 字`);
+      } else if (lower.endsWith('.doc')) {
+        Message.error('暂不支持旧版 .doc，请另存为 .docx 或 txt');
+      } else {
+        Message.error('仅支持 .txt / .md / .docx');
+      }
+      form.transcriptFileName = file.name;
+    } catch (error) {
+      Message.error(apiError(error, '读取文件失败'));
+    } finally {
+      input.value = '';
+    }
+  }
+
+  async function submitCreate() {
+    if (!props.userId) {
+      Message.error('缺少用户信息');
+      return;
+    }
+    const transcript = form.transcript.trim();
+    if (!transcript) {
+      Message.error('请先上传或粘贴逐字稿');
+      return;
+    }
+    creating.value = true;
+    try {
+      const { data } = await createUserInterview({
+        userId: props.userId,
+        title: form.title.trim() || undefined,
+        interviewDate: form.interviewDate || todayString(),
+        transcript,
+        transcriptFileName: form.transcriptFileName || undefined,
+      });
+      createVisible.value = false;
+      current.value = data;
+      applyAnswers(data.answers || []);
+      mode.value = 'detail';
+      await runStructure();
+      await fetchList();
+    } catch (error) {
+      Message.error(apiError(error, '创建访谈失败'));
+    } finally {
+      creating.value = false;
+    }
+  }
+
+  async function runStructure() {
+    if (!current.value) return;
+    structuring.value = true;
+    try {
+      const { data } = await structureUserInterview(current.value.id);
+      current.value = data;
+      applyAnswers(data.answers || []);
+      Message.success('AI 整理完成，请核对后保存');
+    } catch (error) {
+      Message.error(apiError(error, 'AI 整理失败，可手动填写'));
+      await fetchList();
+    } finally {
+      structuring.value = false;
+    }
+  }
+
+  async function saveAnswers() {
+    if (!current.value) return;
+    saving.value = true;
+    try {
+      const answers: InterviewAnswer[] = outline.value.map((item) => ({
+        no: item.no,
+        question: item.question,
+        answer: (answerText[item.no] || '').trim(),
+        quotes: answerQuotes[item.no]?.length
+          ? answerQuotes[item.no]
+          : undefined,
+      }));
+      const { data } = await updateUserInterview(current.value.id, { answers });
+      current.value = data;
+      Message.success('已保存');
+      await fetchList();
+    } catch (error) {
+      Message.error(apiError(error, '保存失败'));
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  async function removeRecord(record: UserInterviewRecord) {
+    try {
+      await deleteUserInterview(record.id);
+      Message.success('已删除');
+      if (current.value?.id === record.id) {
+        backToList();
+      } else {
+        await fetchList();
+      }
+    } catch (error) {
+      Message.error(apiError(error, '删除失败'));
+    }
+  }
+
+  watch(
+    () => props.userId,
+    () => {
+      mode.value = 'list';
+      current.value = null;
+      fetchList();
+    }
+  );
+
+  const hasRecords = computed(() => records.value.length > 0);
+
+  onMounted(async () => {
+    await fetchOutline();
+    await fetchList();
+  });
+
+  defineExpose({ hasRecords });
+</script>
+
+<style lang="less" scoped>
+  .user-interview-panel {
+    &--embedded {
+      :deep(.arco-card-body) {
+        padding: 0;
+      }
+    }
+
+    &__toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    &__toolbar-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    &__detail-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    &__detail-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    &__alert {
+      margin-bottom: 12px;
+    }
+
+    &__transcript {
+      margin-bottom: 16px;
+
+      &-text {
+        max-height: 320px;
+        margin: 0;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        line-height: 1.7;
+        color: var(--color-text-2);
+      }
+    }
+
+    &__section {
+      margin-bottom: 20px;
+    }
+
+    &__section-title {
+      margin: 0 0 8px;
+    }
+
+    &__question {
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      border: 1px solid var(--color-border-2);
+      border-radius: 8px;
+      background: var(--color-fill-1);
+    }
+
+    &__question-title {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    &__question-no {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 10px;
+      background: rgb(var(--primary-1));
+      color: rgb(var(--primary-6));
+      font-size: 12px;
+    }
+
+    &__answer {
+      background: #fff;
+    }
+
+    &__quotes {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 6px;
+    }
+
+    &__quote {
+      font-size: 12px;
+    }
+
+    &__upload {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    &__file-input {
+      display: none;
+    }
+  }
+</style>
