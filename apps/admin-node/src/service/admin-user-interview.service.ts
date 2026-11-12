@@ -185,16 +185,37 @@ export class AdminUserInterviewService {
     }
 
     const prompt = this.buildStructurePrompt(transcript);
-    const raw = await this.adminLlmService.generateText(prompt, {
-      systemPrompt:
-        '你是用户研究助手。只根据逐字稿原文回答，不臆测、不补充常识；' +
-        '逐字稿没提到的题目，answer 写「未提及」。输出必须是 JSON。',
-      temperature: 0,
-      maxTokens: 12000,
-      responseFormat: 'json_object',
-    });
+    // 模型偶发返回非法 JSON（实测出现过一次），这里自动重试一次再报错。
+    let parsed: unknown;
+    let lastError = '';
+    let gotResponse = false;
 
-    if (!raw) {
+    for (let attempt = 0; attempt < 2 && parsed === undefined; attempt += 1) {
+      const raw = await this.adminLlmService.generateText(prompt, {
+        systemPrompt:
+          '你是用户研究助手。只根据逐字稿原文回答，不臆测、不补充常识；' +
+          '逐字稿没提到的题目，answer 写「未提及」。输出必须是 JSON。',
+        temperature: 0,
+        maxTokens: 12000,
+        responseFormat: 'json_object',
+      });
+
+      if (!raw) {
+        lastError = 'empty response';
+        continue;
+      }
+
+      gotResponse = true;
+      try {
+        parsed = this.parseJsonLoose(raw);
+      } catch (error) {
+        lastError = `bad json: ${String(
+          (error as Error)?.message || error
+        ).slice(0, 200)}`;
+      }
+    }
+
+    if (!gotResponse) {
       entity.lastError = 'LLM 未返回内容（模型未配置或调用失败）';
       entity.updatedAt = new Date();
       await this.interviewRepo.save(entity as never);
@@ -205,13 +226,8 @@ export class AdminUserInterviewService {
       );
     }
 
-    let parsed: unknown;
-    try {
-      parsed = this.parseJsonLoose(raw);
-    } catch (error) {
-      entity.lastError = `LLM 返回不是合法 JSON：${String(
-        (error as Error)?.message || error
-      ).slice(0, 300)}`;
+    if (parsed === undefined) {
+      entity.lastError = `LLM 返回不是合法 JSON（已重试一次）：${lastError}`;
       entity.updatedAt = new Date();
       await this.interviewRepo.save(entity as never);
       throw new AppError(
