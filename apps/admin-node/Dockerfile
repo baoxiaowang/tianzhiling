@@ -35,7 +35,8 @@ RUN npx -y pnpm@9.15.9 install --prod --frozen-lockfile --lockfile-dir=/workspac
 
 FROM node:20.18.0-alpine AS runtime
 
-RUN apk add --no-cache tzdata ffmpeg \
+RUN sed -i 's#dl-cdn.alpinelinux.org#mirrors.aliyun.com#g' /etc/apk/repositories \
+  && apk add --no-cache tzdata ffmpeg \
   && npm install -g pm2@5.4.3
 
 ARG RELEASE_VERSION=unknown
