@@ -92,3 +92,15 @@ export function extractInterviewDocx(data: {
     data
   );
 }
+
+export function extractInterviewPdf(data: {
+  fileName?: string;
+  base64: string;
+}) {
+  return axios.post<{
+    fileName: string;
+    chars: number;
+    pages: number;
+    text: string;
+  }>('/admin_api/user-interviews/extract-pdf', data);
+}

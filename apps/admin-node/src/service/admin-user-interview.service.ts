@@ -8,10 +8,35 @@ import { AppError } from '@tzl/shared';
 import {
   CreateUserInterviewDTO,
   ExtractInterviewDocxDTO,
+  ExtractInterviewPdfDTO,
   UpdateUserInterviewDTO,
 } from '../dto/admin-user-interview.dto';
 import { AdminLlmService } from './admin-llm.service';
 import { inflateRawSync } from 'zlib';
+
+/* eslint-disable @typescript-eslint/no-var-requires */
+const pdfjs = require('pdfjs-dist/legacy/build/pdf.js') as {
+  getDocument(input: {
+    data: Uint8Array;
+    isEvalSupported?: boolean;
+    useSystemFonts?: boolean;
+  }): { promise: Promise<PdfDocumentLike> };
+};
+
+interface PdfTextItem {
+  str?: string;
+  hasEOL?: boolean;
+}
+
+interface PdfPageLike {
+  getTextContent(): Promise<{ items: PdfTextItem[] }>;
+}
+
+interface PdfDocumentLike {
+  numPages: number;
+  getPage(pageNumber: number): Promise<PdfPageLike>;
+  destroy(): Promise<void>;
+}
 
 /** 访谈大纲（与运营提供的《付费用户电话访谈 提问大纲》一致）。 */
 export const USER_INTERVIEW_OUTLINE: Array<{ no: number; question: string }> = [
@@ -67,6 +92,7 @@ export const USER_INTERVIEW_SECTIONS: Array<{
 const MAX_TRANSCRIPT_CHARS = 200000;
 const MAX_DOCX_BYTES = 20 * 1024 * 1024;
 const MAX_LLM_INPUT_CHARS = 120000;
+const MAX_PDF_PAGES = 200;
 
 interface RawAnswer {
   no?: number | string;
@@ -246,6 +272,83 @@ export class AdminUserInterviewService {
       chars: text.length,
       text: text.slice(0, MAX_TRANSCRIPT_CHARS),
     };
+  }
+
+  /** PDF 逐字稿转纯文本（pdfjs-dist，支持中文 PDF 的 ToUnicode 映射）。 */
+  async extractPdf(dto: ExtractInterviewPdfDTO) {
+    const buffer = Buffer.from(
+      (dto.base64 || '').replace(/^data:[^;]+;base64,/, ''),
+      'base64'
+    );
+
+    if (!buffer.length) {
+      throw new AppError('INTERVIEW_PDF_EMPTY', '文件为空', 400);
+    }
+    if (buffer.length > MAX_DOCX_BYTES) {
+      throw new AppError('INTERVIEW_PDF_TOO_LARGE', '文件超过 20MB', 400);
+    }
+    if (buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+      throw new AppError('INTERVIEW_PDF_INVALID', '不是有效的 PDF 文件', 400);
+    }
+
+    let pdf: PdfDocumentLike;
+    try {
+      pdf = await pdfjs.getDocument({
+        data: new Uint8Array(buffer),
+        isEvalSupported: false,
+        useSystemFonts: true,
+      }).promise;
+    } catch (error) {
+      this.logger?.warn?.(
+        '[user-interview] parse pdf failed: %s',
+        (error as Error)?.message || String(error)
+      );
+      throw new AppError(
+        'INTERVIEW_PDF_INVALID',
+        'PDF 解析失败，请确认文件未加密或改用 docx/txt',
+        400
+      );
+    }
+
+    const parts: string[] = [];
+    try {
+      const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const content = await page.getTextContent();
+        const pageText = content.items
+          .map(item => `${item.str || ''}${item.hasEOL ? '\n' : ''}`)
+          .join('');
+        parts.push(pageText);
+      }
+    } finally {
+      await pdf.destroy().catch(() => undefined);
+    }
+
+    const text = this.normalizeExtractedText(parts.join('\n'));
+    if (!text.trim()) {
+      throw new AppError(
+        'INTERVIEW_PDF_NO_TEXT',
+        'PDF 里没有提取到文字（可能是扫描件），请提供可复制文字的 PDF 或改用 docx/txt',
+        400
+      );
+    }
+
+    return {
+      fileName: dto.fileName?.trim() || '',
+      chars: text.length,
+      pages: pdf.numPages,
+      text: text.slice(0, MAX_TRANSCRIPT_CHARS),
+    };
+  }
+
+  private normalizeExtractedText(raw: string) {
+    return raw
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map(line => line.replace(/[ \t]+/g, ' ').trim())
+      .filter(line => line.length > 0)
+      .join('\n');
   }
 
   buildStructurePrompt(transcript: string) {

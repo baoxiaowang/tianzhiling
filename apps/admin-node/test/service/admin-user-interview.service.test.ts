@@ -3,6 +3,7 @@ import { join } from 'path';
 import { AdminUserInterviewService } from '../../src/service/admin-user-interview.service';
 
 const FIXTURE = join(__dirname, '../fixtures/interview-sample.docx');
+const PDF_FIXTURE = join(__dirname, '../fixtures/interview-sample.pdf');
 
 describe('AdminUserInterviewService', () => {
   const createService = () => {
@@ -40,6 +41,25 @@ describe('AdminUserInterviewService', () => {
     expect(result.text).toContain('访谈逐字稿');
     expect(result.text).toContain('我今年 32 岁');
     expect(result.text).toContain('小使者');
+  });
+
+  it('PDF 可提取出纯文本', async () => {
+    const service = createService();
+    const base64 = readFileSync(PDF_FIXTURE).toString('base64');
+    const result = await service.extractPdf({
+      fileName: 'interview-sample.pdf',
+      base64,
+    });
+    expect(result.pages).toBeGreaterThanOrEqual(1);
+    expect(result.text).toContain('Interview transcript sample');
+    expect(result.text).toContain('three months');
+  });
+
+  it('非 PDF 内容会报格式错误', async () => {
+    const service = createService();
+    await expect(
+      service.extractPdf({ base64: Buffer.from('not-a-pdf').toString('base64') })
+    ).rejects.toMatchObject({ code: 'INTERVIEW_PDF_INVALID' });
   });
 
   it('非 docx 内容会报格式错误', async () => {

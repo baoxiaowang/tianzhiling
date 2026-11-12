@@ -43,3 +43,11 @@ export class ExtractInterviewDocxDTO {
   @Rule(RuleType.string().min(1).required())
   base64: string;
 }
+
+export class ExtractInterviewPdfDTO {
+  @Rule(RuleType.string().trim().max(200).optional())
+  fileName?: string;
+
+  @Rule(RuleType.string().min(1).required())
+  base64: string;
+}

@@ -12,6 +12,7 @@ import {
 import {
   CreateUserInterviewDTO,
   ExtractInterviewDocxDTO,
+  ExtractInterviewPdfDTO,
   ListUserInterviewsQueryDTO,
   UpdateUserInterviewDTO,
 } from '../dto/admin-user-interview.dto';
@@ -47,6 +48,11 @@ export class AdminUserInterviewController {
   @Post('/extract-docx')
   async extractDocx(@Body() body: ExtractInterviewDocxDTO) {
     return this.adminUserInterviewService.extractDocx(body);
+  }
+
+  @Post('/extract-pdf')
+  async extractPdf(@Body() body: ExtractInterviewPdfDTO) {
+    return this.adminUserInterviewService.extractPdf(body);
   }
 
   @Put('/:id')

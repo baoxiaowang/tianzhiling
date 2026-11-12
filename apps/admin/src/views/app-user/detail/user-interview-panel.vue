@@ -226,7 +226,7 @@
             <input
               ref="fileInputRef"
               type="file"
-              accept=".txt,.md,.csv,.docx"
+              accept=".txt,.md,.csv,.docx,.pdf"
               class="user-interview-panel__file-input"
               @change="handleFileChange"
             />
@@ -241,7 +241,7 @@
             <a-typography-text type="secondary">
               {{
                 form.transcriptFileName ||
-                '支持 .txt / .md / .docx，单个文件不超过 20MB'
+                '支持 .txt / .md / .docx / .pdf，单个文件不超过 20MB'
               }}
             </a-typography-text>
             <a-spin
@@ -270,6 +270,7 @@
     createUserInterview,
     deleteUserInterview,
     extractInterviewDocx,
+    extractInterviewPdf,
     getInterviewOutline,
     listUserInterviews,
     structureUserInterview,
@@ -445,10 +446,18 @@
       ) {
         form.transcript = await file.text();
         Message.success(`已读取 ${form.transcript.length} 字`);
+      } else if (lower.endsWith('.pdf')) {
+        const base64 = await fileToBase64(file);
+        const { data } = await extractInterviewPdf({
+          fileName: file.name,
+          base64,
+        });
+        form.transcript = data.text;
+        Message.success(`已解析 ${data.pages} 页、${data.chars} 字`);
       } else if (lower.endsWith('.doc')) {
-        Message.error('暂不支持旧版 .doc，请另存为 .docx 或 txt');
+        Message.error('暂不支持旧版 .doc，请另存为 .docx / pdf 或 txt');
       } else {
-        Message.error('仅支持 .txt / .md / .docx');
+        Message.error('仅支持 .txt / .md / .docx / .pdf');
         return;
       }
       form.transcriptFileName = file.name;
