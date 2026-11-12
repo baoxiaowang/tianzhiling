@@ -25,9 +25,20 @@ export class AdminLlmService {
    * 调用 LLM 生成文本。
    * 返回模型输出的纯文本内容；未配置或调用失败时返回空字符串。
    */
+  /** 当前生效的模型名（用于记录到业务数据上）。 */
+  currentModel(): string {
+    return this.llmConfig?.model?.trim() || '';
+  }
+
   async generateText(
     prompt: string,
-    options?: { systemPrompt?: string; model?: string; temperature?: number }
+    options?: {
+      systemPrompt?: string;
+      model?: string;
+      temperature?: number;
+      maxTokens?: number;
+      responseFormat?: 'json_object';
+    }
   ): Promise<string> {
     const cfg = this.llmConfig;
     if (!cfg?.enabled || !cfg.apiKey || !cfg.baseURL) {
@@ -45,7 +56,10 @@ export class AdminLlmService {
       model: options?.model ?? cfg.model ?? 'gpt-4o-mini',
       messages,
       temperature: options?.temperature ?? 0,
-      max_tokens: 512,
+      max_tokens: options?.maxTokens ?? 512,
+      ...(options?.responseFormat
+        ? { response_format: { type: options.responseFormat } }
+        : {}),
     };
 
     const controller = new AbortController();

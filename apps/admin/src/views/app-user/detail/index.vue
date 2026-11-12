@@ -413,6 +413,13 @@
             embedded
           />
         </a-tab-pane>
+        <a-tab-pane key="interview" title="用户访谈">
+          <user-interview-panel
+            v-if="activeTab === 'interview'"
+            :user-id="userId || ''"
+            embedded
+          />
+        </a-tab-pane>
       </a-tabs>
     </a-card>
 
@@ -580,6 +587,7 @@
   import PostListPanel from '@/views/post/components/post-list-panel.vue';
   import FamilyAlbumPanel from './family-album-panel.vue';
   import VoiceModelPanel from './voice-model-panel.vue';
+  import UserInterviewPanel from './user-interview-panel.vue';
   import MemoryPanel from './memory-panel.vue';
   import CoreInfoPanel from './core-info-panel.vue';
 
