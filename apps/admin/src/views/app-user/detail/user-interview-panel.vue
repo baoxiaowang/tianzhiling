@@ -211,7 +211,18 @@
           />
         </a-form-item>
         <a-form-item label="访谈逐字稿">
-          <div class="user-interview-panel__upload">
+          <div
+            class="user-interview-panel__dropzone"
+            :class="{
+              'user-interview-panel__dropzone--active': dragOver,
+              'user-interview-panel__dropzone--uploading': fileLoading,
+            }"
+            @click="triggerFilePick"
+            @dragenter.prevent="dragOver = true"
+            @dragover.prevent="dragOver = true"
+            @dragleave.prevent="dragOver = false"
+            @drop.prevent="handleDrop"
+          >
             <input
               ref="fileInputRef"
               type="file"
@@ -219,12 +230,24 @@
               class="user-interview-panel__file-input"
               @change="handleFileChange"
             />
-            <a-button @click="triggerFilePick"
-              >选择文件（.txt / .md / .docx）</a-button
-            >
+            <icon-upload class="user-interview-panel__dropzone-icon" />
+            <div class="user-interview-panel__dropzone-title">
+              {{
+                dragOver
+                  ? '松开鼠标即可上传'
+                  : '拖拽逐字稿到这里，或点击选择文件'
+              }}
+            </div>
             <a-typography-text type="secondary">
-              {{ form.transcriptFileName || '也可以直接把逐字稿粘贴到下面' }}
+              {{
+                form.transcriptFileName ||
+                '支持 .txt / .md / .docx，单个文件不超过 20MB'
+              }}
             </a-typography-text>
+            <a-spin
+              v-if="fileLoading"
+              class="user-interview-panel__dropzone-spin"
+            />
           </div>
           <a-textarea
             v-model="form.transcript"
@@ -278,6 +301,8 @@
 
   const createVisible = ref(false);
   const fileInputRef = ref<HTMLInputElement>();
+  const dragOver = ref(false);
+  const fileLoading = ref(false);
   const form = reactive({
     interviewDate: '',
     title: '',
@@ -397,16 +422,13 @@
     });
   }
 
-  async function handleFileChange(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+  async function processFile(file: File) {
     if (file.size > 20 * 1024 * 1024) {
       Message.error('文件超过 20MB，请拆分后再上传');
-      input.value = '';
       return;
     }
     const lower = file.name.toLowerCase();
+    fileLoading.value = true;
     try {
       if (lower.endsWith('.docx')) {
         const base64 = await fileToBase64(file);
@@ -427,13 +449,29 @@
         Message.error('暂不支持旧版 .doc，请另存为 .docx 或 txt');
       } else {
         Message.error('仅支持 .txt / .md / .docx');
+        return;
       }
       form.transcriptFileName = file.name;
     } catch (error) {
       Message.error(apiError(error, '读取文件失败'));
     } finally {
-      input.value = '';
+      fileLoading.value = false;
     }
+  }
+
+  async function handleFileChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    await processFile(file);
+  }
+
+  async function handleDrop(event: DragEvent) {
+    dragOver.value = false;
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    await processFile(file);
   }
 
   async function submitCreate() {
@@ -649,12 +687,53 @@
       font-size: 12px;
     }
 
-    &__upload {
+    &__dropzone {
+      position: relative;
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 8px;
-      flex-wrap: wrap;
+      justify-content: center;
+      gap: 4px;
+      min-height: 120px;
+      margin-bottom: 10px;
+      padding: 16px;
+      border: 1px dashed var(--color-border-3);
+      border-radius: 8px;
+      background: var(--color-fill-1);
+      cursor: pointer;
+      transition: border-color 0.2s, background-color 0.2s;
+
+      &:hover {
+        border-color: rgb(var(--primary-5));
+        background: rgb(var(--primary-1));
+      }
+
+      &--active {
+        border-color: rgb(var(--primary-6));
+        background: rgb(var(--primary-1));
+      }
+
+      &--uploading {
+        cursor: progress;
+        opacity: 0.75;
+      }
+    }
+
+    &__dropzone-icon {
+      font-size: 22px;
+      color: rgb(var(--primary-6));
+    }
+
+    &__dropzone-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--color-text-1);
+    }
+
+    &__dropzone-spin {
+      position: absolute;
+      right: 12px;
+      top: 12px;
     }
 
     &__file-input {
