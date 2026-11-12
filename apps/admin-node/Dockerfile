@@ -2,7 +2,8 @@ FROM node:20.18.0-alpine AS base
 
 WORKDIR /workspace/apps/admin-node
 
-RUN corepack enable
+RUN corepack enable \
+  && npm config set registry https://mirrors.tencentyun.com/npm
 
 COPY package.json /workspace/package.json
 COPY pnpm-workspace.yaml /workspace/pnpm-workspace.yaml
