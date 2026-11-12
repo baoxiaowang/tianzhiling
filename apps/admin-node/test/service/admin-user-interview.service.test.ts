@@ -20,6 +20,9 @@ describe('AdminUserInterviewService', () => {
       expect(prompt).toContain(`${no}. `);
     }
     expect(prompt).toContain('只输出 JSON');
+    expect(prompt).toContain('完整覆盖');
+    expect(prompt).toContain('999 答谢');
+    expect(prompt).toContain('是从哪里了解到我们的产品呢');
     expect(prompt).toContain('答案');
   });
 
