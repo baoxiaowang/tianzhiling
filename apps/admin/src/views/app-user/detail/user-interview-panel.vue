@@ -151,6 +151,7 @@
               {{ current?.status === 'structured' ? '重新整理' : 'AI 整理' }}
             </a-button>
             <a-button :loading="saving" @click="saveAnswers">保存</a-button>
+            <a-button @click="exportPdf">导出 PDF</a-button>
             <a-popconfirm
               content="确认删除这条访谈记录？删除后可重新上传"
               @ok="removeCurrent"
@@ -408,6 +409,99 @@
     form.transcript = '';
     form.transcriptFileName = '';
     form.supplement = '';
+  }
+
+  function escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function exportPdf() {
+    const record = current.value;
+    if (!record) return;
+
+    const sectionsHtml = sections.value
+      .map((section) => {
+        const items = sectionQuestions(section)
+          .map((item) => {
+            const answer = (answerText[item.no] || '').trim() || '未提及';
+            const quotes = (answerQuotes[item.no] || [])
+              .map((quote) => `<div class="quote">“${escapeHtml(quote)}”</div>`)
+              .join('');
+            return `<div class="qa">
+  <div class="q">${item.no}. ${escapeHtml(item.question)}</div>
+  <div class="a">${escapeHtml(answer).replace(/\n/g, '<br>')}</div>
+  ${quotes}
+</div>`;
+          })
+          .join('');
+        return `<section><h2>${escapeHtml(
+          section.title
+        )}</h2>${items}</section>`;
+      })
+      .join('');
+
+    const closeScript = ['</scr', 'ipt>'].join('');
+    const title = record.title || '用户访谈';
+    const exportedAt = new Date().toLocaleString('zh-CN', { hour12: false });
+    const html = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8" />
+<title>${escapeHtml(title)}</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: #1f1f1f;
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .meta { color: #666; font-size: 11px; margin-bottom: 18px; }
+  section { margin-bottom: 16px; }
+  h2 {
+    font-size: 13px;
+    margin: 0 0 8px;
+    padding-left: 8px;
+    border-left: 3px solid #165dff;
+  }
+  .qa {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border: 1px solid #e5e6eb;
+    border-radius: 6px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .q { font-weight: 600; margin-bottom: 4px; }
+  .a { white-space: normal; }
+  .quote { margin-top: 4px; color: #86909c; font-size: 11px; }
+  @media print { .qa { box-shadow: none; } }
+</style></head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  <div class="meta">
+    访谈日期：${escapeHtml(record.interviewDate || '-')} ·
+    逐字稿 ${record.transcriptChars || 0} 字 ·
+    导出时间：${escapeHtml(exportedAt)}
+  </div>
+  ${sectionsHtml}
+  <script>window.onload = function () { window.print(); };${closeScript}
+</body></html>`;
+
+    const win = window.open('', '_blank', 'width=900,height=1200');
+    if (!win) {
+      Message.warning('浏览器拦截了导出窗口，请允许弹窗后重试');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
   }
 
   function removeCurrent() {
