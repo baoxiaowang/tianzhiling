@@ -23,6 +23,21 @@ export class CreateUserInterviewDTO {
 
   @Rule(RuleType.string().allow('').max(100000).optional())
   supplement?: string;
+
+  @Rule(RuleType.string().allow('').max(500).optional())
+  audioObjectKey?: string;
+
+  @Rule(RuleType.string().allow('').max(1000).optional())
+  audioUrl?: string;
+
+  @Rule(RuleType.string().allow('').max(300).optional())
+  audioFileName?: string;
+
+  @Rule(RuleType.number().min(0).optional())
+  audioSize?: number;
+
+  @Rule(RuleType.number().min(0).optional())
+  audioDurationMs?: number;
 }
 
 export class UpdateUserInterviewDTO {
@@ -40,6 +55,21 @@ export class UpdateUserInterviewDTO {
 
   @Rule(RuleType.string().allow('').max(100000).optional())
   supplement?: string;
+
+  @Rule(RuleType.string().allow('').max(500).optional())
+  audioObjectKey?: string;
+
+  @Rule(RuleType.string().allow('').max(1000).optional())
+  audioUrl?: string;
+
+  @Rule(RuleType.string().allow('').max(300).optional())
+  audioFileName?: string;
+
+  @Rule(RuleType.number().min(0).optional())
+  audioSize?: number;
+
+  @Rule(RuleType.number().min(0).optional())
+  audioDurationMs?: number;
 }
 
 export class ExtractInterviewDocxDTO {

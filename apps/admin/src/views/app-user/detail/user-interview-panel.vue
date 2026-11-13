@@ -93,6 +93,17 @@
               placeholder="访谈后单独追问的内容、回访记录等；AI 会用它补全逐字稿没提到的题目"
             />
           </a-form-item>
+          <a-form-item label="原始音频（可选）">
+            <div class="user-interview-panel__upload-row">
+              <a-button @click="triggerAudioPick">选择录音文件</a-button>
+              <a-typography-text type="secondary">
+                {{
+                  pendingAudioName ||
+                  '支持 mp3 / m4a / wav，单个文件不超过 200MB'
+                }}
+              </a-typography-text>
+            </div>
+          </a-form-item>
           <a-button
             type="primary"
             :loading="creating"
@@ -157,6 +168,45 @@
           {{ current.lastError }}
         </a-alert>
 
+        <div class="user-interview-panel__audio">
+          <template v-if="current?.audioUrl">
+            <audio
+              :src="current.audioUrl"
+              controls
+              preload="metadata"
+              class="user-interview-panel__audio-player"
+            />
+            <a-space>
+              <a-typography-text type="secondary">
+                {{ current?.audioFileName || '访谈原始录音' }}
+              </a-typography-text>
+              <a-button
+                size="mini"
+                :loading="audioUploading"
+                @click="triggerAudioPick"
+              >
+                替换
+              </a-button>
+              <a-button
+                size="mini"
+                status="danger"
+                :loading="audioUploading"
+                @click="removeAudio"
+              >
+                删除录音
+              </a-button>
+            </a-space>
+          </template>
+          <template v-else>
+            <a-button :loading="audioUploading" @click="triggerAudioPick">
+              上传原始录音
+            </a-button>
+            <a-typography-text type="secondary">
+              保存访谈录音原文件，支持 mp3 / m4a / wav，≤200MB
+            </a-typography-text>
+          </template>
+        </div>
+
         <a-collapse class="user-interview-panel__transcript" :bordered="false">
           <a-collapse-item key="transcript" header="查看原始逐字稿">
             <pre class="user-interview-panel__transcript-text">{{
@@ -220,12 +270,21 @@
         </div>
       </a-card>
     </template>
+
+    <input
+      ref="audioInputRef"
+      type="file"
+      accept=".mp3,.m4a,.wav,audio/*"
+      class="user-interview-panel__file-input"
+      @change="handleAudioChange"
+    />
   </div>
 </template>
 
 <script lang="ts" setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue';
   import { Message } from '@arco-design/web-vue';
+  import uploadAdminFile from '@/api/storage';
   import {
     createUserInterview,
     deleteUserInterview,
@@ -260,6 +319,11 @@
   const answerQuotes = reactive<Record<number, string[]>>({});
 
   const supplementText = ref('');
+  const audioInputRef = ref<HTMLInputElement>();
+  const audioUploading = ref(false);
+  const pendingAudioFile = ref<File | null>(null);
+  const pendingAudioName = ref('');
+  const audioPickTarget = ref<'pending' | 'current'>('pending');
   const fileInputRef = ref<HTMLInputElement>();
   const dragOver = ref(false);
   const fileLoading = ref(false);
@@ -337,6 +401,8 @@
   }
 
   function resetCreateForm() {
+    pendingAudioFile.value = null;
+    pendingAudioName.value = '';
     form.interviewDate = todayString();
     form.title = '';
     form.transcript = '';
@@ -352,6 +418,72 @@
 
   function triggerFilePick() {
     fileInputRef.value?.click();
+  }
+
+  function triggerAudioPick() {
+    audioPickTarget.value = current.value ? 'current' : 'pending';
+    audioInputRef.value?.click();
+  }
+
+  async function handleAudioChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    if (file.size > 200 * 1024 * 1024) {
+      Message.error('录音超过 200MB，请压缩后再上传');
+      return;
+    }
+    if (audioPickTarget.value === 'pending') {
+      pendingAudioFile.value = file;
+      pendingAudioName.value = `${file.name}（${(
+        file.size /
+        1024 /
+        1024
+      ).toFixed(1)}MB）`;
+      return;
+    }
+    await uploadAudioForCurrent(file);
+  }
+
+  async function uploadAudioForCurrent(file: File) {
+    if (!current.value) return;
+    audioUploading.value = true;
+    try {
+      const uploaded = await uploadAdminFile(file, {
+        folder: 'user-interviews/audio',
+      });
+      const { data } = await updateUserInterview(current.value.id, {
+        audioObjectKey: uploaded.objectKey,
+        audioUrl: uploaded.publicUrl,
+        audioFileName: file.name,
+        audioSize: file.size,
+      });
+      current.value = data;
+      Message.success('原始录音已保存');
+    } catch (error) {
+      Message.error(apiError(error, '上传录音失败'));
+    } finally {
+      audioUploading.value = false;
+    }
+  }
+
+  async function removeAudio() {
+    if (!current.value) return;
+    audioUploading.value = true;
+    try {
+      const { data } = await updateUserInterview(current.value.id, {
+        audioObjectKey: '',
+        audioUrl: '',
+        audioFileName: '',
+      });
+      current.value = data;
+      Message.success('录音已删除');
+    } catch (error) {
+      Message.error(apiError(error, '删除录音失败'));
+    } finally {
+      audioUploading.value = false;
+    }
   }
 
   function fileToBase64(file: File): Promise<string> {
@@ -459,8 +591,23 @@
         transcriptFileName: form.transcriptFileName || undefined,
         supplement: form.supplement.trim() || undefined,
       });
-      current.value = data;
-      applyAnswers(data.answers || []);
+      let saved = data;
+      if (pendingAudioFile.value) {
+        const uploaded = await uploadAdminFile(pendingAudioFile.value, {
+          folder: 'user-interviews/audio',
+        });
+        const updated = await updateUserInterview(data.id, {
+          audioObjectKey: uploaded.objectKey,
+          audioUrl: uploaded.publicUrl,
+          audioFileName: pendingAudioFile.value.name,
+          audioSize: pendingAudioFile.value.size,
+        });
+        saved = updated.data;
+      }
+      pendingAudioFile.value = null;
+      pendingAudioName.value = '';
+      current.value = saved;
+      applyAnswers(saved.answers || []);
       resetCreateForm();
       await runStructure();
       await fetchList();

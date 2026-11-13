@@ -42,6 +42,25 @@ export class UserInterviewEntity extends BaseEntity {
   @Column()
   supplement?: string;
 
+  /** 原始访谈录音（COS） */
+  @Column()
+  audioObjectKey?: string;
+
+  @Column()
+  audioUrl?: string;
+
+  @Column()
+  audioFileName?: string;
+
+  @Column()
+  audioSize?: number;
+
+  @Column()
+  audioDurationMs?: number;
+
+  @Column()
+  audioUploadedAt?: Date;
+
   @Column()
   answers: UserInterviewAnswer[];
 

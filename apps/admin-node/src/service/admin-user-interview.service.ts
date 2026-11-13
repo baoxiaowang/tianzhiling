@@ -158,6 +158,14 @@ export class AdminUserInterviewService {
     if (dto.supplement !== undefined) {
       entity.supplement = this.normalizeSupplement(dto.supplement);
     }
+    if (dto.audioObjectKey !== undefined) {
+      entity.audioObjectKey = dto.audioObjectKey.trim() || undefined;
+      entity.audioUrl = (dto.audioUrl || '').trim() || undefined;
+      entity.audioFileName = (dto.audioFileName || '').trim() || undefined;
+      entity.audioSize = dto.audioSize ?? undefined;
+      entity.audioDurationMs = dto.audioDurationMs ?? undefined;
+      entity.audioUploadedAt = entity.audioObjectKey ? new Date() : undefined;
+    }
     if (dto.answers !== undefined) {
       entity.answers = this.normalizeAnswers(
         dto.answers,
@@ -627,6 +635,12 @@ export class AdminUserInterviewService {
       transcript: entity.transcript || '',
       transcriptFileName: entity.transcriptFileName || '',
       supplement: entity.supplement || '',
+      audioObjectKey: entity.audioObjectKey || '',
+      audioUrl: entity.audioUrl || '',
+      audioFileName: entity.audioFileName || '',
+      audioSize: entity.audioSize ?? null,
+      audioDurationMs: entity.audioDurationMs ?? null,
+      audioUploadedAt: entity.audioUploadedAt || null,
       transcriptChars: (entity.transcript || '').length,
       answers: Array.isArray(entity.answers) ? entity.answers : [],
       status: entity.status || 'draft',

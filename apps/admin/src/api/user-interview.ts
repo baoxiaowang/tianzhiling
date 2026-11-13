@@ -15,6 +15,12 @@ export interface UserInterviewRecord {
   transcript: string;
   transcriptFileName?: string;
   supplement?: string;
+  audioObjectKey?: string;
+  audioUrl?: string;
+  audioFileName?: string;
+  audioSize?: number | null;
+  audioDurationMs?: number | null;
+  audioUploadedAt?: string | null;
   transcriptChars: number;
   answers: InterviewAnswer[];
   status: 'draft' | 'structured';
@@ -68,6 +74,11 @@ export function updateUserInterview(
     transcript?: string;
     supplement?: string;
     answers?: InterviewAnswer[];
+    audioObjectKey?: string;
+    audioUrl?: string;
+    audioFileName?: string;
+    audioSize?: number;
+    audioDurationMs?: number;
   }
 ) {
   return axios.put<UserInterviewRecord>(
