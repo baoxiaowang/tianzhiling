@@ -1,4 +1,5 @@
-import { Inject, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
+import type { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type {
   AdminAuthenticatedPayload,
@@ -19,7 +20,11 @@ import type {
   UpdateAdminDailyPromotionExpenseRequestDTO,
   UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
-import { AppError, getDouyinPromotionExpense } from '@tzl/shared';
+import {
+  AppError,
+  findDouyinPromotionExpense,
+  getDouyinPromotionExpense,
+} from '@tzl/shared';
 import {
   AdminDailyStatsEntity,
   AgentEntity,
@@ -229,6 +234,9 @@ export interface AdminDailyNoteResult {
 
 @Provide()
 export class AdminOperationsService {
+  @Logger()
+  logger: ILogger;
+
   @InjectEntityModel(AdminDailyStatsEntity)
   statsModel: MongoRepository<AdminDailyStatsEntity>;
 
@@ -266,7 +274,11 @@ export class AdminOperationsService {
     const start = new Date(`${day}T00:00:00+08:00`);
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
     const hourExpr = {
-      $dateToString: { format: '%H', date: '$createdAt', timezone: 'Asia/Shanghai' },
+      $dateToString: {
+        format: '%H',
+        date: '$createdAt',
+        timezone: 'Asia/Shanghai',
+      },
     };
 
     const [userRows, messageRows] = await Promise.all([
@@ -301,13 +313,18 @@ export class AdminOperationsService {
     userRows.forEach((row: { _id: string; count: number }) => {
       usersByHour.set(String(row._id), Number(row.count) || 0);
     });
-    const msgByHour = new Map<string, { messages: number; activeUsers: number }>();
-    messageRows.forEach((row: { _id: string; messages: number; activeUsers: number }) => {
-      msgByHour.set(String(row._id), {
-        messages: Number(row.messages) || 0,
-        activeUsers: Number(row.activeUsers) || 0,
-      });
-    });
+    const msgByHour = new Map<
+      string,
+      { messages: number; activeUsers: number }
+    >();
+    messageRows.forEach(
+      (row: { _id: string; messages: number; activeUsers: number }) => {
+        msgByHour.set(String(row._id), {
+          messages: Number(row.messages) || 0,
+          activeUsers: Number(row.activeUsers) || 0,
+        });
+      }
+    );
 
     const buckets = Array.from({ length: 24 }, (_, hour) => {
       const key = String(hour).padStart(2, '0');
@@ -602,10 +619,11 @@ export class AdminOperationsService {
 
     const dayMap = await this.ensureDaysFromStats([date]);
     const point = dayMap.get(date);
-    const promotionExpense = await this.resolvePromotionExpense(
+    const resolvedPromotion = await this.resolvePromotionExpense(
       date,
       override
     );
+    const promotionExpense = resolvedPromotion.value;
     // 累计收入是同期群终身口径，必须实时重算，否则会把过期快照值算进 profit。
     const liveCohortRevenue = await this.loadLiveCohortRevenue(date, date);
     const cohortRevenue = this.roundMoney(liveCohortRevenue.get(date) ?? 0);
@@ -620,6 +638,8 @@ export class AdminOperationsService {
           cohortRevenue,
           promotionExpense,
           profit,
+          promotionExpenseSynced: resolvedPromotion.synced,
+          promotionExpenseSource: resolvedPromotion.source,
           computedAt: new Date(),
         },
       },
@@ -1019,7 +1039,9 @@ export class AdminOperationsService {
    *   · 注册 = 当天新建的手机号账号（user_account.account 为 11 位手机号）；
    *   · 未注册 = 访客 − 注册（同一天口径，最小 0）。
    */
-  async getVisitorStats(days?: number | string): Promise<AdminVisitorStatsResultDTO> {
+  async getVisitorStats(
+    days?: number | string
+  ): Promise<AdminVisitorStatsResultDTO> {
     const parsed = Number(days);
     const normalizedDays =
       Number.isFinite(parsed) && parsed >= 1 && parsed <= 180
@@ -1032,7 +1054,11 @@ export class AdminOperationsService {
     const rangeEnd = this.beijingDateStart(this.addDaysToBeijingDate(today, 1));
 
     const dateOf = (field: string) => ({
-      $dateToString: { format: '%Y-%m-%d', date: `$${field}`, timezone: '+08:00' },
+      $dateToString: {
+        format: '%Y-%m-%d',
+        date: `$${field}`,
+        timezone: '+08:00',
+      },
     });
 
     const [visitorRows, registeredRows] = await Promise.all([
@@ -1083,7 +1109,10 @@ export class AdminOperationsService {
     }
 
     const visitorsTotal = daily.reduce((sum, item) => sum + item.visitors, 0);
-    const registeredTotal = daily.reduce((sum, item) => sum + item.registered, 0);
+    const registeredTotal = daily.reduce(
+      (sum, item) => sum + item.registered,
+      0
+    );
     const unregisteredTotal = daily.reduce(
       (sum, item) => sum + item.unregistered,
       0
@@ -1230,22 +1259,45 @@ export class AdminOperationsService {
    */
   /**
    * 推广费取值顺序：人工覆盖 > 抖评系统当日合计 > 内置静态表。
-   * 抖评不可用（未配密码/网络异常/接口报错）时自动回退，不影响报表主流程。
+   * 抖评不可用（未配密码/网络异常/接口报错）且当天没有人工值/静态历史时，
+   * 返回 synced=false，调用方据此保留库里原值，避免把已有数据覆盖成 0。
    */
   private async resolvePromotionExpense(
     date: string,
     override?: number
-  ): Promise<number> {
-    if (override !== undefined) return override;
+  ): Promise<{
+    value: number;
+    synced: boolean;
+    source: 'manual' | 'douyin' | 'static' | 'missing';
+  }> {
+    if (override !== undefined) {
+      return { value: override, synced: true, source: 'manual' };
+    }
     try {
       const remote = await this.douyinReviewService?.getDailyExpense(date);
       if (typeof remote === 'number' && Number.isFinite(remote)) {
-        return this.roundMoney(remote);
+        return {
+          value: this.roundMoney(remote),
+          synced: true,
+          source: 'douyin',
+        };
       }
     } catch (error) {
-      // 抖评异常：静默回退静态表
+      this.logger?.warn?.(
+        '[daily-stats] douyin promotion fetch failed, date=%s reason=%s',
+        date,
+        (error as Error)?.message || String(error)
+      );
     }
-    return getDouyinPromotionExpense(date);
+    const historical = findDouyinPromotionExpense(date);
+    if (historical !== undefined) {
+      return { value: historical, synced: true, source: 'static' };
+    }
+    this.logger?.warn?.(
+      '[daily-stats] promotion expense unavailable, date=%s (douyin down, no manual/static value)',
+      date
+    );
+    return { value: 0, synced: false, source: 'missing' };
   }
 
   async computeDailyStats(date: string): Promise<AdminOperationsDailyPointDTO> {
@@ -1317,7 +1369,8 @@ export class AdminOperationsService {
     const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
     const refundedRevenue = this.centsToYuan(refundMap.get(date) ?? 0);
     const cohortRevenue = this.centsToYuan(cohortMap.get(date) ?? 0);
-    const promotionExpense = await this.resolvePromotionExpense(date);
+    const resolvedPromotion = await this.resolvePromotionExpense(date);
+    const promotionExpense = resolvedPromotion.value;
 
     return {
       date,
@@ -1338,6 +1391,8 @@ export class AdminOperationsService {
       promotionExpense,
       profit: this.roundMoney(cohortRevenue - promotionExpense),
       promotionExpenseManual: false,
+      promotionExpenseSynced: resolvedPromotion.synced,
+      promotionExpenseSource: resolvedPromotion.source,
     };
   }
 
@@ -1394,6 +1449,12 @@ export class AdminOperationsService {
           (Number(row.cohortRevenue) || 0) - promotionExpense
         ),
         promotionExpenseManual: override !== undefined,
+        promotionExpenseSynced:
+          override !== undefined ? true : row.promotionExpenseSynced !== false,
+        promotionExpenseSource:
+          override !== undefined
+            ? 'manual'
+            : row.promotionExpenseSource || 'static',
       });
     }
     return map;
@@ -1408,7 +1469,38 @@ export class AdminOperationsService {
   ): Promise<AdminOperationsDailyPointDTO> {
     const point = await this.computeDailyStats(date);
     const override = await this.getPromotionExpenseOverride(date);
-    const promotionExpense = override ?? point.promotionExpense;
+    let existing: AdminDailyStatsEntity | null = null;
+    try {
+      if (typeof this.statsModel?.findOne === 'function') {
+        existing = await this.statsModel.findOne({
+          where: { date } as never,
+        });
+      }
+    } catch {
+      existing = null;
+    }
+    const storedExpense = Number.isFinite(Number(existing?.promotionExpense))
+      ? Number(existing?.promotionExpense)
+      : undefined;
+
+    let promotionExpense = override ?? point.promotionExpense;
+    const promotionExpenseSynced =
+      override !== undefined ? true : point.promotionExpenseSynced !== false;
+    let promotionExpenseSource =
+      override !== undefined
+        ? 'manual'
+        : point.promotionExpenseSource || 'static';
+
+    if (
+      override === undefined &&
+      promotionExpenseSynced === false &&
+      storedExpense !== undefined
+    ) {
+      // 抖评不可用：保留库里已有的值，避免把好数据覆盖成 0
+      promotionExpense = storedExpense;
+      promotionExpenseSource = 'stale';
+    }
+
     const profit = this.roundMoney(point.cohortRevenue - promotionExpense);
     await this.statsModel.updateOne(
       { date },
@@ -1429,6 +1521,8 @@ export class AdminOperationsService {
           netRevenue: point.netRevenue,
           cohortRevenue: point.cohortRevenue,
           promotionExpense,
+          promotionExpenseSynced,
+          promotionExpenseSource,
           profit,
           computedAt: new Date(),
         },
@@ -1440,6 +1534,8 @@ export class AdminOperationsService {
       promotionExpense,
       profit,
       promotionExpenseManual: override !== undefined,
+      promotionExpenseSynced,
+      promotionExpenseSource,
     };
   }
 

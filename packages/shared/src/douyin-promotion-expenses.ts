@@ -40,3 +40,15 @@ export function getDouyinPromotionExpense(date: string): number {
   const day = Number(match[2]);
   return DOUYIN_PROMOTION_EXPENSES_BY_MONTH[match[1]]?.[day - 1] ?? 0;
 }
+
+/**
+ * 与 getDouyinPromotionExpense 相同，但当天不在表内时返回 undefined，
+ * 便于调用方区分「历史上就是 0」和「没有数据」。
+ */
+export function findDouyinPromotionExpense(date: string): number | undefined {
+  const match = /^(\d{4}-\d{2})-(\d{2})$/.exec(date);
+  if (!match) return undefined;
+
+  const day = Number(match[2]);
+  return DOUYIN_PROMOTION_EXPENSES_BY_MONTH[match[1]]?.[day - 1];
+}

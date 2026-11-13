@@ -1,9 +1,7 @@
 import { Provide, Inject } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type { MongoRepository } from 'typeorm';
-import {
-  AdminDailyStatsEntity,
-} from '@tzl/entities';
+import { AdminDailyStatsEntity } from '@tzl/entities';
 import type { AdminOperationsDailyPointDTO } from '@tzl/shared';
 import { getDouyinPromotionExpense } from '@tzl/shared';
 import { AdminOperationsService } from './admin-operations.service';
@@ -85,6 +83,12 @@ export class AdminDailyStatsService {
             ((Number(row.cohortRevenue) || 0) - promotionExpense) * 100
           ) / 100,
         promotionExpenseManual: override !== undefined,
+        promotionExpenseSynced:
+          override !== undefined ? true : row.promotionExpenseSynced !== false,
+        promotionExpenseSource:
+          override !== undefined
+            ? 'manual'
+            : row.promotionExpenseSource || 'static',
       });
     }
     return map;
@@ -107,7 +111,9 @@ export class AdminDailyStatsService {
     const missing = dates.filter(d => !cached.has(d));
     if (missing.length > 0) {
       // 只补算最近的 N 天，超出部分留给定时任务/回填
-      const toBackfill = missing.slice(-AdminDailyStatsService.MAX_LIVE_BACKFILL_DAYS);
+      const toBackfill = missing.slice(
+        -AdminDailyStatsService.MAX_LIVE_BACKFILL_DAYS
+      );
       const CONCURRENCY = 3;
       for (let i = 0; i < toBackfill.length; i += CONCURRENCY) {
         const batch = toBackfill.slice(i, i + CONCURRENCY);
@@ -157,14 +163,17 @@ export class AdminDailyStatsService {
     const [yearText, monthText] = month.split('-');
     const year = Number(yearText);
     const monthIndex = Number(monthText) - 1;
-    const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+    const daysInMonth = new Date(
+      Date.UTC(year, monthIndex + 1, 0)
+    ).getUTCDate();
     const today = this.getTodayBeijing();
     const isCurrentMonth = today.startsWith(month);
     const lastDay = isCurrentMonth
       ? Math.min(Number(today.split('-')[2]), daysInMonth)
       : daysInMonth;
-    const dates = Array.from({ length: lastDay }, (_, i) =>
-      `${month}-${String(i + 1).padStart(2, '0')}`
+    const dates = Array.from(
+      { length: lastDay },
+      (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`
     );
     const map = await this.ensureDays(dates);
     return dates.map(d => map.get(d)!).filter(Boolean);

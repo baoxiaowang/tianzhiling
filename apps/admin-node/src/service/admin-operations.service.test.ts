@@ -754,8 +754,9 @@ describe('AdminOperationsService', () => {
     // 读取路径会强制重算「今天」（8-25）：用汇总行模拟，避免依赖底层聚合
     jest
       .spyOn(service, 'computeAndPersistDailyStats')
-      .mockImplementation(async (date: string) =>
-        (mockDailyRows.find(row => row.date === date) ?? { date }) as never
+      .mockImplementation(
+        async (date: string) =>
+          (mockDailyRows.find(row => row.date === date) ?? { date }) as never
       );
 
     const result = await service.getOrderAnalytics('2026-08');
@@ -1233,4 +1234,47 @@ describe('AdminOperationsService', () => {
       conversionRate: 13.3,
     });
   });
+});
+
+it('抖评失败且无人工值时保留库里原值，不写成 0', async () => {
+  const service = new AdminOperationsService();
+  (service as any).logger = { warn: jest.fn() };
+  (service as any).computeDailyStats = jest.fn().mockResolvedValue({
+    date: '2026-11-13',
+    newUsers: 0,
+    newAgents: 0,
+    newUserChatUsers: 0,
+    newUserMessages: 0,
+    newUserFiveMessageUsers: 0,
+    allChatUsers: 0,
+    userMessages: 0,
+    paidUsers: 0,
+    paidOrders: 0,
+    sameDayPayingUsers: 0,
+    paidRevenue: 0,
+    refundedRevenue: 0,
+    netRevenue: 0,
+    cohortRevenue: 100,
+    promotionExpense: 0,
+    profit: 100,
+    promotionExpenseManual: false,
+    promotionExpenseSynced: false,
+    promotionExpenseSource: 'missing',
+  });
+  (service as any).getPromotionExpenseOverride = jest
+    .fn()
+    .mockResolvedValue(undefined);
+  const updateOne = jest.fn().mockResolvedValue({});
+  (service as any).statsModel = {
+    findOne: jest.fn().mockResolvedValue({ promotionExpense: 123 }),
+    updateOne,
+  };
+
+  const result = await service.computeAndPersistDailyStats('2026-11-13');
+  const saved = updateOne.mock.calls[0][1].$set;
+
+  expect(saved.promotionExpense).toBe(123);
+  expect(saved.promotionExpenseSynced).toBe(false);
+  expect(saved.promotionExpenseSource).toBe('stale');
+  expect(result.promotionExpense).toBe(123);
 });

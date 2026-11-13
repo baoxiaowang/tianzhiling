@@ -25,6 +25,16 @@
       </a-space>
     </header>
 
+    <a-alert
+      v-if="unsyncedDays.length"
+      type="warning"
+      show-icon
+      class="daily-detail-page__sync-alert"
+    >
+      抖评同步异常：{{ unsyncedDays.length }} 天推广费未同步（显示「未同步」），
+      系统已保留库中原值；可手动填写，或在抖评恢复后点「刷新」重新同步。
+    </a-alert>
+
     <a-spin :loading="loading">
       <a-table
         :scroll="{ x: 'max-content' }"
@@ -208,22 +218,33 @@
           </a-table-column>
           <a-table-column title="推广费" :width="170">
             <template #cell="{ record }">
-              <a-input-number
-                class="daily-detail-page__promotion-input"
-                :model-value="promotionDraft(record)"
-                :min="0"
-                :precision="2"
-                :step="0.01"
-                size="small"
-                @change="(value) => onPromotionChange(record, value)"
-                @press-enter="flushPromotion(record)"
-                @blur="flushPromotion(record)"
-              />
+              <div class="daily-detail-page__promotion-cell">
+                <a-input-number
+                  class="daily-detail-page__promotion-input"
+                  :model-value="promotionDraft(record)"
+                  :placeholder="isPromotionUnsynced(record) ? '未同步' : ''"
+                  :min="0"
+                  :precision="2"
+                  :step="0.01"
+                  size="small"
+                  @change="(value) => onPromotionChange(record, value)"
+                  @press-enter="flushPromotion(record)"
+                  @blur="flushPromotion(record)"
+                />
+                <a-tag
+                  v-if="isPromotionUnsynced(record)"
+                  color="orange"
+                  size="small"
+                >
+                  未同步
+                </a-tag>
+              </div>
             </template>
           </a-table-column>
           <a-table-column title="盈利">
             <template #cell="{ record }">
-              <strong>{{ formatMoney(profitFor(record)) }}</strong>
+              <strong v-if="isPromotionUnsynced(record)">—</strong>
+              <strong v-else>{{ formatMoney(profitFor(record)) }}</strong>
             </template>
           </a-table-column>
           <a-table-column title="单客收益">
@@ -312,8 +333,22 @@
     record.profit ??
     Number((record.cohortRevenue - promotionExpenseFor(record)).toFixed(2));
 
-  const promotionDraft = (record: AdminOperationsDailyPointDTO) =>
-    promotionDrafts[record.date] ?? promotionExpenseFor(record);
+  const isPromotionUnsynced = (record: AdminOperationsDailyPointDTO) =>
+    record.promotionExpenseSynced === false &&
+    record.promotionExpenseManual !== true &&
+    promotionDrafts[record.date] === undefined;
+
+  const unsyncedDays = computed(() =>
+    daily.value.filter((record) => isPromotionUnsynced(record))
+  );
+
+  const promotionDraft = (record: AdminOperationsDailyPointDTO) => {
+    const draft = promotionDrafts[record.date];
+    if (draft !== undefined) return draft;
+    return isPromotionUnsynced(record)
+      ? undefined
+      : promotionExpenseFor(record);
+  };
 
   /** 累计收入下钻：按日期缓存同期群订单明细。 */
   const cohortLoading = reactive<Record<string, boolean>>({});
@@ -699,6 +734,16 @@
 
 <style lang="less" scoped>
   .daily-detail-page {
+    .daily-detail-page__sync-alert {
+      margin-bottom: 12px;
+    }
+
+    .daily-detail-page__promotion-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
     width: 100%;
     min-width: 0;
     min-height: 100%;

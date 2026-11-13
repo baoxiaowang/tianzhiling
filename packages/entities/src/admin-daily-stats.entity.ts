@@ -63,6 +63,14 @@ export class AdminDailyStatsEntity extends BaseEntity {
   @Column()
   promotionExpense!: number;
 
+  /** 推广费是否已同步到权威来源；false 表示抖评不可用且无人工值，当前值不可信 */
+  @Column()
+  promotionExpenseSynced?: boolean;
+
+  /** 推广费来源：manual / douyin / static / stale / missing */
+  @Column()
+  promotionExpenseSource?: string;
+
   /** 利润（元）= netRevenue - promotionExpense */
   @Column()
   profit!: number;

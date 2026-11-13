@@ -95,6 +95,10 @@ export interface AdminOperationsDailyPointDTO {
   profit?: number;
   /** 推广费是否为管理员手动录入（true 时存在覆盖值） */
   promotionExpenseManual?: boolean;
+  /** 推广费是否已同步到权威来源（抖评/人工/历史表）；false 表示当前值不可信 */
+  promotionExpenseSynced?: boolean;
+  /** 推广费来源：manual / douyin / static / stale / missing */
+  promotionExpenseSource?: string;
 }
 
 /**
