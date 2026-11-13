@@ -47,6 +47,40 @@ describe('AdminUserInterviewService', () => {
     expect(prompt.length).toBeLessThan(150000);
   });
 
+  it('删除录音时使用 $unset 真正清除字段', async () => {
+    const service = createService();
+    const entity: any = {
+      _id: '507f1f77bcf86cd799439011',
+      audioObjectKey: 'user-interviews/audio/a.mp3',
+      audioUrl: 'https://x/a.mp3',
+      audioFileName: 'a.mp3',
+      audioSize: 1024,
+      audioUploadedAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const updateOne = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    (service as any).interviewRepo = {
+      findOne: jest.fn().mockResolvedValue(entity),
+      save: jest.fn().mockResolvedValue(entity),
+      updateOne,
+    };
+
+    await service.update('507f1f77bcf86cd799439011', {
+      audioObjectKey: '',
+      audioUrl: '',
+      audioFileName: '',
+    });
+
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    const [, update] = updateOne.mock.calls[0];
+    expect(update.$unset).toMatchObject({
+      audioObjectKey: '',
+      audioUrl: '',
+      audioFileName: '',
+    });
+    expect(entity.audioObjectKey).toBeUndefined();
+  });
+
   it('docx 可提取出纯文本', async () => {
     const service = createService();
     const base64 = readFileSync(FIXTURE).toString('base64');

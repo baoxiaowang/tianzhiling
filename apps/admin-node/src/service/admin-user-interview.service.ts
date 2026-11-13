@@ -159,12 +159,37 @@ export class AdminUserInterviewService {
       entity.supplement = this.normalizeSupplement(dto.supplement);
     }
     if (dto.audioObjectKey !== undefined) {
-      entity.audioObjectKey = dto.audioObjectKey.trim() || undefined;
-      entity.audioUrl = (dto.audioUrl || '').trim() || undefined;
-      entity.audioFileName = (dto.audioFileName || '').trim() || undefined;
-      entity.audioSize = dto.audioSize ?? undefined;
-      entity.audioDurationMs = dto.audioDurationMs ?? undefined;
-      entity.audioUploadedAt = entity.audioObjectKey ? new Date() : undefined;
+      const audioObjectKey = (dto.audioObjectKey || '').trim();
+
+      if (!audioObjectKey) {
+        // TypeORM save 会忽略 undefined 字段，无法真正删除；这里显式 $unset。
+        await this.interviewRepo.updateOne(
+          { _id: this.entityId(entity) } as never,
+          {
+            $unset: {
+              audioObjectKey: '',
+              audioUrl: '',
+              audioFileName: '',
+              audioSize: '',
+              audioDurationMs: '',
+              audioUploadedAt: '',
+            },
+          } as never
+        );
+        delete entity.audioObjectKey;
+        delete entity.audioUrl;
+        delete entity.audioFileName;
+        delete entity.audioSize;
+        delete entity.audioDurationMs;
+        delete entity.audioUploadedAt;
+      } else {
+        entity.audioObjectKey = audioObjectKey;
+        entity.audioUrl = (dto.audioUrl || '').trim() || undefined;
+        entity.audioFileName = (dto.audioFileName || '').trim() || undefined;
+        entity.audioSize = dto.audioSize ?? undefined;
+        entity.audioDurationMs = dto.audioDurationMs ?? undefined;
+        entity.audioUploadedAt = new Date();
+      }
     }
     if (dto.answers !== undefined) {
       entity.answers = this.normalizeAnswers(
@@ -507,6 +532,11 @@ export class AdminUserInterviewService {
       }
       throw new Error('no json object found');
     }
+  }
+
+  private entityId(entity: UserInterviewEntity): unknown {
+    const raw = entity as unknown as { _id?: unknown; id?: unknown };
+    return raw._id ?? raw.id;
   }
 
   private async getEntity(id: string) {
