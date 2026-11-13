@@ -151,7 +151,15 @@
               {{ current?.status === 'structured' ? '重新整理' : 'AI 整理' }}
             </a-button>
             <a-button :loading="saving" @click="saveAnswers">保存</a-button>
-            <a-button @click="exportPdf">导出 PDF</a-button>
+            <a-dropdown trigger="click" @select="handleDownload">
+              <a-button>下载<icon-down /></a-button>
+              <template #content>
+                <a-doption value="pdf">PDF（.pdf）</a-doption>
+                <a-doption value="doc">Word（.doc）</a-doption>
+                <a-doption value="md">Markdown（.md）</a-doption>
+                <a-doption value="txt">纯文本（.txt）</a-doption>
+              </template>
+            </a-dropdown>
             <a-popconfirm
               content="确认删除这条访谈记录？删除后可重新上传"
               @ok="removeCurrent"
@@ -285,6 +293,8 @@
 <script lang="ts" setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue';
   import { Message } from '@arco-design/web-vue';
+  import html2canvas from 'html2canvas';
+  import { jsPDF } from 'jspdf';
   import uploadAdminFile from '@/api/storage';
   import {
     createUserInterview,
@@ -419,89 +429,232 @@
       .replace(/"/g, '&quot;');
   }
 
-  function exportPdf() {
-    const record = current.value;
-    if (!record) return;
+  function downloadBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
 
-    const sectionsHtml = sections.value
+  function safeFileName() {
+    const title = current.value?.title || '用户访谈';
+    return title.replace(/[\\/:*?"<>|\s]+/g, '_');
+  }
+
+  function buildExportModel() {
+    const record = current.value;
+    if (!record) return null;
+    return {
+      title: record.title || '用户访谈',
+      interviewDate: record.interviewDate || '-',
+      transcriptChars: record.transcriptChars || 0,
+      exportedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+      sections: sections.value.map((section) => ({
+        title: section.title,
+        items: sectionQuestions(section).map((item) => ({
+          no: item.no,
+          question: item.question,
+          answer: (answerText[item.no] || '').trim() || '未提及',
+          quotes: answerQuotes[item.no] || [],
+        })),
+      })),
+    };
+  }
+
+  const EXPORT_TEXT_STYLE =
+    'font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;color:#1d2129;';
+
+  function buildExportBodyHtml(
+    model: NonNullable<ReturnType<typeof buildExportModel>>
+  ) {
+    const sectionsHtml = model.sections
       .map((section) => {
-        const items = sectionQuestions(section)
-          .map((item) => {
-            const answer = (answerText[item.no] || '').trim() || '未提及';
-            const quotes = (answerQuotes[item.no] || [])
-              .map((quote) => `<div class="quote">“${escapeHtml(quote)}”</div>`)
-              .join('');
-            return `<div class="qa">
-  <div class="q">${item.no}. ${escapeHtml(item.question)}</div>
-  <div class="a">${escapeHtml(answer).replace(/\n/g, '<br>')}</div>
-  ${quotes}
-</div>`;
-          })
+        const itemsHtml = section.items
+          .map(
+            (
+              item
+            ) => `<div style="margin:0 0 10px 0;padding:8px 10px;border:1px solid #e5e6eb;border-radius:6px;${EXPORT_TEXT_STYLE}">
+  <div style="font-weight:600;margin-bottom:4px;">${item.no}. ${escapeHtml(
+              item.question
+            )}</div>
+  <div style="white-space:pre-wrap;">${escapeHtml(item.answer)}</div>
+  ${item.quotes
+    .map(
+      (quote) =>
+        `<div style="margin-top:4px;color:#86909c;font-size:11px;">“${escapeHtml(
+          quote
+        )}”</div>`
+    )
+    .join('')}
+</div>`
+          )
           .join('');
-        return `<section><h2>${escapeHtml(
-          section.title
-        )}</h2>${items}</section>`;
+        return `<div style="margin:0 0 14px 0;">
+  <div style="font-size:13px;font-weight:600;margin-bottom:8px;padding-left:8px;border-left:3px solid #165dff;">${escapeHtml(
+    section.title
+  )}</div>
+  ${itemsHtml}
+</div>`;
       })
       .join('');
 
-    const closeScript = ['</scr', 'ipt>'].join('');
-    const title = record.title || '用户访谈';
-    const exportedAt = new Date().toLocaleString('zh-CN', { hour12: false });
-    const html = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8" />
-<title>${escapeHtml(title)}</title>
-<style>
-  @page { size: A4; margin: 16mm 14mm; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    color: #1f1f1f;
-    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-    font-size: 12px;
-    line-height: 1.7;
-  }
-  h1 { font-size: 20px; margin: 0 0 6px; }
-  .meta { color: #666; font-size: 11px; margin-bottom: 18px; }
-  section { margin-bottom: 16px; }
-  h2 {
-    font-size: 13px;
-    margin: 0 0 8px;
-    padding-left: 8px;
-    border-left: 3px solid #165dff;
-  }
-  .qa {
-    margin: 0 0 10px;
-    padding: 8px 10px;
-    border: 1px solid #e5e6eb;
-    border-radius: 6px;
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-  .q { font-weight: 600; margin-bottom: 4px; }
-  .a { white-space: normal; }
-  .quote { margin-top: 4px; color: #86909c; font-size: 11px; }
-  @media print { .qa { box-shadow: none; } }
-</style></head>
-<body>
-  <h1>${escapeHtml(title)}</h1>
-  <div class="meta">
-    访谈日期：${escapeHtml(record.interviewDate || '-')} ·
-    逐字稿 ${record.transcriptChars || 0} 字 ·
-    导出时间：${escapeHtml(exportedAt)}
+    return `<div style="font-size:12px;line-height:1.7;${EXPORT_TEXT_STYLE}">
+  <div style="font-size:20px;font-weight:600;margin-bottom:6px;">${escapeHtml(
+    model.title
+  )}</div>
+  <div style="color:#666;font-size:11px;margin-bottom:16px;">
+    访谈日期：${escapeHtml(model.interviewDate)} · 逐字稿 ${
+      model.transcriptChars
+    } 字 · 下载时间：${escapeHtml(model.exportedAt)}
   </div>
   ${sectionsHtml}
-  <script>window.onload = function () { window.print(); };${closeScript}
-</body></html>`;
+</div>`;
+  }
 
-    const win = window.open('', '_blank', 'width=900,height=1200');
-    if (!win) {
-      Message.warning('浏览器拦截了导出窗口，请允许弹窗后重试');
-      return;
+  async function exportPdf() {
+    const model = buildExportModel();
+    if (!model) return;
+    const holder = document.createElement('div');
+    holder.style.cssText =
+      'position:fixed;left:-10000px;top:0;width:794px;background:#fff;padding:24px;box-sizing:border-box;z-index:-1;';
+    holder.innerHTML = buildExportBodyHtml(model);
+    document.body.appendChild(holder);
+    try {
+      const canvas = await html2canvas(holder, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+      });
+      // eslint-disable-next-line new-cap
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 12;
+      const imgWidth = pageWidth - margin * 2;
+      const pageImgHeight = pageHeight - margin * 2;
+      const sliceHeightPx = Math.floor(
+        (canvas.width * pageImgHeight) / imgWidth
+      );
+      let offset = 0;
+      let pageIndex = 0;
+      while (offset < canvas.height) {
+        const height = Math.min(sliceHeightPx, canvas.height - offset);
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = height;
+        const ctx = slice.getContext('2d');
+        ctx?.drawImage(
+          canvas,
+          0,
+          offset,
+          canvas.width,
+          height,
+          0,
+          0,
+          canvas.width,
+          height
+        );
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(
+          slice.toDataURL('image/jpeg', 0.92),
+          'JPEG',
+          margin,
+          margin,
+          imgWidth,
+          (height * imgWidth) / canvas.width
+        );
+        offset += height;
+        pageIndex += 1;
+      }
+      pdf.save(`${safeFileName()}.pdf`);
+      Message.success('PDF 已下载');
+    } catch (error) {
+      Message.error('导出 PDF 失败，请重试');
+    } finally {
+      holder.remove();
     }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.focus();
+  }
+
+  function exportDoc() {
+    const model = buildExportModel();
+    if (!model) return;
+    const html = `<!doctype html><html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>${escapeHtml(model.title)}</title>
+<style>@page { size: A4; margin: 16mm 14mm; } body { font-size: 12pt; }</style>
+</head><body>${buildExportBodyHtml(model)}</body></html>`;
+    downloadBlob(
+      new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' }),
+      `${safeFileName()}.doc`
+    );
+    Message.success('Word 文档已下载');
+  }
+
+  function exportMarkdown() {
+    const model = buildExportModel();
+    if (!model) return;
+    const lines: string[] = [
+      `# ${model.title}`,
+      '',
+      `> 访谈日期：${model.interviewDate} · 逐字稿 ${model.transcriptChars} 字 · 下载时间：${model.exportedAt}`,
+      '',
+    ];
+    model.sections.forEach((section) => {
+      lines.push(`## ${section.title}`, '');
+      section.items.forEach((item) => {
+        lines.push(`**${item.no}. ${item.question}**`, '', item.answer, '');
+        item.quotes.forEach((quote) => lines.push(`> “${quote}”`));
+        if (item.quotes.length) lines.push('');
+      });
+    });
+    downloadBlob(
+      new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' }),
+      `${safeFileName()}.md`
+    );
+    Message.success('Markdown 已下载');
+  }
+
+  function exportTxt() {
+    const model = buildExportModel();
+    if (!model) return;
+    const lines: string[] = [
+      model.title,
+      `访谈日期：${model.interviewDate} · 逐字稿 ${model.transcriptChars} 字 · 下载时间：${model.exportedAt}`,
+      '',
+    ];
+    model.sections.forEach((section) => {
+      lines.push(`【${section.title}】`, '');
+      section.items.forEach((item) => {
+        lines.push(`${item.no}. ${item.question}`, `答：${item.answer}`);
+        item.quotes.forEach((quote) => lines.push(`  原话：“${quote}”`));
+        lines.push('');
+      });
+    });
+    downloadBlob(
+      new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' }),
+      `${safeFileName()}.txt`
+    );
+    Message.success('文本已下载');
+  }
+
+  function handleDownload(
+    value: string | number | Record<string, unknown> | undefined
+  ) {
+    const format = String(value ?? '');
+    if (format === 'pdf') {
+      exportPdf();
+    } else if (format === 'doc') {
+      exportDoc();
+    } else if (format === 'md') {
+      exportMarkdown();
+    } else if (format === 'txt') {
+      exportTxt();
+    }
   }
 
   function removeCurrent() {
