@@ -3,7 +3,7 @@
     class="user-interview-panel"
     :class="{ 'user-interview-panel--embedded': embedded }"
   >
-    <template v-if="mode === 'list'">
+    <template v-if="!current">
       <a-card
         class="user-interview-panel__card"
         :class="{ 'user-interview-panel__card--embedded': embedded }"
@@ -14,77 +14,96 @@
             <a-typography-text bold>用户访谈</a-typography-text>
             <a-typography-text type="secondary">
               上传访谈逐字稿，AI
-              会按《用户访谈提问大纲》整理成表单，可再手动修改。
+              会按《用户访谈提问大纲》整理成表单；访谈后单独追问的内容可填在「补充材料」里。
             </a-typography-text>
           </div>
-          <a-space>
-            <a-button :loading="loading" @click="fetchList">刷新</a-button>
-            <a-button type="primary" @click="openCreate">新建访谈</a-button>
-          </a-space>
         </div>
-
-        <a-table
-          row-key="id"
-          :data="records"
-          :loading="loading"
-          :pagination="{ pageSize: 10, showTotal: true }"
-          :scroll="{ x: 'max-content' }"
-        >
-          <template #empty>
-            <a-empty
-              description="还没有访谈记录，点右上角「新建访谈」上传逐字稿"
+        <a-form :model="form" layout="vertical">
+          <a-row :gutter="16">
+            <a-col :span="8">
+              <a-form-item label="访谈日期">
+                <a-date-picker
+                  v-model="form.interviewDate"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                />
+              </a-form-item>
+            </a-col>
+            <a-col :span="16">
+              <a-form-item label="标题（可选）">
+                <a-input
+                  v-model="form.title"
+                  placeholder="默认使用「日期 + 用户访谈」"
+                />
+              </a-form-item>
+            </a-col>
+          </a-row>
+          <a-form-item label="访谈逐字稿">
+            <div
+              class="user-interview-panel__dropzone"
+              :class="{
+                'user-interview-panel__dropzone--active': dragOver,
+                'user-interview-panel__dropzone--uploading': fileLoading,
+              }"
+              @click="triggerFilePick"
+              @dragenter.prevent="dragOver = true"
+              @dragover.prevent="dragOver = true"
+              @dragleave.prevent="dragOver = false"
+              @drop.prevent="handleDrop"
+            >
+              <input
+                ref="fileInputRef"
+                type="file"
+                accept=".txt,.md,.csv,.docx,.pdf"
+                class="user-interview-panel__file-input"
+                @change="handleFileChange"
+              />
+              <icon-upload class="user-interview-panel__dropzone-icon" />
+              <div class="user-interview-panel__dropzone-title">
+                {{
+                  dragOver
+                    ? '松开鼠标即可上传'
+                    : '拖拽逐字稿到这里，或点击选择文件'
+                }}
+              </div>
+              <a-typography-text type="secondary">
+                {{
+                  form.transcriptFileName ||
+                  '支持 .txt / .md / .docx / .pdf，单个文件不超过 20MB'
+                }}
+              </a-typography-text>
+              <a-spin
+                v-if="fileLoading"
+                class="user-interview-panel__dropzone-spin"
+              />
+            </div>
+            <a-textarea
+              v-model="form.transcript"
+              :auto-size="{ minRows: 8, maxRows: 20 }"
+              placeholder="粘贴访谈逐字稿…"
             />
-          </template>
-          <template #columns>
-            <a-table-column
-              title="访谈日期"
-              data-index="interviewDate"
-              :width="120"
+            <a-typography-text type="secondary">
+              已输入 {{ form.transcript.length }} 字（上限 20 万字）
+            </a-typography-text>
+          </a-form-item>
+          <a-form-item label="补充材料（可选）">
+            <a-textarea
+              v-model="form.supplement"
+              :auto-size="{ minRows: 3, maxRows: 8 }"
+              placeholder="访谈后单独追问的内容、回访记录等；AI 会用它补全逐字稿没提到的题目"
             />
-            <a-table-column title="标题" data-index="title" :width="220">
-              <template #cell="{ record }">
-                <a-link @click="openDetail(record)">{{
-                  record.title || '未命名访谈'
-                }}</a-link>
-              </template>
-            </a-table-column>
-            <a-table-column title="状态" :width="100">
-              <template #cell="{ record }">
-                <a-tag
-                  :color="record.status === 'structured' ? 'green' : 'gray'"
-                >
-                  {{ record.status === 'structured' ? '已整理' : '草稿' }}
-                </a-tag>
-              </template>
-            </a-table-column>
-            <a-table-column title="逐字稿" :width="110">
-              <template #cell="{ record }"
-                >{{ record.transcriptChars || 0 }} 字</template
-              >
-            </a-table-column>
-            <a-table-column title="更新时间" :width="170">
-              <template #cell="{ record }">{{
-                formatDate(record.updatedAt)
-              }}</template>
-            </a-table-column>
-            <a-table-column title="操作" :width="180" fixed="right">
-              <template #cell="{ record }">
-                <a-space>
-                  <a-link @click="openDetail(record)">查看</a-link>
-                  <a-popconfirm
-                    content="确认删除这条访谈记录？"
-                    @ok="removeRecord(record)"
-                  >
-                    <a-link status="danger">删除</a-link>
-                  </a-popconfirm>
-                </a-space>
-              </template>
-            </a-table-column>
-          </template>
-        </a-table>
+          </a-form-item>
+          <a-button
+            type="primary"
+            :loading="creating"
+            :disabled="!form.transcript.trim()"
+            @click="submitCreate"
+          >
+            创建并整理
+          </a-button>
+        </a-form>
       </a-card>
     </template>
-
     <template v-else>
       <a-card
         class="user-interview-panel__card"
@@ -94,7 +113,6 @@
         <div class="user-interview-panel__detail-head">
           <div class="user-interview-panel__detail-copy">
             <a-space>
-              <a-button size="small" @click="backToList">返回列表</a-button>
               <a-typography-text bold>
                 {{ current?.title || '访谈记录' }}
               </a-typography-text>
@@ -122,6 +140,12 @@
               {{ current?.status === 'structured' ? '重新整理' : 'AI 整理' }}
             </a-button>
             <a-button :loading="saving" @click="saveAnswers">保存</a-button>
+            <a-popconfirm
+              content="确认删除这条访谈记录？删除后可重新上传"
+              @ok="removeCurrent"
+            >
+              <a-button status="danger">删除</a-button>
+            </a-popconfirm>
           </a-space>
         </div>
 
@@ -196,87 +220,6 @@
         </div>
       </a-card>
     </template>
-
-    <a-modal
-      v-model:visible="createVisible"
-      title="新建用户访谈"
-      :width="720"
-      :mask-closable="false"
-      :ok-loading="creating"
-      ok-text="创建并整理"
-      @ok="submitCreate"
-    >
-      <a-form :model="form" layout="vertical">
-        <a-form-item label="访谈日期">
-          <a-date-picker
-            v-model="form.interviewDate"
-            value-format="YYYY-MM-DD"
-            style="width: 220px"
-          />
-        </a-form-item>
-        <a-form-item label="标题（可选）">
-          <a-input
-            v-model="form.title"
-            placeholder="默认使用「日期 + 用户访谈」"
-          />
-        </a-form-item>
-        <a-form-item label="访谈逐字稿">
-          <div
-            class="user-interview-panel__dropzone"
-            :class="{
-              'user-interview-panel__dropzone--active': dragOver,
-              'user-interview-panel__dropzone--uploading': fileLoading,
-            }"
-            @click="triggerFilePick"
-            @dragenter.prevent="dragOver = true"
-            @dragover.prevent="dragOver = true"
-            @dragleave.prevent="dragOver = false"
-            @drop.prevent="handleDrop"
-          >
-            <input
-              ref="fileInputRef"
-              type="file"
-              accept=".txt,.md,.csv,.docx,.pdf"
-              class="user-interview-panel__file-input"
-              @change="handleFileChange"
-            />
-            <icon-upload class="user-interview-panel__dropzone-icon" />
-            <div class="user-interview-panel__dropzone-title">
-              {{
-                dragOver
-                  ? '松开鼠标即可上传'
-                  : '拖拽逐字稿到这里，或点击选择文件'
-              }}
-            </div>
-            <a-typography-text type="secondary">
-              {{
-                form.transcriptFileName ||
-                '支持 .txt / .md / .docx / .pdf，单个文件不超过 20MB'
-              }}
-            </a-typography-text>
-            <a-spin
-              v-if="fileLoading"
-              class="user-interview-panel__dropzone-spin"
-            />
-          </div>
-          <a-textarea
-            v-model="form.transcript"
-            :auto-size="{ minRows: 10, maxRows: 22 }"
-            placeholder="粘贴访谈逐字稿…"
-          />
-          <a-typography-text type="secondary">
-            已输入 {{ form.transcript.length }} 字（上限 20 万字）
-          </a-typography-text>
-        </a-form-item>
-        <a-form-item label="补充材料（可选）">
-          <a-textarea
-            v-model="form.supplement"
-            :auto-size="{ minRows: 3, maxRows: 8 }"
-            placeholder="访谈后单独追问的内容、回访记录等；AI 会用它补全逐字稿没提到的题目"
-          />
-        </a-form-item>
-      </a-form>
-    </a-modal>
   </div>
 </template>
 
@@ -311,14 +254,12 @@
   const structuring = ref(false);
   const records = ref<UserInterviewRecord[]>([]);
   const current = ref<UserInterviewRecord | null>(null);
-  const mode = ref<'list' | 'detail'>('list');
   const outline = ref<InterviewOutlineItem[]>([]);
   const sections = ref<InterviewSection[]>([]);
   const answerText = reactive<Record<number, string>>({});
   const answerQuotes = reactive<Record<number, string[]>>({});
 
   const supplementText = ref('');
-  const createVisible = ref(false);
   const fileInputRef = ref<HTMLInputElement>();
   const dragOver = ref(false);
   const fileLoading = ref(false);
@@ -341,16 +282,6 @@
     const month = `${now.getMonth() + 1}`.padStart(2, '0');
     const day = `${now.getDate()}`.padStart(2, '0');
     return `${now.getFullYear()}-${month}-${day}`;
-  }
-
-  function formatDate(value?: string | null) {
-    if (!value) return '-';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '-';
-    const pad = (input: number) => `${input}`.padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-      date.getDate()
-    )} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
   const sectionQuestions = (section: InterviewSection) =>
@@ -377,6 +308,12 @@
     try {
       const { data } = await listUserInterviews(props.userId);
       records.value = data;
+      if (data.length) {
+        openDetail(data[0]);
+      } else {
+        current.value = null;
+        resetCreateForm();
+      }
     } catch (error) {
       Message.error(apiError(error, '加载访谈记录失败'));
     } finally {
@@ -397,22 +334,20 @@
     current.value = record;
     supplementText.value = record.supplement || '';
     applyAnswers(record.answers || []);
-    mode.value = 'detail';
   }
 
-  function backToList() {
-    mode.value = 'list';
-    current.value = null;
-    fetchList();
-  }
-
-  function openCreate() {
+  function resetCreateForm() {
     form.interviewDate = todayString();
     form.title = '';
     form.transcript = '';
     form.transcriptFileName = '';
     form.supplement = '';
-    createVisible.value = true;
+  }
+
+  function removeCurrent() {
+    if (current.value) {
+      removeRecord(current.value);
+    }
   }
 
   function triggerFilePick() {
@@ -524,10 +459,9 @@
         transcriptFileName: form.transcriptFileName || undefined,
         supplement: form.supplement.trim() || undefined,
       });
-      createVisible.value = false;
       current.value = data;
       applyAnswers(data.answers || []);
-      mode.value = 'detail';
+      resetCreateForm();
       await runStructure();
       await fetchList();
     } catch (error) {
@@ -584,10 +518,12 @@
       await deleteUserInterview(record.id);
       Message.success('已删除');
       if (current.value?.id === record.id) {
-        backToList();
-      } else {
-        await fetchList();
+        current.value = null;
+        applyAnswers([]);
+        supplementText.value = '';
+        resetCreateForm();
       }
+      await fetchList();
     } catch (error) {
       Message.error(apiError(error, '删除失败'));
     }
@@ -596,8 +532,10 @@
   watch(
     () => props.userId,
     () => {
-      mode.value = 'list';
       current.value = null;
+      applyAnswers([]);
+      supplementText.value = '';
+      resetCreateForm();
       fetchList();
     }
   );
@@ -605,6 +543,7 @@
   const hasRecords = computed(() => records.value.length > 0);
 
   onMounted(async () => {
+    resetCreateForm();
     await fetchOutline();
     await fetchList();
   });
