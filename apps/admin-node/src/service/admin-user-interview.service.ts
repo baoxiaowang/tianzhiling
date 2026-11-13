@@ -134,6 +134,7 @@ export class AdminUserInterviewService {
       interviewDate,
       transcript,
       transcriptFileName: dto.transcriptFileName?.trim() || undefined,
+      supplement: this.normalizeSupplement(dto.supplement),
       answers: [],
       status: 'draft',
       createdAt: now,
@@ -153,6 +154,9 @@ export class AdminUserInterviewService {
     }
     if (dto.transcript !== undefined) {
       entity.transcript = this.normalizeTranscript(dto.transcript);
+    }
+    if (dto.supplement !== undefined) {
+      entity.supplement = this.normalizeSupplement(dto.supplement);
     }
     if (dto.answers !== undefined) {
       entity.answers = this.normalizeAnswers(
@@ -184,7 +188,7 @@ export class AdminUserInterviewService {
       );
     }
 
-    const prompt = this.buildStructurePrompt(transcript);
+    const prompt = this.buildStructurePrompt(transcript, entity.supplement);
     // 模型偶发返回非法 JSON（实测出现过一次），这里自动重试一次再报错。
     let parsed: unknown;
     let lastError = '';
@@ -371,10 +375,11 @@ export class AdminUserInterviewService {
       .join('\n');
   }
 
-  buildStructurePrompt(transcript: string) {
+  buildStructurePrompt(transcript: string, supplement?: string) {
     const outline = USER_INTERVIEW_OUTLINE.map(
       item => `${item.no}. ${item.question}`
     ).join('\n');
+    const supplementText = this.normalizeSupplement(supplement);
     const clipped =
       transcript.length > MAX_LLM_INPUT_CHARS
         ? `${transcript.slice(0, MAX_LLM_INPUT_CHARS)}\n（逐字稿过长，已截断）`
@@ -394,6 +399,15 @@ export class AdminUserInterviewService {
       '7. 只输出 JSON，不要 markdown 代码块，answers 必须覆盖 1~25 全部题号，格式：',
       '{"answers":[{"no":1,"question":"...","answer":"...","quotes":["..."]}]}',
       '',
+      ...(supplementText
+        ? [
+            '补充材料说明：',
+            '- 下面【补充材料】是访谈后单独追问或回访记录的内容，可能与逐字稿重复；',
+            '- 逐字稿没有、但补充材料有的题目，请整理进对应题号，并在 answer 末尾标注「（补充材料）」；',
+            '- 两者冲突时以逐字稿为准，补充材料仅用于补全；',
+            '',
+          ]
+        : []),
       '易错题提示：',
       '- 第 15/16 题：只写逐字稿里明确聊到的小使者内容；用户说没留意就写「没有留意过」，不要补充介绍后的功能说明；',
       '- 第 18 题：逐字稿里访谈人若问过「家人 / 朋友对你用 AI 对话亲人是什么反应」，把他们的反应（如担心、劝你别陷进去）整理到本题；',
@@ -404,7 +418,17 @@ export class AdminUserInterviewService {
       '',
       '【逐字稿】',
       clipped,
+      ...(supplementText ? ['', '【补充材料】', supplementText] : []),
     ].join('\n');
+  }
+
+  private normalizeSupplement(value?: string) {
+    const text = (value || '')
+      .replace(/\r\n/g, '\n')
+      .split(String.fromCharCode(0))
+      .join('')
+      .trim();
+    return text ? text.slice(0, 100000) : undefined;
   }
 
   private normalizeTranscript(value: string) {
@@ -602,6 +626,7 @@ export class AdminUserInterviewService {
       interviewDate: entity.interviewDate || '',
       transcript: entity.transcript || '',
       transcriptFileName: entity.transcriptFileName || '',
+      supplement: entity.supplement || '',
       transcriptChars: (entity.transcript || '').length,
       answers: Array.isArray(entity.answers) ? entity.answers : [],
       status: entity.status || 'draft',

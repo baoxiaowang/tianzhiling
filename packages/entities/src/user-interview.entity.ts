@@ -38,6 +38,10 @@ export class UserInterviewEntity extends BaseEntity {
   @Column()
   transcriptFileName?: string;
 
+  /** 补充材料（访谈后单独追问、回访记录等），参与 AI 整理 */
+  @Column()
+  supplement?: string;
+
   @Column()
   answers: UserInterviewAnswer[];
 

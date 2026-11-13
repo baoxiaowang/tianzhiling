@@ -14,6 +14,7 @@ export interface UserInterviewRecord {
   interviewDate: string;
   transcript: string;
   transcriptFileName?: string;
+  supplement?: string;
   transcriptChars: number;
   answers: InterviewAnswer[];
   status: 'draft' | 'structured';
@@ -54,6 +55,7 @@ export function createUserInterview(data: {
   interviewDate?: string;
   transcript: string;
   transcriptFileName?: string;
+  supplement?: string;
 }) {
   return axios.post<UserInterviewRecord>('/admin_api/user-interviews', data);
 }
@@ -64,6 +66,7 @@ export function updateUserInterview(
     title?: string;
     interviewDate?: string;
     transcript?: string;
+    supplement?: string;
     answers?: InterviewAnswer[];
   }
 ) {

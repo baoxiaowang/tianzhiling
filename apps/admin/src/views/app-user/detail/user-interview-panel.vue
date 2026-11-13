@@ -139,6 +139,16 @@
               current?.transcript
             }}</pre>
           </a-collapse-item>
+          <a-collapse-item
+            key="supplement"
+            header="补充材料（访谈后追问 / 回访记录，可编辑）"
+          >
+            <a-textarea
+              v-model="supplementText"
+              :auto-size="{ minRows: 3, maxRows: 10 }"
+              placeholder="访谈后单独追问、回访记录等；保存后再次「整理」会用上"
+            />
+          </a-collapse-item>
         </a-collapse>
 
         <div
@@ -258,6 +268,13 @@
             已输入 {{ form.transcript.length }} 字（上限 20 万字）
           </a-typography-text>
         </a-form-item>
+        <a-form-item label="补充材料（可选）">
+          <a-textarea
+            v-model="form.supplement"
+            :auto-size="{ minRows: 3, maxRows: 8 }"
+            placeholder="访谈后单独追问的内容、回访记录等；AI 会用它补全逐字稿没提到的题目"
+          />
+        </a-form-item>
       </a-form>
     </a-modal>
   </div>
@@ -300,6 +317,7 @@
   const answerText = reactive<Record<number, string>>({});
   const answerQuotes = reactive<Record<number, string[]>>({});
 
+  const supplementText = ref('');
   const createVisible = ref(false);
   const fileInputRef = ref<HTMLInputElement>();
   const dragOver = ref(false);
@@ -309,6 +327,7 @@
     title: '',
     transcript: '',
     transcriptFileName: '',
+    supplement: '',
   });
 
   const apiError = (error: unknown, fallback: string) => {
@@ -376,6 +395,7 @@
 
   function openDetail(record: UserInterviewRecord) {
     current.value = record;
+    supplementText.value = record.supplement || '';
     applyAnswers(record.answers || []);
     mode.value = 'detail';
   }
@@ -391,6 +411,7 @@
     form.title = '';
     form.transcript = '';
     form.transcriptFileName = '';
+    form.supplement = '';
     createVisible.value = true;
   }
 
@@ -501,6 +522,7 @@
         interviewDate: form.interviewDate || todayString(),
         transcript,
         transcriptFileName: form.transcriptFileName || undefined,
+        supplement: form.supplement.trim() || undefined,
       });
       createVisible.value = false;
       current.value = data;
@@ -543,7 +565,10 @@
           ? answerQuotes[item.no]
           : undefined,
       }));
-      const { data } = await updateUserInterview(current.value.id, { answers });
+      const { data } = await updateUserInterview(current.value.id, {
+        answers,
+        supplement: supplementText.value,
+      });
       current.value = data;
       Message.success('已保存');
       await fetchList();

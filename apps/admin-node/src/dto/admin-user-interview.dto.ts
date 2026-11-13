@@ -20,6 +20,9 @@ export class CreateUserInterviewDTO {
 
   @Rule(RuleType.string().trim().max(200).optional())
   transcriptFileName?: string;
+
+  @Rule(RuleType.string().allow('').max(100000).optional())
+  supplement?: string;
 }
 
 export class UpdateUserInterviewDTO {
@@ -34,6 +37,9 @@ export class UpdateUserInterviewDTO {
 
   @Rule(RuleType.array().items(RuleType.object()).max(60).optional())
   answers?: Array<Record<string, unknown>>;
+
+  @Rule(RuleType.string().allow('').max(100000).optional())
+  supplement?: string;
 }
 
 export class ExtractInterviewDocxDTO {

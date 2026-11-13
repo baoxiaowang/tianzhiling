@@ -26,6 +26,20 @@ describe('AdminUserInterviewService', () => {
     expect(prompt).toContain('答案');
   });
 
+  it('补充材料会进入 prompt 并标注来源规则', () => {
+    const service = createService();
+    const prompt = service.buildStructurePrompt('逐字稿内容', '第25题：愿意分享，999 答谢');
+    expect(prompt).toContain('【补充材料】');
+    expect(prompt).toContain('（补充材料）');
+    expect(prompt).toContain('999 答谢');
+  });
+
+  it('无补充材料时 prompt 不包含补充材料段落', () => {
+    const service = createService();
+    const prompt = service.buildStructurePrompt('逐字稿内容');
+    expect(prompt).not.toContain('【补充材料】');
+  });
+
   it('过长逐字稿会被截断并标注', () => {
     const service = createService();
     const prompt = service.buildStructurePrompt('x'.repeat(150000));
