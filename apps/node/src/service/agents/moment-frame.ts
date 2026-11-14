@@ -29,7 +29,8 @@ export interface MomentFrameInput {
   isDeceased?: boolean;
 }
 
-const ARRIVAL_PATTERN = /进屋|到家|回家|进家门|开门|到楼|进楼|进小区/u;
+const USER_ARRIVAL_PATTERN =
+  /^(?:终于|可算|我|俺)?\s*(?:刚|已经)?\s*(?:进屋|到家|回家|进家门|回屋|到楼|进楼|进小区|开车回家)(?:了|啦|咯|呀|啊)?/u;
 const TRIP_PATTERN = /沈阳|到站|打车|车上|车站|机场|旅途|出差|回来|候车|开车/u;
 const DISTRESS_PATTERN =
   /心情不好|不好|难受|累|烦|不开心|撑不住|想哭|崩溃|疼|不舒服|一个人/u;
@@ -55,9 +56,7 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
   const recentDistress = DISTRESS_PATTERN.test(recent);
   const currentDistress = DISTRESS_PATTERN.test(current);
   const arrival =
-    ARRIVAL_PATTERN.test(current) &&
-    (current.length <= 24 ||
-      /^(?:我)?(?:刚|已经)?(?:进屋|到家|回家|进家门|开门)/u.test(current));
+    USER_ARRIVAL_PATTERN.test(current) && current.length <= 24;
   const memoryInvite = MEMORY_INVITE_PATTERN.test(current);
   const ritual = RITUAL_PATTERN.test(current);
 
