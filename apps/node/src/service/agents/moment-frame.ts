@@ -54,21 +54,22 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
   const recentTrip = TRIP_PATTERN.test(recent);
   const recentDistress = DISTRESS_PATTERN.test(recent);
   const currentDistress = DISTRESS_PATTERN.test(current);
-  const arrival = ARRIVAL_PATTERN.test(current);
+  const arrival =
+    ARRIVAL_PATTERN.test(current) &&
+    (current.length <= 24 ||
+      /^(?:我)?(?:刚|已经)?(?:进屋|到家|回家|进家门|开门)/u.test(current));
   const memoryInvite = MEMORY_INVITE_PATTERN.test(current);
   const ritual = RITUAL_PATTERN.test(current);
 
   if (arrival) {
     const afterTrip = recentTrip || TRIP_PATTERN.test(current);
-    const high = Boolean(
-      input.isDeceased || recentDistress || currentDistress || afterTrip
-    );
+    const high = Boolean(recentDistress || currentDistress || afterTrip);
     return {
       momentType: afterTrip ? 'after_trip' : 'arrival_home',
       emotionalExposure: high ? 'high' : 'medium',
       primaryNeed: 'land',
       memoryPermission: 'none',
-      bubbleBudget: 1,
+      bubbleBudget: high ? 1 : 2,
       reason: high
         ? '用户刚到家/进屋，且此前有旅途或低落语境；先接住落地时刻'
         : '用户报告到家/进屋，先接住当前状态',
@@ -167,9 +168,6 @@ export function applyMomentFrameToSegments(
 ): string[] {
   if (!frame || !segments.length) return segments;
   let next = [...segments];
-  if (frame.bubbleBudget === 1 && next.length > 1) {
-    next = next.slice(0, 1);
-  }
   if (frame.memoryPermission === 'none') {
     const filtered = next.filter(segment => {
       const value = String(segment || '');
