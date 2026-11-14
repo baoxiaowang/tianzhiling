@@ -55,6 +55,25 @@ describe('moment frame', () => {
     ).toEqual(['躺好，别瞎动。']);
   });
 
+  it('treats a bare future plan as one practical landing turn', () => {
+    const frame = resolveMomentFrame({
+      currentQuery: '明天回天津',
+      recentMessages: recent,
+      isDeceased: true,
+    });
+    expect(frame).toMatchObject({
+      momentType: 'plan_status',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+    });
+    expect(
+      applyMomentFrameToSegments(
+        ['明天回天津路上别赶时间，', '找个地方吃碗热面条，我记着你也爱吃清淡的'],
+        frame
+      )
+    ).toEqual(['明天回天津路上别赶时间。']);
+  });
+
   it('drops an uninvited second-bubble memory after landing', () => {
     const frame = resolveMomentFrame({
       currentQuery: '进屋了',

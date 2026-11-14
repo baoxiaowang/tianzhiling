@@ -1,6 +1,7 @@
 export type MomentType =
   | 'ordinary'
   | 'daily_rest'
+  | 'plan_status'
   | 'arrival_home'
   | 'after_trip'
   | 'distress'
@@ -35,6 +36,8 @@ const USER_ARRIVAL_PATTERN =
 const TRIP_PATTERN = /沈阳|到站|打车|车上|车站|机场|旅途|出差|回来|候车|开车/u;
 const REST_PATTERN =
   /洗完澡|洗澡|躺了|躺下|要睡|准备睡|上床|关灯|歇了|眯一会|眯一会儿|睡了|休息了/u;
+const PLAN_STATUS_PATTERN =
+  /(?:明天|后天|下周|下个月|等会|一会儿|待会|下午|晚上|接下来|明天早上).{0,12}(?:去|回|来|走|上班|出差|医院|天津|北京|老家)|(?:准备|打算|要去|要回|要去看|得去)/u;
 const DISTRESS_PATTERN =
   /心情不好|不好|难受|累|烦|不开心|撑不住|想哭|崩溃|疼|不舒服|一个人/u;
 const MEMORY_INVITE_PATTERN =
@@ -78,17 +81,6 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
     };
   }
 
-  if (REST_PATTERN.test(current) && current.length <= 30) {
-    return {
-      momentType: 'daily_rest',
-      emotionalExposure: recentDistress ? 'high' : 'medium',
-      primaryNeed: 'land',
-      memoryPermission: 'none',
-      bubbleBudget: 1,
-      reason: '用户刚洗完澡/躺下/准备休息，先接住身体状态',
-    };
-  }
-
   if (memoryInvite) {
     return {
       momentType: 'memory_invite',
@@ -108,6 +100,28 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
       memoryPermission: 'relevant',
       bubbleBudget: 2,
       reason: '用户当前在梦境/仪式语境',
+    };
+  }
+  if (REST_PATTERN.test(current) && current.length <= 30) {
+    return {
+      momentType: 'daily_rest',
+      emotionalExposure: recentDistress ? 'high' : 'medium',
+      primaryNeed: 'land',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+      reason: '用户刚洗完澡/躺下/准备休息，先接住身体状态',
+    };
+  }
+
+
+  if (PLAN_STATUS_PATTERN.test(current) && current.length <= 40) {
+    return {
+      momentType: 'plan_status',
+      emotionalExposure: 'low',
+      primaryNeed: 'land',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+      reason: '用户报告未来安排/计划，先回应安排本身',
     };
   }
 
@@ -166,9 +180,13 @@ export function buildMomentFramePrompt(frame: MomentFrame): string {
     `类型：${frame.momentType}；情感暴露：${frame.emotionalExposure}；首要需要：${frame.primaryNeed}。`,
     `记忆许可：${frame.memoryPermission}。${memory}`,
     bubble,
-    frame.primaryNeed === 'land'
-      ? '先接住“到家/进屋/落地”这一刻；不要急着讲道理、提问或回忆。'
-      : frame.primaryNeed === 'accompany'
+    frame.momentType === 'plan_status'
+      ? '先回应这个安排本身；不要用旧食物、旧偏好、旧地点填充第二句。'
+      : frame.momentType === 'daily_rest'
+        ? '先接住“洗完澡/躺下/要休息”这一刻；不要用旧事填充。'
+        : frame.primaryNeed === 'land'
+          ? '先接住“到家/进屋/落地”这一刻；不要急着讲道理、提问或回忆。'
+          : frame.primaryNeed === 'accompany'
         ? '先陪着当前情绪，不急着用旧事填满。'
         : '按当前需要回应，不主动扩大话题。',
     '这是本轮的时刻约束，不是角色设定；不要向用户说出这些字段名。',
@@ -201,7 +219,7 @@ export function applyMomentFrameToSegments(
 function shouldGateMomentMemory(frame: MomentFrame): boolean {
   return (
     frame.memoryPermission === 'none' &&
-    ['arrival_home', 'after_trip', 'daily_rest', 'distress'].includes(
+    ['arrival_home', 'after_trip', 'daily_rest', 'plan_status', 'distress'].includes(
       frame.momentType
     )
   );
@@ -218,6 +236,7 @@ function cleanTrailingConnector(value: string): string {
 
 function buildMomentSafeFallback(frame: MomentFrame): string {
   if (frame.momentType === 'daily_rest') return '先歇着，别着凉。';
+  if (frame.momentType === 'plan_status') return '路上慢点，注意安全。';
   if (frame.momentType === 'arrival_home' || frame.momentType === 'after_trip') {
     return '到家就好，先缓一缓。';
   }
