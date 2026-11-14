@@ -569,7 +569,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
         currentQuery,
         capabilityConstraints
       );
-  if (momentFrame.primaryNeed === 'land' && momentFrame.bubbleBudget === 1) {
+  if (momentFrame.bubbleBudget === 1) {
     replyMoves.splice(1);
   }
   const forbiddenAssumptions = Array.from(
