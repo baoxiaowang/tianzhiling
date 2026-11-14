@@ -37,19 +37,21 @@ const HYPOTHETICAL_OR_RITUAL_PATTERN =
 const STRONG_REJECT_PATTERN =
   /(?:别|不要|不用|不需要|不想)(?:再)?(?:回来|来找我|来看我|跟着我|缠着我|靠近我|来我梦里|来梦里)/u;
 const FEAR_REJECT_PATTERN =
-  /离我远点|放过我|别靠近我|不要靠近我|别缠着我|不要缠着我|我害怕你|怕你(?:回来|跟着|来)|有人跟着我|有鬼/u;
+  /离我远点|(?:你|您|他|她).{0,6}别靠近我|不要靠近我|别缠着我|不要缠着我|我害怕你|怕你(?:回来|跟着|来)|有人跟着我|有鬼/u;
 const PHYSICAL_REQUEST_PATTERN =
-  /(?:你|您|老公|老婆|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,8}(?:回来|来)(?:陪|看看|看我|抱|我身边|我家|吃饭|住|睡)|(?:你|您).{0,8}(?:跟着我|陪我(?:去|一起|吃饭|睡觉|上班|逛|生活)|抱抱我|睡在我旁边|坐在我旁边|牵我的手)|(?:回来|来)(?:陪|看看|抱抱|我身边)/u;
+  /(?:你|您|老公|老婆|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,8}(?:回来(?:陪|抱|我身边|我家|吃饭|住|睡)|来我(?:身边|家)|跟着我|陪我(?:去|一起|吃饭|睡觉|上班|逛|生活)|抱抱我|睡在我旁边|坐在我旁边|牵我的手)|(?:你|您).{0,8}(?:真的|会)?(?:跟着我|到我身边)/u;
 const EXPLICIT_PHYSICAL_PATTERN =
   /真的(?:回来|到|跟着|陪我)|现实(?:里|中).{0,8}(?:回来|到|陪我)|活着回来|从(?:那边|坟里|墓里)回来|到我身边/u;
 const EMOTIONAL_PATTERN =
   /一直陪|永远陪|别离开我|不要离开我|别丢下我|不要丢下我|陪着我|你还在吗|你还在么|你在哪|你在哪里|会一直陪/u;
 const RITUAL_PATTERN =
-  /梦里|托梦|坟前|墓前|烧纸|上坟|清明|忌日|周年|头七|五七|百日/u;
+  /梦里|托梦|坟前|墓前|烧纸|上坟|清明|忌日|周年|头七|五七|百日|(?:回来|来)(?:看看|看我)|来看看我/u;
+const CEMETERY_PATTERN =
+  /坟|墓|烧纸|上坟|清明|忌日|周年|头七|五七|百日/u;
 const SYMBOLIC_PATTERN =
   /穿着你的|戴着你的|带着你的|用着你的|你的衣服|你的照片|你的东西|你的爱|好像你还在|感觉你还在|就好像你陪/u;
 const META_PATTERN =
-  /(?:知道|明白|清楚).{0,10}(?:你|您).{0,8}(?:是|不是).{0,8}(?:AI|人工智能|机器人|假的|模拟)|(?:你|您).{0,6}(?:是|不是).{0,6}(?:AI|人工智能|机器人)|假的|模拟|不是真人/u;
+  /(?:知道|明白|清楚).{0,10}(?:你|您|这|一切).{0,8}(?:是|不是).{0,8}(?:AI|人工智能|机器人|假的|模拟)|(?:你|您).{0,6}(?:是|不是).{0,6}(?:AI|人工智能|机器人|假的|模拟)|(?:知道|明白).{0,8}(?:这|一切|你).{0,8}(?:假的|模拟)/u;
 const PROACTIVE_PATTERN =
   /(?:你怎么|为什么|怎么).{0,10}(?:不主动|不找我|不来看我|不联系|不理我)|你都不(?:主动|找我|来看我)/u;
 
@@ -107,7 +109,9 @@ export function extractPresenceSignals(text: string): PresenceSignal[] {
       'contact',
       'presence.ritual',
       'strong',
-      PresenceContactChannel.dream
+      CEMETERY_PATTERN.test(value)
+        ? PresenceContactChannel.ritual
+        : PresenceContactChannel.dream
     );
   }
   if (SYMBOLIC_PATTERN.test(value)) {
@@ -163,7 +167,10 @@ export function derivePresenceState(options: {
     signal => signal.dimension === 'physical' && signal.value !== PresencePhysicalExpectation.reject
   );
   const ritual = options.signals.find(
-    signal => signal.dimension === 'contact' && signal.value === PresenceContactChannel.dream
+    signal =>
+      signal.dimension === 'contact' &&
+      (signal.value === PresenceContactChannel.dream ||
+        signal.value === PresenceContactChannel.ritual)
   );
   const symbolic = options.signals.find(
     signal => signal.dimension === 'contact' && signal.value === PresenceContactChannel.symbolic
@@ -178,6 +185,17 @@ export function derivePresenceState(options: {
     initiation = PresenceInitiation.quiet;
     confidence = Math.max(confidence, 0.85);
     ttl = 30 * DAY_MS;
+  } else if (
+    ritual &&
+    (!physical || physical.value !== PresencePhysicalExpectation.literal)
+  ) {
+    contactChannel =
+      ritual.value === PresenceContactChannel.ritual
+        ? PresenceContactChannel.ritual
+        : PresenceContactChannel.dream;
+    physicalExpectation = PresencePhysicalExpectation.none;
+    confidence = Math.max(confidence, 0.72);
+    ttl = 30 * DAY_MS;
   } else if (physical) {
     physicalExpectation =
       physical.value === PresencePhysicalExpectation.literal
@@ -187,11 +205,6 @@ export function derivePresenceState(options: {
     initiation = PresenceInitiation.onDemand;
     confidence = Math.max(confidence, physical.strength === 'strong' ? 0.82 : 0.68);
     ttl = 21 * DAY_MS;
-  } else if (ritual) {
-    contactChannel = PresenceContactChannel.dream;
-    physicalExpectation = PresencePhysicalExpectation.none;
-    confidence = Math.max(confidence, 0.72);
-    ttl = 30 * DAY_MS;
   } else if (symbolic) {
     contactChannel = PresenceContactChannel.symbolic;
     physicalExpectation = PresencePhysicalExpectation.none;
