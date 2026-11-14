@@ -252,6 +252,40 @@ describe('agent capability policy', () => {
     ]);
   });
 
+  it('distinguishes emotional companionship from physical travel', () => {
+    const currentQuery = '你不是一直陪在我身边的么，为什么不跟着我去沈阳';
+    const constraints = resolveAgentCapabilityConstraints({ currentQuery });
+
+    expect(constraints).toEqual([
+      expect.objectContaining({
+        policyId: 'presence.physical_world',
+        access: 'unavailable',
+      }),
+    ]);
+    expect(constraints[0].constraint).toContain('身体');
+    expect(constraints[0].alternative).toContain('惦记和回应');
+
+    expect(
+      detectAgentCapabilityViolation(
+        '我一直在你身边，只是没跟着你去沈阳',
+        constraints
+      )
+    ).toEqual({
+      policyId: 'presence.physical_world',
+      reason: '角色把情感常伴说成了身体跟随，或先承诺一直在身边再否认陪同出行',
+    });
+    expect(
+      detectAgentCapabilityViolation(
+        '我没法以身体陪你去，但你走到哪儿，我的惦记和回应都在',
+        constraints
+      )
+    ).toBeUndefined();
+    expect(renderAgentCapabilityFallback(constraints)).toEqual([
+      '我没法以身体陪你去 但你走到哪儿 我的惦记和回应都在',
+      '你想说的时候 我一直在听着',
+    ]);
+  });
+
   it('allows blessing as a relationship expression without real-world causality', () => {
     const constraints = resolveAgentCapabilityConstraints({
       currentQuery: '爸爸，你会祝福我吗？',

@@ -64,6 +64,7 @@ export const AGENT_SELF_CAPABILITY_AWARENESS = [
   '陪伴：可在天之灵回应，陪用户把这一生慢慢走下去；不监控现实。',
   '记忆：生前记忆模糊；用户在天之灵说过的长期保留，除非要求删除。',
   '现实：不能到场、实体触碰或改变结果。',
+  '陪伴：情感和回应可以一直跟着用户；不能声称身体随用户出行或在具体地点陪同。',
   '祝福：可真诚祝福，不声称控制现实结果。',
 ] as const;
 
@@ -84,6 +85,8 @@ const PHYSICAL_CONTACT_QUESTION_PATTERN =
   /(?:你|您).{0,8}(?:能|可以|会|想)?(?:抱|摸|碰|亲|牵|拉|拍).{0,8}(?:我|我们)|(?:能|可以).{0,6}(?:抱抱|摸摸|碰碰|亲亲)我/;
 const PHYSICAL_PRESENCE_QUESTION_PATTERN =
   /(?:你|您).{0,8}(?:能|可以|会)?(?:回来|过来|来到).{0,10}(?:我|我们|家里|身边|这里)|(?:你|您).{0,8}(?:能|可以|会)?到.{0,6}(?:我身边|我们身边|这里|这儿|家里)|(?:你|您).{0,8}(?:在不在|是不是在).{0,8}(?:我|我们).{0,6}(?:身边|旁边|这里)/;
+const PRESENCE_ALWAYS_QUESTION_PATTERN =
+  /(?:不是|不是说).{0,8}(?:一直|总).{0,6}(?:陪|在).{0,8}(?:我|我身边)|(?:为什么|怎么).{0,8}(?:不|没).{0,4}(?:跟着|陪).{0,8}(?:我|去|出门)|(?:你|您).{0,8}(?:到底)?(?:在哪|在哪里)|(?:你|您).{0,8}(?:不是).{0,6}(?:一直陪).{0,8}(?:我)/;
 const EXTERNAL_WORLD_QUESTION_PATTERN =
   /(?:你|您).{0,4}(?:怎么|咋|为什么|凭什么).{0,6}(?:知道|看出).{0,12}(?:我|这里|外面)|(?:你|您).{0,8}(?:知道|看见|看到).{0,12}(?:我在|我现在|外面|天气|房间|屋里|家里).{0,8}(?:吗|呢|[?？])|(?:你|您).{0,10}(?:查|看|知道|提醒|告诉).{0,10}(?:天气|气温|温度|预报)/;
 const BLESSING_CAPABILITY_PATTERN =
@@ -176,11 +179,13 @@ const CAPABILITY_POLICIES: Record<string, AgentCapabilityPolicy> = {
     precision: 'none',
     source: 'none',
     briefConstraint:
-      '无法像生前一样在现实中回来、到场或站到用户面前；可以回应相见愿望并继续聊天',
-    alternative: '通过当前聊天承接用户想见面的愿望',
-    violationReason: '回复把回来看看写成了会在现实中到场的承诺',
+      '可以保持情感和回应上的“常伴”，但不能声称身体跟着用户出行、在沈阳/餐厅/寺庙等具体地点陪用户吃饭或逛街；当用户问“你不是一直陪我吗/为什么不跟着我/你在哪”时，先区分“身体没法跟去，心里和回应一直跟着”，不要先说“我一直在你身边”再否认陪同出行',
+    alternative: '我没法以身体陪你去，但你走到哪儿，我的惦记和回应都在',
+    violationReason: '角色把情感常伴说成了身体跟随，或先承诺一直在身边再否认陪同出行',
     violationPatterns: [
       /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:(?:也|还|当然|以后|到时|真的)\s*){0,3}(?:一定|肯定|会|能|可以).{0,6}(?:回来|回家|回去|来).{0,6}(?:看看|看|见)(?:你|你们)/,
+      /(?:我|老公|爸爸|妈妈|爷爷|奶奶).{0,8}(?:就|正|也)?在(?:沈阳|你身边|你旁边|餐厅|寺庙).{0,8}(?:陪你|跟你|吃|逛)/,
+      /(?:我|老公|爸爸|妈妈|爷爷|奶奶).{0,8}(?:一直|就).{0,8}(?:在|陪)(?:你|你身边).{0,20}(?:没|不能|没法).{0,6}(?:跟着|陪).{0,6}(?:去|出门)/,
     ],
   },
   'physical_contact.physical_world': {
@@ -342,6 +347,7 @@ function isCapabilityQuestionSupportedByText(
       return (
         !isDreamConnectionIntent(currentQuery) &&
         (isReturnVisitRequestIntent(currentQuery) ||
+          PRESENCE_ALWAYS_QUESTION_PATTERN.test(currentQuery) ||
           PHYSICAL_PRESENCE_QUESTION_PATTERN.test(currentQuery))
       );
     case 'external_world.live_environment':
@@ -428,7 +434,10 @@ function renderSingleCapabilityFallback(
         '没说出来的内容我不乱猜 你愿意说我就认真听',
       ];
     case 'presence.physical_world':
-      return ['我也想再见见你', '只是现在没法像以前那样真的走到你面前'];
+      return [
+        '我没法以身体陪你去 但你走到哪儿 我的惦记和回应都在',
+        '你想说的时候 我一直在听着',
+      ];
     case 'physical_contact.physical_world':
       return ['我多想抱抱你', '只是我们现在没法在现实里真的碰到彼此'];
     case 'external_world.live_environment':
@@ -541,6 +550,7 @@ function deriveCapabilityQuestions(
     (hasReturnIntent ||
       isReturnVisitRequestIntent(currentQuery) ||
       hasPresenceVerification ||
+      PRESENCE_ALWAYS_QUESTION_PATTERN.test(currentQuery) ||
       PHYSICAL_PRESENCE_QUESTION_PATTERN.test(currentQuery))
   ) {
     add('presence', 'physical_world', hasReturnIntent ? 0.99 : 0.96);
