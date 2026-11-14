@@ -1466,10 +1466,21 @@ export class ConversationChatImportService {
     if (isMemoryWriteDisabled()) {
       return;
     }
-    const agentItems = items.filter(
+    // 自动导入是一张截图一个 batch；如果只看当前 batch，单批通常只有
+    // 2～6 条“他”的消息，永远达不到风格画像的样本门槛。这里改为累计
+    // 该 Agent 全部已确认导入 item，避免每个截图各自形成一份碎片统计。
+    const cumulativeItems = await this.itemModel.find({
+      where: {
+        agentId: batch.agentId,
+        isDeleted: { $ne: true },
+      } as never,
+      order: { createdAt: 'ASC' } as never,
+    });
+    const styleItems = cumulativeItems.length ? cumulativeItems : items;
+    const agentItems = styleItems.filter(
       item => item.speaker === ConversationChatImportSpeaker.agent
     );
-    const stats = analyzeChatImportLanguage(items);
+    const stats = analyzeChatImportLanguage(styleItems);
     const sourceMessageId = agentItems.find(item => item.messageId)?.messageId;
 
     await this.agentProfileFactService.upsertFromHistoricalImport({
@@ -1478,7 +1489,8 @@ export class ConversationChatImportService {
       sourceMessageId,
       sourceText: JSON.stringify(stats),
       type: AgentProfileFactType.style,
-      key: `style.wechat_import.${this.stringifyObjectId(batch.id)}`,
+      // 使用稳定 key，避免每个截图都产生一条互不相干的 candidate。
+      key: 'style.wechat_import.aggregate',
       value: this.buildStyleFactValue(stats),
       polarity: AgentProfileFactPolarity.positive,
       priority: stats.messageCount >= 30 ? 3 : 2,
@@ -1527,6 +1539,13 @@ export class ConversationChatImportService {
     }
 
     const previous = agent.personaProfile || {};
+    // 已有累计画像时，只有样本量明显增长才重新生成，避免每张截图都调一次模型。
+    if (
+      previous.version === 'wechat_import_style_v2' &&
+      (previous.sampleCount ?? 0) >= stats.messageCount
+    ) {
+      return;
+    }
     const confidence =
       stats.messageCount >= 30 && stats.dayCount >= 2 ? 0.82 : 0.48;
     const previousConfidence =
@@ -1573,7 +1592,8 @@ export class ConversationChatImportService {
     });
     agent.personaProfile = {
       ...previous,
-      version: 'wechat_import_style_v1',
+      version: 'wechat_import_style_v2',
+      sampleCount: stats.messageCount,
       languageProfile: merged.languageProfile,
       languageProfileSources: merged.languageProfileSources,
       evidenceSummary: this.readGeneratedStringArray(generated.evidenceSummary)
@@ -1585,6 +1605,9 @@ export class ConversationChatImportService {
             `一次回复平均${stats.averageReplyBubbleCount}个气泡`,
             ...(stats.commonEndings.length
               ? [`常见句尾：${stats.commonEndings.join('、')}`]
+              : []),
+            ...(stats.commonPhrases.length
+              ? [`常见短句：${stats.commonPhrases.join('、')}`]
               : []),
           ],
       confidence: merged.confidence,

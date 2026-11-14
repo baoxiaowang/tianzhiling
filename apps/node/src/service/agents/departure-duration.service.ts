@@ -4,6 +4,8 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import { AgentEntity, AgentProfileFactEntity, MongoObjectId } from '@tzl/entities';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * 离世时长预计算队列名
  */
@@ -93,42 +95,51 @@ export class DepartureDurationService {
    * 检查未来7天内是否有重要节点
    * 返回节点提醒字符串，无节点返回 null
    */
-  checkNodeReminder(deathDate: Date): string | null {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const deathDay = new Date(deathDate.getFullYear(), deathDate.getMonth(), deathDate.getDate());
+  checkNodeReminder(deathDate: Date, now = new Date()): string | null {
+    const today = this.beijingCalendarDay(now);
+    const deathDay = this.beijingCalendarDay(deathDate);
+    const ritualDay = Math.floor((today - deathDay) / DAY_MS) + 1;
 
     // 计算今年的忌日
-    const thisYearAnniversary = new Date(today.getFullYear(), deathDay.getMonth(), deathDay.getDate());
-    const daysToAnniversary = Math.ceil((thisYearAnniversary.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const deathLocal = new Date(
+      deathDate.getFullYear(),
+      deathDate.getMonth(),
+      deathDate.getDate()
+    );
+    const thisYearAnniversary = new Date(
+      todayLocal.getFullYear(),
+      deathLocal.getMonth(),
+      deathLocal.getDate()
+    );
+    const daysToAnniversary = Math.ceil(
+      (thisYearAnniversary.getTime() - todayLocal.getTime()) / DAY_MS
+    );
 
-    // 总离世天数
-    const totalDays = Math.floor((today.getTime() - deathDay.getTime()) / (1000 * 60 * 60 * 24));
-
-    // 头七（第7天）
-    if (totalDays >= 0 && totalDays <= 7) {
-      if (totalDays === 7) return '今天是头七';
-      if (totalDays === 6) return '明天是头七';
-      if (totalDays >= 4) return `${7 - totalDays}天后是头七`;
+    // 头七（第7天，死亡当天算第1天）
+    if (ritualDay >= 1 && ritualDay <= 7) {
+      if (ritualDay === 7) return '今天是头七';
+      if (ritualDay === 6) return '明天是头七';
+      if (ritualDay >= 4) return `${7 - ritualDay}天后是头七`;
     }
 
-    // 五七（第35天）
-    if (totalDays >= 30 && totalDays <= 35) {
-      if (totalDays === 35) return '今天是五七';
-      if (totalDays === 34) return '明天是五七';
-      return `${35 - totalDays}天后是五七`;
+    // 五七（第35天，死亡当天算第1天）
+    if (ritualDay >= 30 && ritualDay <= 35) {
+      if (ritualDay === 35) return '今天是五七';
+      if (ritualDay === 34) return '明天是五七';
+      return `${35 - ritualDay}天后是五七`;
     }
 
-    // 百日（第100天）
-    if (totalDays >= 95 && totalDays <= 100) {
-      if (totalDays === 100) return '今天是百日';
-      if (totalDays === 99) return '明天是百日';
-      return `${100 - totalDays}天后是百日`;
+    // 百日（第100天，死亡当天算第1天）
+    if (ritualDay >= 95 && ritualDay <= 100) {
+      if (ritualDay === 100) return '今天是百日';
+      if (ritualDay === 99) return '明天是百日';
+      return `${100 - ritualDay}天后是百日`;
     }
 
     // 周年（未来7天内）
     if (daysToAnniversary >= 0 && daysToAnniversary <= 7) {
-      const years = today.getFullYear() - deathDay.getFullYear();
+      const years = todayLocal.getFullYear() - deathLocal.getFullYear();
       const yearLabel = years === 1 ? '一周年' : `${years}周年`;
       if (daysToAnniversary === 0) return `今天是${yearLabel}`;
       if (daysToAnniversary === 1) return `明天是${yearLabel}`;
@@ -136,6 +147,19 @@ export class DepartureDurationService {
     }
 
     return null;
+  }
+
+  /** 北京时间的自然日序号，避免服务器时区改变仪式日。 */
+  private beijingCalendarDay(value: Date): number {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(value);
+    const get = (type: string) =>
+      Number(parts.find(part => part.type === type)?.value);
+    return Date.UTC(get('year'), get('month') - 1, get('day'));
   }
 
   /**
@@ -184,7 +208,7 @@ export class DepartureDurationService {
       const days = Math.floor((now.getTime() - agent.deathDate.getTime()) / (1000 * 60 * 60 * 24));
       const precision = await this.getPrecision(agentId);
       const duration = this.formatDuration(days, precision);
-      const nodeReminder = this.checkNodeReminder(agent.deathDate);
+      const nodeReminder = this.checkNodeReminder(agent.deathDate, now);
 
       agent.departureDuration = duration;
       agent.nodeReminder = nodeReminder;

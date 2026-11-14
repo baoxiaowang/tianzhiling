@@ -54,6 +54,8 @@ export interface AgentPersonaProfile {
   evidenceSummary?: string[];
   uncertainties?: string[];
   confidence?: number;
+  /** Number of imported agent-side messages used for the cumulative style profile. */
+  sampleCount?: number;
 }
 
 export interface AgentMemoryProfileFactSnapshot {
