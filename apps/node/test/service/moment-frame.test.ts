@@ -35,6 +35,26 @@ describe('moment frame', () => {
     });
   });
 
+  it('treats washing up and lying down as a one-bubble rest moment', () => {
+    const frame = resolveMomentFrame({
+      currentQuery: '洗完澡，躺了',
+      recentMessages: recent,
+      isDeceased: true,
+    });
+    expect(frame).toMatchObject({
+      momentType: 'daily_rest',
+      primaryNeed: 'land',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+    });
+    expect(
+      applyMomentFrameToSegments(
+        ['躺好，别瞎动，', '我还记着本溪那趟，你炒的番茄炒蛋香得很'],
+        frame
+      )
+    ).toEqual(['躺好，别瞎动。']);
+  });
+
   it('drops an uninvited second-bubble memory after landing', () => {
     const frame = resolveMomentFrame({
       currentQuery: '进屋了',
@@ -49,7 +69,7 @@ describe('moment frame', () => {
         ],
         frame
       )
-    ).toEqual(['昂，进屋就好，把外套脱了缓一缓，']);
+    ).toEqual(['昂，进屋就好，把外套脱了缓一缓。']);
     expect(
       detectMomentFrameViolation('我记着你爱吃的番茄炒蛋味儿呢', frame)
     ).toContain('没有当前线索');
