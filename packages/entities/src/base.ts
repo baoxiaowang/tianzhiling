@@ -30,6 +30,7 @@ export enum TableName {
   conversation_chat_import_batch = "conversation_chat_import_batch",
   conversation_chat_import_item = "conversation_chat_import_item",
   conversation_emotion_state = "conversation_emotion_state",
+  presence_state = "presence_state",
   conversation_message_feedback = "conversation_message_feedback",
   conversation_deliberate_reply_task = "conversation_deliberate_reply_task",
   conversation_reply_turn = "conversation_reply_turn",

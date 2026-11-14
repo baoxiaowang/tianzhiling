@@ -37,6 +37,11 @@ import {
   resolveAgentCapabilityConstraints,
 } from './agent-capability-policy';
 import {
+  buildPresencePrompt,
+  shouldInjectPresencePrompt,
+  type PresenceStateSummary,
+} from './presence-state';
+import {
   isExplicitRememberRequest,
   isForgetMemoryRequest,
 } from './agent-memory-control';
@@ -202,6 +207,7 @@ export interface ReplyBrief {
   riskLevel: ReplyIntentRiskLevel;
   intents: StructuredReplyIntentItem[];
   capabilityConstraints: AgentCapabilityConstraint[];
+  presenceState?: PresenceStateSummary;
   evidence: ReplyBriefEvidence[];
   relationshipContext: ReplyBriefRelationshipContext[];
   relationshipContinuity?: RelationshipContinuityPlan;
@@ -256,6 +262,7 @@ export interface BuildReplyBriefOptions {
   }>;
   relationshipSignals?: AgentRelationshipSignalSummary[];
   capabilityConstraints?: AgentCapabilityConstraint[];
+  presenceState?: PresenceStateSummary | null;
 }
 
 const MEMORY_QUERY_PATTERN =
@@ -326,6 +333,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const relationshipContinuity =
     options.route?.relationshipContinuity ??
     resolveRelationshipContinuityPlan(currentQuery);
+  const presenceState = options.presenceState ?? undefined;
   const mode = resolveMode(
     primaryScene,
     intents,
@@ -686,6 +694,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     riskLevel,
     intents,
     capabilityConstraints,
+    presenceState,
     evidence,
     relationshipContext,
     relationshipContinuity,
@@ -1995,6 +2004,14 @@ export function buildConversationObjectPlanPrompt(
 }
 
 function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
+  const presenceLines =
+    brief.presenceState &&
+    shouldInjectPresencePrompt(
+      brief.presenceState,
+      brief.currentQuery || ''
+    )
+      ? [buildPresencePrompt(brief.presenceState), '']
+      : [];
   const sourceLabels: Record<ReplyBriefEvidenceSource, string> = {
     current_user: '当前用户原话',
     confirmed_fact: '已确认事实',
@@ -2326,6 +2343,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '未确认人物沿用用户称呼，不猜关系、性别或性格。',
     ...relationshipLines,
     ...relationshipContinuityLines,
+    ...presenceLines,
     ...(boundaryContract.prompt ? ['', boundaryContract.prompt] : []),
     '',
     '## 用户此刻需要',

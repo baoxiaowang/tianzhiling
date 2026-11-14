@@ -80,6 +80,8 @@ import {
   AgentEmotionStateService,
   ConversationEmotionStateSummary,
 } from './agent-emotion-state.service';
+import { PresenceStateService } from './presence-state.service';
+import type { PresenceStateSummary } from './presence-state';
 import {
   ClassifyReplyIntentOptions,
   ReplyIntentClassifierService,
@@ -254,6 +256,8 @@ export interface BuildConversationContextOptions {
    * 这些是“候选”而不是已确认事实：assertionPolicy=context_only、useMode=hypothesis。
    */
   localMemoryCandidates?: LocalMemoryCandidateInput[];
+  /** 已推断的存在状态；不传时由 context 自己读取。 */
+  presenceState?: PresenceStateSummary | null;
 }
 
 export interface AgentContextLayer {
@@ -879,6 +883,9 @@ export class AgentContextService {
   agentEmotionStateService: AgentEmotionStateService;
 
   @Inject()
+  presenceStateService?: PresenceStateService;
+
+  @Inject()
   conversationEntityLedgerService: ConversationEntityLedgerService;
 
   @Inject()
@@ -1086,6 +1093,11 @@ export class AgentContextService {
       'context.emotion_state',
       () => this.getCurrentEmotionState(options)
     );
+    const presenceStatePromise = this.withTraceSpan(
+      ChatTraceStage.contextLoad,
+      'context.presence_state',
+      () => this.getCurrentPresenceState(options)
+    );
     const relationshipSignalsPromise = this.withTraceSpan(
       ChatTraceStage.contextLoad,
       'context.relationship_signals',
@@ -1113,9 +1125,14 @@ export class AgentContextService {
             mode: 'direct',
             reason: options.currentQuery?.trim() ? 'ordinary_message' : 'empty',
           };
-    const [emotionState, replyIntentClassification, storedRelationshipSignals] =
-      await Promise.all([
+    const [
+      emotionState,
+      presenceState,
+      replyIntentClassification,
+      storedRelationshipSignals,
+    ] = await Promise.all([
         emotionStatePromise,
+        presenceStatePromise,
         this.withTraceSpan(
           ChatTraceStage.plan,
           'prepare.deterministic_signals',
@@ -1188,6 +1205,7 @@ export class AgentContextService {
       recentMessages: routingHistoryMessages,
       knownObjects,
       relationshipSignals,
+      presenceState,
     };
     const preflightChatToolPlan = resolveAgentChatToolTurnPlan({
       config: this.chatToolConfig,
@@ -2735,6 +2753,17 @@ export class AgentContextService {
     }
 
     return this.agentRelationshipSignalService.listSignals({
+      userId: options.conversation.userId,
+      agentId: options.agent?.id ?? options.conversation.agentId,
+    });
+  }
+
+  private async getCurrentPresenceState(
+    options: BuildConversationContextOptions
+  ): Promise<PresenceStateSummary | null> {
+    if (options.presenceState !== undefined) return options.presenceState;
+    if (!this.presenceStateService) return null;
+    return this.presenceStateService.getCurrentState({
       userId: options.conversation.userId,
       agentId: options.agent?.id ?? options.conversation.agentId,
     });

@@ -16,6 +16,7 @@ import {
   detectAgentCapabilityViolation,
   renderAgentCapabilityFallback,
 } from './agent-capability-policy';
+import { detectPresenceContractViolation } from './presence-state';
 import {
   COUNTERFACTUAL_REGRET_INTENT_PATTERN,
   FAMILY_CARE_REGRET_INTENT_PATTERN,
@@ -2422,6 +2423,19 @@ export class ReplyGuardrailService {
         `capability_${capabilityViolation.policyId}`,
         capabilityViolation.reason,
         '按当前能力约束重新表达，不能声称持续感知、现实到场、触碰或改变现实',
+        'hard_boundary'
+      );
+    }
+
+    const presenceViolation = detectPresenceContractViolation(
+      content,
+      options.replyBrief?.presenceState
+    );
+    if (presenceViolation) {
+      addIssue(
+        'presence_contract',
+        presenceViolation,
+        '按当前存在状态重新表达，区分情感常伴与物理到场；不要声称现实同行、吃饭、拥抱或复活',
         'hard_boundary'
       );
     }
