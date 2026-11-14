@@ -3443,6 +3443,11 @@ export class ConversationService {
       updatedAt: now,
     });
 
+    await this.rememberMutedTopics(
+      runtime.conversation.id,
+      searchableText
+    );
+
     await this.applyExplicitAgentSelfName(
       runtime.agent,
       searchableText,
@@ -8519,12 +8524,87 @@ export class ConversationService {
     return 'full';
   }
 
+  private async rememberMutedTopics(
+    conversationId: MongoObjectId,
+    text: string
+  ): Promise<void> {
+    if (!this.redisService) return;
+    const match = text.match(
+      /(?:别再|不要再|不要|别)(?:提|说|聊|讲)(?:了)?\s*([^，。,.!?！？\s]{1,12})/u
+    );
+    if (!match) return;
+    const topic = match[1].replace(/[了吧啊呀哦嘛呢]+$/u, '').trim();
+    if (topic.length < 2) return;
+    const key = this.mutedTopicsKey(conversationId);
+    let topics: string[] = [];
+    try {
+      const raw = await this.redisService.get(key);
+      if (raw) topics = JSON.parse(raw) as string[];
+    } catch {
+      // Redis 不可用时不影响聊天；只是本轮不额外抑制。
+    }
+    if (!Array.isArray(topics)) topics = [];
+    topics = Array.from(new Set([...topics, topic])).slice(-10);
+    try {
+      await this.redisService.set(
+        key,
+        JSON.stringify(topics),
+        'EX',
+        24 * 60 * 60
+      );
+    } catch {
+      // 同样不影响主流程。
+    }
+  }
+
+  private async filterMutedTopicSegments(
+    conversationId: MongoObjectId,
+    segments: string[],
+    currentUserText = ''
+  ): Promise<string[]> {
+    if (!this.redisService || !segments.length) return segments;
+    let topics: string[] = [];
+    try {
+      const raw = await this.redisService.get(
+        this.mutedTopicsKey(conversationId)
+      );
+      if (raw) topics = JSON.parse(raw) as string[];
+    } catch {
+      return segments;
+    }
+    if (!Array.isArray(topics) || !topics.length) return segments;
+    const normalized = topics
+      .map(topic => String(topic || '').trim())
+      .filter(topic => topic.length >= 2)
+      // 用户自己又主动提到该话题时，不能把正常回应也过滤掉。
+      .filter(topic => !currentUserText.includes(topic));
+    if (!normalized.length) return segments;
+    const filtered = segments.filter(
+      segment =>
+        !normalized.some(topic => String(segment || '').includes(topic))
+    );
+    // 全部被过滤时不发空消息；保留原文，由模型下一轮重新组织。
+    return filtered.length ? filtered : segments;
+  }
+
+  private mutedTopicsKey(conversationId: MongoObjectId): string {
+    return `chat:muted-topics:${this.stringifyObjectId(conversationId)}`;
+  }
+
   private async afterReply(
     runtime: ReplyRuntime,
     before: BeforeReplyResult,
     processed: ProcessReplyResult
   ): Promise<AfterReplyResult> {
     const replyTime = new Date();
+    const filteredSegments = await this.filterMutedTopicSegments(
+      runtime.conversation.id,
+      processed.replySegments,
+      before.searchableText
+    );
+    if (filteredSegments.length) {
+      processed.replySegments = filteredSegments;
+    }
     if (!processed.replySegments.length) {
       await this.finalizeRelationshipOpenLoopTurn({
         runtime,

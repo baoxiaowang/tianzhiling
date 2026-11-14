@@ -339,9 +339,11 @@ export function resolveRelationshipOpenLoopFromUserText(options: {
     }))
     .filter(
       item =>
-        item.association.score > 0 ||
-        command.allowMostRecent ||
-        (command.allowRecentlyPresented && item.recentlyPresented)
+        (!command.healthRecovery ||
+          item.task.contentDomain === 'health') &&
+        (item.association.score > 0 ||
+          command.allowMostRecent ||
+          (command.allowRecentlyPresented && item.recentlyPresented))
     )
     .sort(
       (left, right) =>
@@ -483,6 +485,10 @@ export function selectRelationshipOpenLoop(
   const candidates = options.store.tasks
     .filter(task => ACTIVE_STATES.has(task.state))
     .filter(task => !task.proactiveDisabled)
+    .filter(
+      task =>
+        task.contentDomain !== 'health' || task.presentedCount < 2
+    )
     .filter(task => !task.expiresAt || task.expiresAt.getTime() > now.getTime())
     .filter(
       task =>
@@ -852,12 +858,16 @@ function buildTaskEventFingerprint(draft: RelationshipOpenLoopDraft): string {
   return anchors.length ? anchors.join(',') : normalizeText(draft.summary, 64);
 }
 
+const HEALTH_RECOVERY_PATTERN =
+  /(?:已经|现在|基本|好)?(?:不|没)(?:那么|怎么|太)?(?:疼|痛|难受|不舒服|发烧|咳嗽)了|(?:好多了|好点了|恢复了|正常了|没事了|不碍事|出院了)/u;
+
 function resolveLifecycleCommand(text: string):
   | {
       state: 'resolved' | 'dismissed' | 'dormant';
       allowMostRecent: boolean;
       allowRecentlyPresented: boolean;
       cascadeRoot: boolean;
+      healthRecovery?: boolean;
     }
   | undefined {
   if (
@@ -882,6 +892,18 @@ function resolveLifecycleCommand(text: string):
       cascadeRoot: true,
     };
   }
+  // 用户明确报告症状已经缓解/恢复时，健康类待办应当关闭，
+  // 不能因为任务还没“问出结果”就继续追问医院或检查。
+  if (HEALTH_RECOVERY_PATTERN.test(text)) {
+    return {
+      state: 'resolved',
+      allowMostRecent: true,
+      allowRecentlyPresented: true,
+      cascadeRoot: false,
+      healthRecovery: true,
+    };
+  }
+
   // 用户直接回答“结果出来了/数值是多少/正常不正常”时，任务已经被回答。
   // 但要排除“等结果出来了再跟你说”这类未来计划，避免提前关闭。
   const resultAnswer =

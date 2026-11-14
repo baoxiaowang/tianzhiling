@@ -196,6 +196,7 @@ export interface ReplyCareReceptionPlan {
 
 export interface ReplyBrief {
   version: 'reply_brief_v17';
+  currentQuery?: string;
   mode: ReplyBriefMode;
   primaryScene?: ReplyScene;
   riskLevel: ReplyIntentRiskLevel;
@@ -679,6 +680,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
     version: 'reply_brief_v17',
+    currentQuery,
     mode,
     primaryScene,
     riskLevel,
@@ -2072,6 +2074,15 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const contentUnitLines = contentUnitPrompt
     ? ['## 本轮具体内容', contentUnitPrompt, '']
     : [];
+  const pluralObjectBinding = /(?:咱俩|我们|我和你|你我)/u.test(
+    brief.currentQuery || ''
+  )
+    ? [
+        '## 本轮指代',
+        '用户本轮用“咱俩/我们/我和你”明确指代双方；不要改成“你们/他们/他/她”，也不要引入没有依据的第三人。',
+        '',
+      ]
+    : [];
   const objectPlanLines = brief.objectPlan
     ? [
         '## 本轮对象区分',
@@ -2242,6 +2253,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         brief.correctionPolicy.mode === 'replace'
           ? '旧事实立即失效；只采用用户本轮明确给出的最小替代事实，关系归属用“是”、称呼要求才用“叫”，用户的“我”转成“你”；不增加时间、地点、动作或另一种解释，随后收住。'
           : '旧事实立即失效；替代事实归零，不猜另一个版本，不补原因、时间、地点或动作，随后收住。',
+        '不要逐字重复上一轮被用户否定的原句，也不要换词重述同一个旧结论。',
         '',
       ]
     : [];
@@ -2293,6 +2305,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...careReceptionLines,
     ...readingLines,
     ...contentUnitLines,
+    ...pluralObjectBinding,
     ...objectPlanLines,
     ...conversationPlanLines,
     ...commActLines,
