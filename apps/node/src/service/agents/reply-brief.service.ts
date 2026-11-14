@@ -569,6 +569,9 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
         currentQuery,
         capabilityConstraints
       );
+  if (momentFrame.primaryNeed === 'land' && momentFrame.bubbleBudget === 1) {
+    replyMoves.splice(1);
+  }
   const forbiddenAssumptions = Array.from(
     new Set(
       buildForbiddenAssumptions(
@@ -657,6 +660,11 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
         (participationStrategy || careMotivation)
     ),
   });
+  if (momentFrame.bubbleBudget === 1) {
+    bubblePlan.maxSegments = 1;
+    bubblePlan.preferTwoSegments = false;
+    bubblePlan.encourageTwoSegments = false;
+  }
   const lengthPlan = buildReplyLengthPlan({
     currentQuery,
     mode,

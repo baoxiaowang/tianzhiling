@@ -1,5 +1,6 @@
 export type MomentType =
   | 'ordinary'
+  | 'daily_rest'
   | 'arrival_home'
   | 'after_trip'
   | 'distress'
@@ -32,6 +33,8 @@ export interface MomentFrameInput {
 const USER_ARRIVAL_PATTERN =
   /^(?:终于|可算|我|俺)?\s*(?:刚|已经)?\s*(?:进屋|到家|回家|进家门|回屋|到楼|进楼|进小区|开车回家)(?:了|啦|咯|呀|啊)?/u;
 const TRIP_PATTERN = /沈阳|到站|打车|车上|车站|机场|旅途|出差|回来|候车|开车/u;
+const REST_PATTERN =
+  /洗完澡|洗澡|躺了|躺下|要睡|准备睡|上床|关灯|歇了|眯一会|眯一会儿|睡了|休息了/u;
 const DISTRESS_PATTERN =
   /心情不好|不好|难受|累|烦|不开心|撑不住|想哭|崩溃|疼|不舒服|一个人/u;
 const MEMORY_INVITE_PATTERN =
@@ -40,9 +43,9 @@ const RITUAL_PATTERN =
   /梦里|托梦|坟前|墓前|烧纸|上坟|清明|忌日|周年|头七|五七|百日/u;
 const PRACTICAL_PATTERN =
   /怎么办|怎么弄|怎么做|怎么走|怎么活|怎么处理|是不是|要不要|能不能|可以吗|[?？]/u;
-const FOOD_SMELL_PATTERN = /味儿|闻到|香味|尝到|闻见/u;
+const FOOD_SMELL_PATTERN = /味儿|闻到|香味|尝到|闻见|香得很|香喷喷|闻着/u;
 const UNINVITED_MEMORY_PATTERN =
-  /(?:我)?(?:记着|记得|知道你).{0,10}(?:你|您).{0,8}(?:爱吃|喜欢吃|偏爱|最爱|以前)|(?:以前|那时候|当年).{0,10}(?:你|您|咱俩|我们).{0,8}(?:吃|做|去|玩)/u;
+  /(?:我)?(?:记着|记得|知道你).{0,10}(?:你|您).{0,8}(?:爱吃|喜欢吃|偏爱|最爱|以前)|(?:我)?(?:记着|记得|知道).{0,12}(?:那趟|那次|那年|那时候|以前|你炒|你做|本溪)|(?:以前|那时候|当年).{0,10}(?:你|您|咱俩|我们).{0,8}(?:吃|做|去|玩)/u;
 
 export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
   const current = String(input.currentQuery || '').trim();
@@ -72,6 +75,17 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
       reason: high
         ? '用户刚到家/进屋，且此前有旅途或低落语境；先接住落地时刻'
         : '用户报告到家/进屋，先接住当前状态',
+    };
+  }
+
+  if (REST_PATTERN.test(current) && current.length <= 30) {
+    return {
+      momentType: 'daily_rest',
+      emotionalExposure: recentDistress ? 'high' : 'medium',
+      primaryNeed: 'land',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+      reason: '用户刚洗完澡/躺下/准备休息，先接住身体状态',
     };
   }
 
@@ -167,7 +181,7 @@ export function applyMomentFrameToSegments(
 ): string[] {
   if (!frame || !segments.length) return segments;
   let next = [...segments];
-  if (frame.memoryPermission === 'none') {
+  if (shouldGateMomentMemory(frame)) {
     const filtered = next.filter(segment => {
       const value = String(segment || '');
       return !(
@@ -175,16 +189,47 @@ export function applyMomentFrameToSegments(
         UNINVITED_MEMORY_PATTERN.test(value)
       );
     });
-    if (filtered.length) next = filtered;
+    if (!filtered.length) {
+      return [buildMomentSafeFallback(frame)];
+    }
+    next = filtered;
+    next = next.map(cleanTrailingConnector);
   }
   return next;
+}
+
+function shouldGateMomentMemory(frame: MomentFrame): boolean {
+  return (
+    frame.memoryPermission === 'none' &&
+    ['arrival_home', 'after_trip', 'daily_rest', 'distress'].includes(
+      frame.momentType
+    )
+  );
+}
+
+function cleanTrailingConnector(value: string): string {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return trimmed;
+  if (/[，,、；;：:]$/u.test(trimmed)) {
+    return `${trimmed.replace(/[，,、；;：:]+$/u, '')}。`;
+  }
+  return trimmed;
+}
+
+function buildMomentSafeFallback(frame: MomentFrame): string {
+  if (frame.momentType === 'daily_rest') return '先歇着，别着凉。';
+  if (frame.momentType === 'arrival_home' || frame.momentType === 'after_trip') {
+    return '到家就好，先缓一缓。';
+  }
+  if (frame.momentType === 'distress') return '我在，慢慢说。';
+  return '嗯，我听着。';
 }
 
 export function detectMomentFrameViolation(
   content: string,
   frame?: MomentFrame | null
 ): string | undefined {
-  if (!frame || frame.memoryPermission !== 'none') return undefined;
+  if (!frame || !shouldGateMomentMemory(frame)) return undefined;
   if (FOOD_SMELL_PATTERN.test(content)) {
     return '当前是落地/陪伴时刻，回复引入了没有当前线索的嗅觉/味觉细节';
   }

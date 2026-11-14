@@ -5,7 +5,7 @@ export type ReplyBubbleComplexityHint = 'concise' | 'paired' | 'layered';
 export type ReplyTurnClosure = 'close' | 'continue' | 'neutral';
 
 export interface ReplyBubblePlan {
-  maxSegments: 2;
+  maxSegments: 1 | 2;
   complexityHint: ReplyBubbleComplexityHint;
   turnClosure: ReplyTurnClosure;
   preferTwoSegments?: boolean;
