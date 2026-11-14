@@ -3611,6 +3611,11 @@ export class ConversationService {
       userMessage,
       messagePayload.visualAppearanceObservations
     );
+    // 存在状态是回复前的轻量条件，不依赖异步记忆管线；同一轮即可生效。
+    await this.observePresenceStateForUserMessage(
+      userMessage,
+      searchableText
+    );
     await this.queueMilvusIndexForMessage({
       message: userMessage,
       conversation: runtime.conversation,
