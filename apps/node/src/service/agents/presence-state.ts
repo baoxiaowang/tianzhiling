@@ -40,6 +40,8 @@ const FEAR_REJECT_PATTERN =
   /离我远点|(?:你|您|他|她).{0,6}别靠近我|不要靠近我|别缠着我|不要缠着我|我害怕你|怕你(?:回来|跟着|来)|有人跟着我|有鬼/u;
 const PHYSICAL_REQUEST_PATTERN =
   /(?:你|您|老公|老婆|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,8}(?:回来(?:陪|抱|我身边|我家|吃饭|住|睡)|来我(?:身边|家)|跟着我|陪我(?:去|一起|吃饭|睡觉|上班|逛|生活)|抱抱我|睡在我旁边|坐在我旁边|牵我的手)|(?:你|您).{0,8}(?:真的|会)?(?:跟着我|到我身边)/u;
+const PAST_REGRET_PATTERN =
+  /应该|本该|早该|后悔|当初|那时候|本来可以|没(?:能|有)?(?:回去|回家|陪)|要是/u;
 const EXPLICIT_PHYSICAL_PATTERN =
   /真的(?:回来|到|跟着|陪我)|现实(?:里|中).{0,8}(?:回来|到|陪我)|活着回来|从(?:那边|坟里|墓里)回来|到我身边/u;
 const EMOTIONAL_PATTERN =
@@ -89,7 +91,12 @@ export function extractPresenceSignals(text: string): PresenceSignal[] {
   }
 
   const physicalMatch = PHYSICAL_REQUEST_PATTERN.test(value);
-  if (physicalMatch && !hypothetical && !STRONG_REJECT_PATTERN.test(value)) {
+  if (
+    physicalMatch &&
+    !hypothetical &&
+    !PAST_REGRET_PATTERN.test(value) &&
+    !STRONG_REJECT_PATTERN.test(value)
+  ) {
     const literal =
       EXPLICIT_PHYSICAL_PATTERN.test(value) ||
       /跟着我|来我身边|到我身边|来我家|睡在我旁边|坐在我旁边/u.test(value);
