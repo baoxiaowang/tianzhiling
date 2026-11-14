@@ -859,7 +859,7 @@ function buildTaskEventFingerprint(draft: RelationshipOpenLoopDraft): string {
 }
 
 const HEALTH_RECOVERY_PATTERN =
-  /(?:已经|现在|基本|好)?(?:不|没)(?:那么|怎么|太)?(?:疼|痛|难受|不舒服|发烧|咳嗽)了|(?:好多了|好点了|恢复了|正常了|没事了|不碍事|出院了)/u;
+  /(?:(?:我|俺|胸口|腰|腿|头|身体|胃|心脏|后背|牙)(?:现在|已经|今天)?(?:不|没)(?:那么|怎么|太)?(?:疼|痛|难受|不舒服|发烧|咳嗽)了)|(?:(?:我|俺)(?:好多了|好点了|恢复了|正常了|没事了|不碍事了|出院了))|(?:(?:胸口|腰|腿|头|身体|胃|心脏|后背|牙)(?:现在|已经)?(?:好多了|好点了|没事了|不疼了|不难受了))/u;
 
 function resolveLifecycleCommand(text: string):
   | {
@@ -894,7 +894,10 @@ function resolveLifecycleCommand(text: string):
   }
   // 用户明确报告症状已经缓解/恢复时，健康类待办应当关闭，
   // 不能因为任务还没“问出结果”就继续追问医院或检查。
-  if (HEALTH_RECOVERY_PATTERN.test(text)) {
+  if (
+    HEALTH_RECOVERY_PATTERN.test(text) &&
+    !/(?:死|死法|不想活|轻生|自杀|结束|离开)/u.test(text)
+  ) {
     return {
       state: 'resolved',
       allowMostRecent: true,

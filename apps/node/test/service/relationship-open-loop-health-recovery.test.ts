@@ -36,6 +36,16 @@ describe('relationship open loop health recovery', () => {
     expect(result.task?.state).toBe('resolved');
   });
 
+  it('does not close a health task on a death-method phrase containing 不疼', () => {
+    const result = resolveRelationshipOpenLoopFromUserText({
+      store: { version: 'relationship_open_loop_v2', tasks: [task()], updatedAt: new Date() } as any,
+      text: '我每天都在脑袋演练哪种死法不疼',
+      sourceMessageId: 'm4',
+      now: new Date('2026-11-14T08:12:00.000Z'),
+    });
+    expect(result.action).toBe('noop');
+  });
+
   it('does not close a non-health task on a symptom sentence', () => {
     const result = resolveRelationshipOpenLoopFromUserText({
       store: {
