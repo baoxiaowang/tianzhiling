@@ -42,6 +42,12 @@ import {
   type PresenceStateSummary,
 } from './presence-state';
 import {
+  buildMomentFramePrompt,
+  resolveMomentFrame,
+  shouldApplyMomentPrompt,
+  type MomentFrame,
+} from './moment-frame';
+import {
   isExplicitRememberRequest,
   isForgetMemoryRequest,
 } from './agent-memory-control';
@@ -208,6 +214,7 @@ export interface ReplyBrief {
   intents: StructuredReplyIntentItem[];
   capabilityConstraints: AgentCapabilityConstraint[];
   presenceState?: PresenceStateSummary;
+  momentFrame?: MomentFrame;
   evidence: ReplyBriefEvidence[];
   relationshipContext: ReplyBriefRelationshipContext[];
   relationshipContinuity?: RelationshipContinuityPlan;
@@ -334,6 +341,11 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     options.route?.relationshipContinuity ??
     resolveRelationshipContinuityPlan(currentQuery);
   const presenceState = options.presenceState ?? undefined;
+  const momentFrame = resolveMomentFrame({
+    currentQuery,
+    recentMessages: options.recentMessages,
+    isDeceased: Boolean(options.agent?.deathDate),
+  });
   const mode = resolveMode(
     primaryScene,
     intents,
@@ -695,6 +707,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     intents,
     capabilityConstraints,
     presenceState,
+    momentFrame,
     evidence,
     relationshipContext,
     relationshipContinuity,
@@ -2012,6 +2025,10 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     )
       ? [buildPresencePrompt(brief.presenceState), '']
       : [];
+  const momentLines =
+    brief.momentFrame && shouldApplyMomentPrompt(brief.momentFrame)
+      ? [buildMomentFramePrompt(brief.momentFrame), '']
+      : [];
   const sourceLabels: Record<ReplyBriefEvidenceSource, string> = {
     current_user: '当前用户原话',
     confirmed_fact: '已确认事实',
@@ -2343,6 +2360,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '未确认人物沿用用户称呼，不猜关系、性别或性格。',
     ...relationshipLines,
     ...relationshipContinuityLines,
+    ...momentLines,
     ...presenceLines,
     ...(boundaryContract.prompt ? ['', boundaryContract.prompt] : []),
     '',

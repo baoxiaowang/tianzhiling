@@ -74,6 +74,7 @@ import {
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { PresenceStateService } from './agents/presence-state.service';
+import { applyMomentFrameToSegments } from './agents/moment-frame';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { MemoryValueService } from './agents/memory-value.service';
@@ -6246,9 +6247,13 @@ export class ConversationService {
       }
     }
     markReplyTiming(timing, 'review_done');
+    const momentAdjustedSegments = applyMomentFrameToSegments(
+      participationResult.segments,
+      replyBrief.momentFrame
+    );
     const addressGuardedSegments = await this.guardPersonAddressSegments(
       runtime.conversation.userId,
-      participationResult.segments
+      momentAdjustedSegments
     );
     return this.attachTurnStatePlans(
       {
