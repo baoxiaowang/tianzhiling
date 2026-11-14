@@ -17,6 +17,7 @@ import {
   renderAgentCapabilityFallback,
 } from './agent-capability-policy';
 import { detectPresenceContractViolation } from './presence-state';
+import { detectMomentFrameViolation } from './moment-frame';
 import {
   COUNTERFACTUAL_REGRET_INTENT_PATTERN,
   FAMILY_CARE_REGRET_INTENT_PATTERN,
@@ -2437,6 +2438,19 @@ export class ReplyGuardrailService {
         presenceViolation,
         '按当前存在状态重新表达，区分情感常伴与物理到场；不要声称现实同行、吃饭、拥抱或复活',
         'hard_boundary'
+      );
+    }
+
+    const momentViolation = detectMomentFrameViolation(
+      content,
+      options.replyBrief?.momentFrame
+    );
+    if (momentViolation) {
+      addIssue(
+        'moment_frame_contract',
+        momentViolation,
+        '先接住当前时刻；不要用旧记忆、旧食物或无当前线索的味觉/嗅觉细节填第二句',
+        'quality_advisory'
       );
     }
 
