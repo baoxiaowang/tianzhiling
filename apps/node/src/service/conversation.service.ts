@@ -73,6 +73,7 @@ import {
 } from './agents/agent.context';
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
+import { PresenceStateService } from './agents/presence-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { MemoryValueService } from './agents/memory-value.service';
@@ -845,6 +846,9 @@ export class ConversationService {
 
   @Inject()
   agentEmotionStateService: AgentEmotionStateService;
+
+  @Inject()
+  presenceStateService: PresenceStateService;
 
   @Inject()
   agentMemoryFactService: AgentMemoryFactService;
@@ -2617,6 +2621,10 @@ export class ConversationService {
             entry.message,
             entry.text
           );
+          await this.observePresenceStateForUserMessage(
+            entry.message,
+            entry.text
+          );
           await this.captureRelationshipOpenLoop(
             entry.message,
             entry.text
@@ -3697,6 +3705,7 @@ export class ConversationService {
     const [, memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
       await Promise.all([
         this.recognizeEmotionStateForUserMessage(message, searchableText),
+        this.observePresenceStateForUserMessage(message, searchableText),
         // Legacy agent_memory_fact remains read-compatible but is no longer a
         // writer. New structured facts have one owner: agent_profile_fact or
         // the account-level person/temporal stores.
@@ -4016,6 +4025,29 @@ export class ConversationService {
           this.describeReplyError(error)
         );
       });
+  }
+
+  private async observePresenceStateForUserMessage(
+    message: MessageEntity,
+    searchableText: string
+  ): Promise<void> {
+    if (!this.presenceStateService) return;
+    try {
+      await this.presenceStateService.observeUserMessage({
+        userId: message.userId,
+        agentId: message.agentId,
+        searchableText,
+        sourceMessageId: message.id,
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] presence state observe failed, conversationId=%s messageId=%s userId=%s reason=%s',
+        this.stringifyObjectId(message.conversationId),
+        this.stringifyObjectId(message.id),
+        this.stringifyObjectId(message.userId),
+        this.describeReplyError(error)
+      );
+    }
   }
 
   private async recognizeEmotionStateForUserMessage(
