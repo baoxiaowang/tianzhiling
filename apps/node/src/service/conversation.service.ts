@@ -3702,7 +3702,7 @@ export class ConversationService {
     const temporalQaContext =
       await this.loadBoundedTemporalQaContext(message);
 
-    const [, memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
+    const [, , memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
       await Promise.all([
         this.recognizeEmotionStateForUserMessage(message, searchableText),
         this.observePresenceStateForUserMessage(message, searchableText),
