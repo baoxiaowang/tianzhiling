@@ -1,7 +1,19 @@
-import { Body, Controller, Files, Inject, Post } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Files,
+  Get,
+  Inject,
+  Post,
+  Query,
+} from '@midwayjs/core';
+import { Context } from '@midwayjs/koa';
 import { UploadFileInfo, UploadMiddleware } from '@midwayjs/busboy';
 import { AppError } from '@tzl/shared';
-import { CreateAdminCosSignedUploadDTO } from '../dto/admin-storage.dto';
+import {
+  CreateAdminCosSignedUploadDTO,
+  DownloadCosObjectQueryDTO,
+} from '../dto/admin-storage.dto';
 import { AdminStorageService } from '../service/admin-storage.service';
 
 @Controller('/storage')
@@ -9,15 +21,42 @@ export class AdminStorageController {
   @Inject()
   adminStorageService: AdminStorageService;
 
+  @Inject()
+  ctx: Context;
+
   @Post('/cos/sign-upload')
   async createCosSignedUpload(@Body() body: CreateAdminCosSignedUploadDTO) {
     return this.adminStorageService.createCosSignedUpload(body);
   }
 
+  @Get('/cos/download')
+  async downloadCosObject(@Query() query: DownloadCosObjectQueryDTO) {
+    const objectKey = query.objectKey.trim();
+    const fallbackName = objectKey.split('/').pop() || 'download';
+    const fileName = (query.fileName || fallbackName).trim();
+    const { stream, contentType, contentLength } =
+      await this.adminStorageService.getCosObjectStream(objectKey);
+
+    this.ctx.set('Content-Type', contentType || 'application/octet-stream');
+    this.ctx.set(
+      'Content-Disposition',
+      `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(
+        fileName
+      )}`
+    );
+    if (contentLength) {
+      this.ctx.set('Content-Length', String(contentLength));
+    }
+    return stream;
+  }
+
   @Post('/cos/upload', {
     middleware: [UploadMiddleware],
   })
-  async uploadCosFile(@Files() files: UploadFileInfo[], @Body() body: Record<string, string>) {
+  async uploadCosFile(
+    @Files() files: UploadFileInfo[],
+    @Body() body: Record<string, string>
+  ) {
     const file = files?.[0];
 
     if (!file) {

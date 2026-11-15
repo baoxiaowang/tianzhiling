@@ -53,3 +53,35 @@ function detectContentType(fileName: string) {
 }
 
 export default uploadAdminFile;
+
+export async function downloadAdminFile(
+  objectKey: string,
+  fileName?: string
+): Promise<Blob> {
+  const { data } = await axios.get<Blob>('/admin_api/storage/cos/download', {
+    params: { objectKey, fileName },
+    responseType: 'blob',
+  });
+  return data;
+}
+
+export function saveBlobAsFile(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** 从 COS 公网 URL 反推 objectKey（用于下载）。 */
+export function objectKeyFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+  } catch {
+    return '';
+  }
+}

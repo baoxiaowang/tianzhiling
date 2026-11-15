@@ -158,6 +158,60 @@ export class AdminStorageService {
     };
   }
 
+  /** 以流的形式读取 COS 对象（用于后台「下载」按钮，避免前端跨域问题）。 */
+  async getCosObjectStream(objectKey: string): Promise<{
+    stream: NodeJS.ReadableStream;
+    contentType?: string;
+    contentLength?: number;
+  }> {
+    this.ensureCosEnabled();
+
+    const normalizedObjectKey = objectKey?.trim().replace(/^\/+/, '');
+    if (!normalizedObjectKey || normalizedObjectKey.includes('..')) {
+      throw new AppError('INVALID_OBJECT_KEY', 'object key is invalid', 400);
+    }
+
+    const bucket = this.getRequiredConfig('bucket');
+    const region = this.getRequiredConfig('region');
+    const cos = this.createCosClient() as unknown as {
+      getObjectStream(
+        params: { Bucket: string; Region: string; Key: string },
+        callback: (
+          error: Error | null,
+          data: {
+            Body?: NodeJS.ReadableStream;
+            headers?: Record<string, string>;
+          }
+        ) => void
+      ): void;
+    };
+
+    return await new Promise((resolve, reject) => {
+      cos.getObjectStream(
+        { Bucket: bucket, Region: region, Key: normalizedObjectKey },
+        (error, data) => {
+          if (error || !data?.Body) {
+            reject(
+              new AppError(
+                'COS_OBJECT_DOWNLOAD_FAILED',
+                error?.message || 'cos object download failed',
+                502
+              )
+            );
+            return;
+          }
+          resolve({
+            stream: data.Body,
+            contentType: data.headers?.['content-type'],
+            contentLength: data.headers?.['content-length']
+              ? Number(data.headers['content-length']) || undefined
+              : undefined,
+          });
+        }
+      );
+    });
+  }
+
   async deleteCosObject(objectKey: string): Promise<void> {
     this.ensureCosEnabled();
 

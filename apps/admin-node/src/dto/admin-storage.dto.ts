@@ -13,3 +13,11 @@ export class CreateAdminCosSignedUploadDTO {
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   expiresInSeconds?: number | string;
 }
+
+export class DownloadCosObjectQueryDTO {
+  @Rule(RuleType.string().trim().min(1).max(1000).required())
+  objectKey: string;
+
+  @Rule(RuleType.string().trim().max(200).optional())
+  fileName?: string;
+}
