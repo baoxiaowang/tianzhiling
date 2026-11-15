@@ -42,7 +42,7 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=1 ;;
     --approve) APPROVE=1 ;;
     -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
-    *) echo "未知参数：$arg（--help 查看用法）" >&2; exit 2 ;;
+    *) echo "未知参数：${arg}（--help 查看用法）" >&2; exit 2 ;;
   esac
 done
 
@@ -68,7 +68,7 @@ fi
 TARGET="$(git rev-parse HEAD)"
 [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || die "无法解析当前提交"
 SHORT="${TARGET:0:8}"
-ok "本地 HEAD = $SHORT（$BRANCH）"
+ok "本地 HEAD = ${SHORT}（${BRANCH}）"
 
 if ! run_ssh 'test -x /usr/local/sbin/tzl-deploy-release'; then
   die "服务器不可达或发布脚本不存在：$HOST"
@@ -78,7 +78,7 @@ PREV_SHORT="${PREV:0:8}"
 ok "线上当前 = $PREV_SHORT"
 
 if [[ "$PREV" == "$TARGET" ]]; then
-  warn "线上已经是 $SHORT，本次发布将是空操作（仍会做健康检查）"
+  warn "线上已经是 ${SHORT}，本次发布将是空操作（仍会做健康检查）"
 fi
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ REMOTE
 )"
   case "$NEW_TARGET" in
     ""|DIRTY|REBASE_FAILED)
-      die "服务器中转失败（$NEW_TARGET），请查看 /tmp/tzl-release-rebase.log"
+      die "服务器中转失败（${NEW_TARGET}），请查看 /tmp/tzl-release-rebase.log"
       ;;
   esac
   [[ "$NEW_TARGET" =~ ^[0-9a-f]{40}$ ]] || die "服务器返回的提交号不合法：$NEW_TARGET"
@@ -165,7 +165,7 @@ PY
   fi
   if [[ "$RELEASE_RC" != "0" ]]; then
     tail -30 "$RELEASE_LOG" || true
-    die "发布失败（rc=$RELEASE_RC），日志：$RELEASE_LOG"
+    die "发布失败（rc=${RELEASE_RC}），日志：$RELEASE_LOG"
   fi
   ok "发布完成（$(grep -oE 'RELEASE_OK|RELEASE_NOOP' "$RELEASE_LOG" | head -1)）"
 fi
@@ -222,7 +222,7 @@ if [[ -n "$SERVICES" ]]; then
     RECOVER_RC=$?
     if [[ "$RECOVER_RC" != "0" ]]; then
       tail -30 "$RECOVER_LOG" || true
-      die "recover 失败（rc=$RECOVER_RC），日志：$RECOVER_LOG"
+      die "recover 失败（rc=${RECOVER_RC}），日志：$RECOVER_LOG"
     fi
     ok "后台服务已重建"
   fi
@@ -247,7 +247,7 @@ else
 
   [[ "$API_CODE" == "200" ]] || die "接口健康检查失败：$API_CODE"
   [[ "$ADMIN_CODE" == "200" ]] || die "后台健康检查失败：$ADMIN_CODE"
-  [[ "$NODE_VER" == "$TARGET" ]] || warn "tzl_node 版本不是目标提交（$NODE_VER != $SHORT）"
+  [[ "$NODE_VER" == "$TARGET" ]] || warn "tzl_node 版本不是目标提交（$NODE_VER != ${SHORT}）"
 
   printf '\n\033[32m✓ 发布完成：%s（%s）\033[0m\n' "$SHORT" "$PUSH_MODE"
 fi
