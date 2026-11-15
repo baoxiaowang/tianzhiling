@@ -47,6 +47,10 @@ const PLAN_STATUS_PATTERN =
   /(?:明天|后天|下周|下个月|等会|一会儿|待会|下午|晚上|接下来|明天早上).{0,12}(?:去|回|来|走|上班|出差|医院|天津|北京|老家)|(?:准备|打算|要去|要回|要去看|得去)/u;
 const DISTRESS_PATTERN =
   /心情不好|不好|难受|累|烦|不开心|撑不住|想哭|崩溃|疼|不舒服|一个人.{0,8}(?:难受|累|空|想|哭|撑|怕|孤单)/u;
+// H3 高置信门：睡眠、身体、情绪低落不能落进 low_info_status。
+// 这是封闭排除集，不是按单句扩展的话题词表。
+const LOW_INFO_EXCLUSION_PATTERN =
+  /(?:睡|睡眠).{0,8}(?:差|不好|不踏实|醒|醒了好几次|每小时醒)|(?:睡得很差|没睡踏实|每小时醒|醒了好几次)|(?:身体|胸口|胃|头|牙|背|肚子).{0,4}(?:不舒服|疼|痛|恶心|头晕)|(?:不舒服|疼|痛|恶心|头晕|心情差|心里堵|难过|撑不住)/u;
 const MEMORY_INVITE_PATTERN =
   /记得|还记得|记不记得|那时候|当时|当年|曾经|以前.{0,10}(?:咱们|我们).{0,8}(?:吃|去|做|玩|说)|咱们|我们.{0,8}(?:吃|去|做|玩)/u;
 const RITUAL_PATTERN =
@@ -142,14 +146,14 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
     };
   }
 
-  if (currentDistress) {
+  if (currentDistress || LOW_INFO_EXCLUSION_PATTERN.test(current)) {
     return {
       momentType: 'distress',
       emotionalExposure: 'high',
       primaryNeed: 'accompany',
       memoryPermission: 'none',
       bubbleBudget: current.length <= 10 ? 1 : 2,
-      reason: '用户当前在明显低落/疲惫里，先陪伴',
+      reason: '用户当前在低落/睡眠/身体不适里，先陪伴',
     };
   }
 

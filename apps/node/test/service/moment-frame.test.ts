@@ -169,6 +169,42 @@ describe('moment frame time and distress calibration', () => {
     expect(frame.emotionalExposure).toBe('medium');
   });
 
+  it('routes sleep quality and body discomfort out of low-info status', () => {
+    for (const currentQuery of [
+      '睡得很差 每小时醒一次',
+      '不知道 睡得不踏实',
+      '我有点头晕',
+    ]) {
+      const frame = resolveMomentFrame({
+        currentQuery,
+        recentMessages: [],
+        isDeceased: true,
+      });
+      expect(frame).toMatchObject({
+        momentType: 'distress',
+        primaryNeed: 'accompany',
+        memoryPermission: 'none',
+      });
+    }
+  });
+
+  it('keeps a pure wake-up report and a bare question unchanged', () => {
+    expect(
+      resolveMomentFrame({
+        currentQuery: '早 醒了',
+        recentMessages: [],
+        isDeceased: true,
+      }).momentType
+    ).toBe('low_info_status');
+    expect(
+      resolveMomentFrame({
+        currentQuery: '？',
+        recentMessages: [],
+        isDeceased: true,
+      }).momentType
+    ).toBe('ordinary');
+  });
+
   it('does not treat solo living as distress', () => {
     const frame = resolveMomentFrame({
       currentQuery: '我一个人住',

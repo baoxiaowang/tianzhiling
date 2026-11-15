@@ -180,6 +180,7 @@ const REPLY_MOVE_PATTERNS: Record<string, RegExp> = {
   generic_advice:
     /(?:你|您).{0,8}(?:要|得|记得|别|不要|好好).{0,10}(?:吃饭|喝水|休息|睡|熬|照顾|保重)|照顾好自己|好好休息|早点睡|记得吃饭|别熬/,
   tender_acknowledge_affirm: /我知道|我懂|我明白|听见了|听到了|记住了/,
+  generic_question: /[?？]|(?:你|您).{0,16}(?:吗|呢|没|没有|好不好|行不行)[。！!…\s]*$/,
 };
 const BUBBLE_SEMANTIC_PATTERNS: Record<string, RegExp> = {
   presence: REPLY_MOVE_PATTERNS.generic_presence,

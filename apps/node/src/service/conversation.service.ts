@@ -12919,6 +12919,13 @@ export class ConversationService {
     replyTurnContractVersion?: string;
     replyTurnContractFocusDimensions?: string[];
     replyBriefMode?: string;
+    replyMomentType?: string;
+    replyMomentNeed?: string;
+    replyMomentMemoryPermission?: string;
+    replyMomentBubbleBudget?: number;
+    replyMomentFilterApplied?: boolean;
+    replyPersonReferenceNormalized?: boolean;
+    replyLowInfoStatus?: boolean;
     replyBriefStrictGrounding?: boolean;
     replyBriefFactClaimMode?: string;
     replyBriefMaxSegments?: number;
@@ -13092,6 +13099,17 @@ export class ConversationService {
         options.replyTurnContractFocusDimensions?.filter(Boolean),
     });
     message.replyBriefMode = options.replyBriefMode?.trim() || undefined;
+    message.replyMomentType = options.replyMomentType?.trim() || undefined;
+    message.replyMomentNeed = options.replyMomentNeed?.trim() || undefined;
+    message.replyMomentMemoryPermission =
+      options.replyMomentMemoryPermission?.trim() || undefined;
+    message.replyMomentBubbleBudget = this.normalizeTokenCount(
+      options.replyMomentBubbleBudget
+    );
+    message.replyMomentFilterApplied = options.replyMomentFilterApplied;
+    message.replyPersonReferenceNormalized =
+      options.replyPersonReferenceNormalized;
+    message.replyLowInfoStatus = options.replyLowInfoStatus;
     message.replyBriefStrictGrounding = options.replyBriefStrictGrounding;
     message.replyBriefFactClaimMode =
       options.replyBriefFactClaimMode?.trim() || undefined;

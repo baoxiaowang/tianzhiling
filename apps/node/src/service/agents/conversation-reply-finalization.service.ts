@@ -9,6 +9,12 @@ import {
   ReplyGovernanceService,
 } from './reply-governance.service';
 import { ReplyPostprocessorService } from './reply-postprocessor.service';
+import {
+  deriveRecentReplyMoves,
+  extractLiteralClauses,
+  extractRecentAssistantTexts,
+  removeRepeatedReplySegments,
+} from './reply-repetition-guard';
 import type {
   ReplyQualityAudit,
   ReplyTurnContract,
@@ -49,7 +55,18 @@ export class ConversationReplyFinalizationService {
     // constraints can reach online governance. Conversation plans, turn
     // contracts, participation, question, length and bubble preferences stay
     // in diagnostics and cannot trigger a production rewrite.
+    const recentAssistantTexts = extractRecentAssistantTexts(options.messages);
+    const recentLiteralClauses = extractLiteralClauses(recentAssistantTexts);
+    const recentReplyMoves = deriveRecentReplyMoves(recentAssistantTexts);
     const outputConstraints: FinalReplyOutputConstraints = {
+      avoidRecentMoves: [
+        ...(options.brief.strategyQuality?.repeatedMoves || []),
+        ...recentReplyMoves,
+      ],
+      avoidLiteralClauses: [
+        ...(options.brief.strategyQuality?.literalClauses || []),
+        ...recentLiteralClauses,
+      ],
       realityDependencies: options.brief.realityDependencies,
       boundaryLocks: options.brief.understanding.boundaryLocks.map(
         lock => lock.kind
@@ -71,6 +88,24 @@ export class ConversationReplyFinalizationService {
       outputConstraints,
     });
     // 最终验证之后只做不改变语义的确定性结构整理。
+    // H1：字面复读是确定性可识别问题；命中的段直接删除，全部删除时回退到
+    // 不引入旧记忆的单句陪伴。展示层拆泡仍由后面 renderForDelivery 负责。
+    const repetition = removeRepeatedReplySegments(
+      governance.segments,
+      recentAssistantTexts
+    );
+    if (repetition.removed.length) {
+      governance.segments = repetition.segments;
+      governance.rewritten = true;
+      governance.reason = [
+        governance.reason,
+        repetition.fallbackApplied
+          ? 'repeated_generic_move_fallback'
+          : 'repeated_generic_move',
+      ]
+        .filter(Boolean)
+        .join(',');
+    }
     const rendered = this.replyPostprocessorService.renderForDelivery(
       governance.segments
     );
