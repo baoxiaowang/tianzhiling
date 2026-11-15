@@ -122,6 +122,7 @@ import {
 import {
   compactReplyBubblesPreservingContent,
   inspectReplyBubbleStructure,
+  mergeReplySegmentsForSingleBubble,
   MAX_ASSISTANT_REPLY_SEGMENTS,
   ReplyBubbleStructureIssue,
   splitReplyContentForDelivery,
@@ -6257,7 +6258,11 @@ export class ConversationService {
       participationResult.segments,
       replyBrief.momentFrame
     );
-    const referenceAdjustedSegments = momentAdjustedSegments.map(segment =>
+    const budgetAdjustedSegments =
+      replyBrief.momentFrame?.bubbleBudget === 1
+        ? mergeReplySegmentsForSingleBubble(momentAdjustedSegments)
+        : momentAdjustedSegments;
+    const referenceAdjustedSegments = budgetAdjustedSegments.map(segment =>
       normalizePersonReferenceOutsideQuotes(
         before.searchableText,
         segment
@@ -6267,7 +6272,7 @@ export class ConversationService {
       JSON.stringify(participationResult.segments) !==
       JSON.stringify(momentAdjustedSegments);
     const personReferenceNormalized =
-      JSON.stringify(momentAdjustedSegments) !==
+      JSON.stringify(budgetAdjustedSegments) !==
       JSON.stringify(referenceAdjustedSegments);
     const addressGuardedSegments = await this.guardPersonAddressSegments(
       runtime.conversation.userId,
@@ -6506,7 +6511,11 @@ export class ConversationService {
       generatedSegments,
       microMomentFrame
     );
-    const microReferenceAdjustedSegments = microMomentAdjustedSegments.map(
+    const microBudgetAdjustedSegments =
+      microMomentFrame.bubbleBudget === 1
+        ? mergeReplySegmentsForSingleBubble(microMomentAdjustedSegments)
+        : microMomentAdjustedSegments;
+    const microReferenceAdjustedSegments = microBudgetAdjustedSegments.map(
       segment =>
         normalizePersonReferenceOutsideQuotes(
           options.before.searchableText,
@@ -6517,7 +6526,7 @@ export class ConversationService {
       JSON.stringify(generatedSegments) !==
       JSON.stringify(microMomentAdjustedSegments);
     const microPersonReferenceNormalized =
-      JSON.stringify(microMomentAdjustedSegments) !==
+      JSON.stringify(microBudgetAdjustedSegments) !==
       JSON.stringify(microReferenceAdjustedSegments);
     const replySegments = microReferenceAdjustedSegments;
     if (!replySegments.length) {

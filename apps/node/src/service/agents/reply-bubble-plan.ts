@@ -278,6 +278,27 @@ function stripParentheticalAsides(value: string): {
   };
 }
 
+/**
+ * H2: budget=1 时只约束“生成层动作数”，在落库前把多段正文合并成一段。
+ * 展示层仍由 splitReplyContentForDelivery 决定气泡节奏，这里不改拆泡。
+ */
+export function mergeReplySegmentsForSingleBubble(
+  segments: string[]
+): string[] {
+  const parts = segments
+    .map(segment => String(segment || '').trim())
+    .filter(Boolean);
+  if (parts.length <= 1) return parts;
+  let merged = parts[0];
+  for (const next of parts.slice(1)) {
+    if (!/[。！？!?…；;，,、：:.]$/u.test(merged)) {
+      merged += '。';
+    }
+    merged += next;
+  }
+  return [merged];
+}
+
 export function compactReplyBubblesPreservingContent(
   inputSegments: string[]
 ): string[] {

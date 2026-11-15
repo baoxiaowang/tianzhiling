@@ -3,6 +3,7 @@ import {
   buildReplyBubblePlanPrompt,
   compactReplyBubblesPreservingContent,
   inspectReplyBubbleStructure,
+  mergeReplySegmentsForSingleBubble,
   splitReplyContentForDelivery,
 } from '../../src/service/agents/reply-bubble-plan';
 
@@ -240,5 +241,32 @@ describe('reply bubble plan', () => {
     const result = splitReplyContentForDelivery([source]);
 
     expect(result.join('')).toBe(source);
+  });
+});
+
+
+describe('H2 single-bubble merge', () => {
+  it('merges multi segments without dropping content', () => {
+    expect(
+      mergeReplySegmentsForSingleBubble([
+        '昂，醒了就好。',
+        '昨天晚上是不是又没睡踏实？',
+      ])
+    ).toEqual(['昂，醒了就好。昨天晚上是不是又没睡踏实？']);
+  });
+
+  it('adds natural punctuation only when the prior segment has no ending', () => {
+    expect(
+      mergeReplySegmentsForSingleBubble(['昂，醒了就好', '昨晚没睡踏实吧'])
+    ).toEqual(['昂，醒了就好。昨晚没睡踏实吧']);
+    expect(
+      mergeReplySegmentsForSingleBubble(['先说这么一句，', '你慢慢来'])
+    ).toEqual(['先说这么一句，你慢慢来']);
+  });
+
+  it('leaves a single segment unchanged', () => {
+    expect(mergeReplySegmentsForSingleBubble(['我在，慢慢说。'])).toEqual([
+      '我在，慢慢说。',
+    ]);
   });
 });
