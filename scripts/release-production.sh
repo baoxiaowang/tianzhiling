@@ -21,6 +21,7 @@
 #   RELEASE_KEY      默认 ~/.ssh/id_ed25519_tianzhiling_deploy_20260802
 #   RELEASE_BRANCH   默认 20261006
 #   RELEASE_SERVICES 覆盖自动判断，如 tzl_admin_node,tzl_admin_web
+#   RELEASE_FORCE_BUNDLE=1 强制走服务器中转（GitHub 用不了时调试）
 #
 # 退出码：0 成功；非 0 失败（失败时会打印失败阶段）。
 set -uo pipefail
@@ -88,7 +89,7 @@ step "同步提交到 origin/$BRANCH"
 PUSH_MODE=""
 if [[ "$DRY_RUN" == "1" ]]; then
   PUSH_MODE="direct（dry-run 不执行）"
-elif git push origin "$TARGET:refs/heads/$BRANCH" >/dev/null 2>&1; then
+elif [[ "${RELEASE_FORCE_BUNDLE:-0}" != "1" ]] && git push origin "$TARGET:refs/heads/$BRANCH" >/dev/null 2>&1; then
   PUSH_MODE="direct"
   ok "已直接推送到 origin/$BRANCH"
 else
