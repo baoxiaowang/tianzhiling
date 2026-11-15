@@ -83,6 +83,10 @@ import {
 import { PresenceStateService } from './presence-state.service';
 import type { PresenceStateSummary } from './presence-state';
 import {
+  resolveMomentFrame,
+  shouldBlockMemoryRetrieval,
+} from './moment-frame';
+import {
   ClassifyReplyIntentOptions,
   ReplyIntentClassifierService,
   ReplyIntentClassificationResult,
@@ -1220,6 +1224,13 @@ export class AgentContextService {
     // 就完全没有记忆；现在恢复为按模式限额注入。
     // 门槛只按"用户这一轮说的那句话"判断：currentQuery 是拼接后的检索文本，
     // 会把前几轮的提问带进来，导致"嗯"这种单字也触发检索。
+    const earlyMomentFrame = resolveMomentFrame({
+      currentQuery: options.currentUserText || options.currentQuery || '',
+      recentMessages: routingHistoryMessages,
+      isDeceased: Boolean(options.agent?.deathDate),
+    });
+    const memoryRetrievalBlocked =
+      shouldBlockMemoryRetrieval(earlyMomentFrame);
     const memoryGateText =
       options.currentUserText?.trim() || options.currentQuery || '';
     // 不用当前句原文去检索：先抽成"检索键"（人物/时间/事件），按键检索。
@@ -1260,6 +1271,7 @@ export class AgentContextService {
       memoryEntityNames
     );
     const memoryRetrievalReady =
+      !memoryRetrievalBlocked &&
       shouldTriggerMemoryRetrieval(
         memoryRetrievalQuery,
         memoryGateText,

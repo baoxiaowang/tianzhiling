@@ -456,6 +456,7 @@ function selectHighestPriorityPatchIssue(
     real_world_actionable_fabrication: 0,
     major_decision_overreach: 1,
     real_world_capability_claim: 2,
+    unsupported_memory_assertion: 3,
   };
   return issues
     .filter(isExactPatchIssue)
@@ -506,6 +507,7 @@ function buildNarrowFallbackPatch(
       '这件事我不能凭空认下来，也不能随口指地方让你去找',
     major_decision_overreach: '这件现实里的事不能由我替你拍板',
     real_world_capability_claim: '这件事我不能说成是我在现实里做的',
+    unsupported_memory_assertion: '这件事我不乱猜',
   };
   return {
     originalSpan: issue.evidence,
@@ -520,6 +522,9 @@ function buildHardRecovery(issue?: FinalReplyIssue): string[] {
   }
   if (issue?.blockingKind === 'real_world_capability_claim') {
     return ['我不能说自己在现实里做了这件事，但你想跟我说的心情我听见了。'];
+  }
+  if (issue?.blockingKind === 'unsupported_memory_assertion') {
+    return ['这件事我不乱猜；你愿意说，我就听你说。'];
   }
   return ['这件事我不能凭空认下来，也不能随口指地方让你去找。'];
 }

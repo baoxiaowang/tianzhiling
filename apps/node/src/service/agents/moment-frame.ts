@@ -1,5 +1,6 @@
 export type MomentType =
   | 'ordinary'
+  | 'low_info_status'
   | 'daily_rest'
   | 'plan_status'
   | 'arrival_home'
@@ -27,9 +28,15 @@ export interface MomentFrame {
 
 export interface MomentFrameInput {
   currentQuery: string;
-  recentMessages?: Array<{ role?: string; content?: string }>;
+  recentMessages?: Array<{
+    role?: string;
+    content?: string;
+    createdAt?: Date | string;
+  }>;
   isDeceased?: boolean;
 }
+
+const MOMENT_CONTEXT_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 const USER_ARRIVAL_PATTERN =
   /^(?:终于|可算|我|俺)?\s*(?:刚|已经)?\s*(?:进屋|到家|回家|进家门|回屋|到楼|进楼|进小区|开车回家)(?:了|啦|咯|呀|啊)?/u;
@@ -39,7 +46,7 @@ const REST_PATTERN =
 const PLAN_STATUS_PATTERN =
   /(?:明天|后天|下周|下个月|等会|一会儿|待会|下午|晚上|接下来|明天早上).{0,12}(?:去|回|来|走|上班|出差|医院|天津|北京|老家)|(?:准备|打算|要去|要回|要去看|得去)/u;
 const DISTRESS_PATTERN =
-  /心情不好|不好|难受|累|烦|不开心|撑不住|想哭|崩溃|疼|不舒服|一个人/u;
+  /心情不好|不好|难受|累|烦|不开心|撑不住|想哭|崩溃|疼|不舒服|一个人.{0,8}(?:难受|累|空|想|哭|撑|怕|孤单)/u;
 const MEMORY_INVITE_PATTERN =
   /记得|还记得|记不记得|那时候|当时|当年|曾经|以前.{0,10}(?:咱们|我们).{0,8}(?:吃|去|做|玩|说)|咱们|我们.{0,8}(?:吃|去|做|玩)/u;
 const RITUAL_PATTERN =
@@ -48,18 +55,28 @@ const PRACTICAL_PATTERN =
   /怎么办|怎么弄|怎么做|怎么走|怎么活|怎么处理|是不是|要不要|能不能|可以吗|[?？]/u;
 const FOOD_SMELL_PATTERN = /味儿|闻到|香味|尝到|闻见|香得很|香喷喷|闻着/u;
 const UNINVITED_MEMORY_PATTERN =
-  /(?:我)?(?:记着|记得|知道你).{0,10}(?:你|您).{0,8}(?:爱吃|喜欢吃|偏爱|最爱|以前)|(?:我)?(?:记着|记得|知道).{0,12}(?:那趟|那次|那年|那时候|以前|你炒|你做|本溪)|(?:我)?(?:记着|记得|知道).{0,12}(?:咱们|我们|跑过|去过|一起)|(?:以前|那时候|当年).{0,10}(?:你|您|咱俩|我们).{0,8}(?:吃|做|去|玩)/u;
+  /(?:我)?(?:记着|记得|知道你).{0,10}(?:你|您).{0,8}(?:爱吃|喜欢吃|偏爱|最爱|以前)|(?:我)?(?:记着|记得|知道).{0,12}(?:那趟|那次|那年|那时候|以前|你炒|你做|本溪)|(?:我)?(?:记着|记得|知道).{0,12}(?:咱们|我们|跑过|去过|一起)|(?:想起|想到|记着|记得).{0,12}(?:咱们|我们|跑过|那些地方|以前)|(?:以前|那时候|当年).{0,10}(?:你|您|咱俩|我们).{0,8}(?:吃|做|去|玩)/u;
 
 export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
   const current = String(input.currentQuery || '').trim();
-  const recentUserTexts = (input.recentMessages || [])
+  const now = Date.now();
+  const recentUserMessages = (input.recentMessages || [])
     .filter(message => message.role === 'user')
+    .slice(-8);
+  const recentForHigh = recentUserMessages
+    .filter(message => {
+      if (!message.createdAt) return true;
+      const timestamp = new Date(message.createdAt).getTime();
+      return (
+        Number.isFinite(timestamp) &&
+        now - timestamp <= MOMENT_CONTEXT_WINDOW_MS
+      );
+    })
     .map(message => String(message.content || ''))
     .filter(Boolean)
-    .slice(-8);
-  const recent = recentUserTexts.join('\n');
-  const recentTrip = TRIP_PATTERN.test(recent);
-  const recentDistress = DISTRESS_PATTERN.test(recent);
+    .join('\n');
+  const recentTrip = TRIP_PATTERN.test(recentForHigh);
+  const recentDistress = DISTRESS_PATTERN.test(recentForHigh);
   const currentDistress = DISTRESS_PATTERN.test(current);
   const arrival =
     USER_ARRIVAL_PATTERN.test(current) && current.length <= 24;
@@ -136,6 +153,23 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
     };
   }
 
+  if (
+    current.length <= 18 &&
+    !/[?？]/u.test(current) &&
+    !MEMORY_INVITE_PATTERN.test(current) &&
+    !PLAN_STATUS_PATTERN.test(current) &&
+    !REST_PATTERN.test(current)
+  ) {
+    return {
+      momentType: 'low_info_status',
+      emotionalExposure: 'low',
+      primaryNeed: 'land',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+      reason: '用户只报告了一个简短当前状态，先回应状态本身',
+    };
+  }
+
   if (PRACTICAL_PATTERN.test(current) && current.length > 4) {
     return {
       momentType: 'practical',
@@ -182,6 +216,8 @@ export function buildMomentFramePrompt(frame: MomentFrame): string {
     bubble,
     frame.momentType === 'plan_status'
       ? '先回应这个安排本身；不要用旧食物、旧偏好、旧地点填充第二句。'
+      : frame.momentType === 'low_info_status'
+        ? '先回应用户刚报告的状态；不要用旧事、旧偏好、第二个关系动作填充。'
       : frame.momentType === 'daily_rest'
         ? '先接住“洗完澡/躺下/要休息”这一刻；不要用旧事填充。'
         : frame.primaryNeed === 'land'
@@ -216,10 +252,14 @@ export function applyMomentFrameToSegments(
   return next;
 }
 
+export function shouldBlockMemoryRetrieval(frame: MomentFrame): boolean {
+  return shouldGateMomentMemory(frame);
+}
+
 function shouldGateMomentMemory(frame: MomentFrame): boolean {
   return (
     frame.memoryPermission === 'none' &&
-    ['arrival_home', 'after_trip', 'daily_rest', 'plan_status', 'distress'].includes(
+    ['arrival_home', 'after_trip', 'daily_rest', 'plan_status', 'low_info_status', 'distress'].includes(
       frame.momentType
     )
   );
@@ -237,6 +277,7 @@ function cleanTrailingConnector(value: string): string {
 function buildMomentSafeFallback(frame: MomentFrame): string {
   if (frame.momentType === 'daily_rest') return '先歇着，别着凉。';
   if (frame.momentType === 'plan_status') return '路上慢点，注意安全。';
+  if (frame.momentType === 'low_info_status') return '嗯，我听着。';
   if (frame.momentType === 'arrival_home' || frame.momentType === 'after_trip') {
     return '到家就好，先缓一缓。';
   }

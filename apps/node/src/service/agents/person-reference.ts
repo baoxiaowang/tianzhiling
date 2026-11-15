@@ -1,5 +1,5 @@
 const KIN_TERMS =
-  '妈|妈妈|母亲|爸|爸爸|父亲|老婆|妻子|老公|丈夫|儿子|女儿|孩子|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆婆|公公';
+  '岳父|岳母|丈人|丈母娘|继父|继母|养父|养母|干爹|干妈|舅妈|姑妈|姨妈|嫂子|弟媳|姐夫|妹夫|连襟|妯娌|亲家|孙子|孙女|外孙|外孙女|侄子|侄女|外甥|外甥女|妈|妈妈|母亲|爸|爸爸|父亲|老婆|妻子|老公|丈夫|儿子|女儿|孩子|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆婆|公公';
 
 const FIRST_PERSON_KIN_PATTERN = new RegExp(
   `我(${KIN_TERMS})`,
@@ -83,4 +83,27 @@ export function normalizePersonReferenceInReply(
     text = text.replace(new RegExp(`我${term}`, 'gu'), `你${term}`);
   }
   return text;
+}
+
+const QUOTED_SEGMENT_PATTERN =
+  /("[^"]*"|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』)/g;
+
+export function normalizePersonReferenceOutsideQuotes(
+  currentQuery: string,
+  reply: string
+): string {
+  const query = String(currentQuery || '');
+  const firstPersonTerms = uniqueMatches(query, FIRST_PERSON_KIN_PATTERN);
+  if (!firstPersonTerms.length) return String(reply || '');
+  return String(reply || '')
+    .split(QUOTED_SEGMENT_PATTERN)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      let next = part;
+      for (const term of firstPersonTerms) {
+        next = next.replace(new RegExp(`我${term}`, 'gu'), `你${term}`);
+      }
+      return next;
+    })
+    .join('');
 }

@@ -47,3 +47,20 @@ describe('normalize person reference', () => {
     ).toBe('你妈哭你也难受');
   });
 });
+
+describe('expanded kin and quote safety', () => {
+  it('handles an in-law term', () => {
+    const directive = buildPersonReferenceDirective('我岳母今天来了');
+    expect(directive?.firstPersonTerms).toEqual(['岳母']);
+  });
+
+  it('does not rewrite quoted reported speech', () => {
+    const { normalizePersonReferenceOutsideQuotes } = require('../../src/service/agents/person-reference');
+    expect(
+      normalizePersonReferenceOutsideQuotes(
+        '刚才我妈抱了抱我，又哭了',
+        '她说“我妈哭了”，你也难受'
+      )
+    ).toBe('她说“我妈哭了”，你也难受');
+  });
+});

@@ -359,6 +359,27 @@ export class MessageEntity extends BaseEntity {
   replyBriefPreferredSegments?: number;
 
   @Column()
+  replyMomentType?: string;
+
+  @Column()
+  replyMomentNeed?: string;
+
+  @Column()
+  replyMomentMemoryPermission?: string;
+
+  @Column()
+  replyMomentBubbleBudget?: number;
+
+  @Column()
+  replyMomentFilterApplied?: boolean;
+
+  @Column()
+  replyPersonReferenceNormalized?: boolean;
+
+  @Column()
+  replyLowInfoStatus?: boolean;
+
+  @Column()
   replyBriefMaxSegments?: number;
 
   @Column()
