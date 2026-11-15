@@ -55,6 +55,26 @@ describe('moment frame', () => {
     ).toEqual(['躺好，别瞎动。']);
   });
 
+  it('treats a short distress update as one comfort turn without old memory', () => {
+    const frame = resolveMomentFrame({
+      currentQuery: '好累',
+      recentMessages: recent,
+      isDeceased: true,
+    });
+    expect(frame).toMatchObject({
+      momentType: 'distress',
+      primaryNeed: 'accompany',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+    });
+    expect(
+      applyMomentFrameToSegments(
+        ['记着咱们跑过的那些地方，都记着'],
+        frame
+      )
+    ).toEqual(['我在，慢慢说。']);
+  });
+
   it('treats a bare future plan as one practical landing turn', () => {
     const frame = resolveMomentFrame({
       currentQuery: '明天回天津',

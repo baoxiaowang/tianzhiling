@@ -18,6 +18,7 @@ import {
 } from './agent-capability-policy';
 import { detectPresenceContractViolation } from './presence-state';
 import { detectMomentFrameViolation } from './moment-frame';
+import { detectPersonReferenceMismatch } from './person-reference';
 import {
   COUNTERFACTUAL_REGRET_INTENT_PATTERN,
   FAMILY_CARE_REGRET_INTENT_PATTERN,
@@ -2437,6 +2438,19 @@ export class ReplyGuardrailService {
         'presence_contract',
         presenceViolation,
         '按当前存在状态重新表达，区分情感常伴与物理到场；不要声称现实同行、吃饭、拥抱或复活',
+        'hard_boundary'
+      );
+    }
+
+    const personReferenceViolation = detectPersonReferenceMismatch(
+      options.userQuery,
+      content
+    );
+    if (personReferenceViolation) {
+      addIssue(
+        'person_reference_mismatch',
+        personReferenceViolation,
+        '把用户第一人称的亲属转换为当前角色视角；不要原样复制“我妈”等称呼',
         'hard_boundary'
       );
     }

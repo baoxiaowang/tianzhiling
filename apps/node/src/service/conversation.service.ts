@@ -75,6 +75,7 @@ import { AgentConversationSummaryService } from './agents/agent-conversation-sum
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { PresenceStateService } from './agents/presence-state.service';
 import { applyMomentFrameToSegments } from './agents/moment-frame';
+import { normalizePersonReferenceInReply } from './agents/person-reference';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { MemoryValueService } from './agents/memory-value.service';
@@ -6251,9 +6252,15 @@ export class ConversationService {
       participationResult.segments,
       replyBrief.momentFrame
     );
+    const referenceAdjustedSegments = momentAdjustedSegments.map(segment =>
+      normalizePersonReferenceInReply(
+        before.searchableText,
+        segment
+      )
+    );
     const addressGuardedSegments = await this.guardPersonAddressSegments(
       runtime.conversation.userId,
-      momentAdjustedSegments
+      referenceAdjustedSegments
     );
     return this.attachTurnStatePlans(
       {

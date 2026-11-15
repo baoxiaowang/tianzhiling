@@ -48,7 +48,7 @@ const PRACTICAL_PATTERN =
   /怎么办|怎么弄|怎么做|怎么走|怎么活|怎么处理|是不是|要不要|能不能|可以吗|[?？]/u;
 const FOOD_SMELL_PATTERN = /味儿|闻到|香味|尝到|闻见|香得很|香喷喷|闻着/u;
 const UNINVITED_MEMORY_PATTERN =
-  /(?:我)?(?:记着|记得|知道你).{0,10}(?:你|您).{0,8}(?:爱吃|喜欢吃|偏爱|最爱|以前)|(?:我)?(?:记着|记得|知道).{0,12}(?:那趟|那次|那年|那时候|以前|你炒|你做|本溪)|(?:以前|那时候|当年).{0,10}(?:你|您|咱俩|我们).{0,8}(?:吃|做|去|玩)/u;
+  /(?:我)?(?:记着|记得|知道你).{0,10}(?:你|您).{0,8}(?:爱吃|喜欢吃|偏爱|最爱|以前)|(?:我)?(?:记着|记得|知道).{0,12}(?:那趟|那次|那年|那时候|以前|你炒|你做|本溪)|(?:我)?(?:记着|记得|知道).{0,12}(?:咱们|我们|跑过|去过|一起)|(?:以前|那时候|当年).{0,10}(?:你|您|咱俩|我们).{0,8}(?:吃|做|去|玩)/u;
 
 export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
   const current = String(input.currentQuery || '').trim();
@@ -131,7 +131,7 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
       emotionalExposure: 'high',
       primaryNeed: 'accompany',
       memoryPermission: 'none',
-      bubbleBudget: 2,
+      bubbleBudget: current.length <= 10 ? 1 : 2,
       reason: '用户当前在明显低落/疲惫里，先陪伴',
     };
   }
