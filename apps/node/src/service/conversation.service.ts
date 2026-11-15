@@ -331,10 +331,7 @@ function createReplyTiming(conversationId: string): ReplyTiming {
   };
 }
 
-function markReplyTiming(
-  timing: ReplyTiming | undefined,
-  stage: string
-): void {
+function markReplyTiming(timing: ReplyTiming | undefined, stage: string): void {
   if (!timing || timing.logged) return;
   timing.marks.push({ stage, at: Date.now() });
 }
@@ -1047,8 +1044,8 @@ export class ConversationService {
             agent,
           };
         })
-        .filter(
-          (item): item is { key: string; agent: AgentEntity } => Boolean(item)
+        .filter((item): item is { key: string; agent: AgentEntity } =>
+          Boolean(item)
         ),
     });
     const summaries = pageConversations.map(conversation => {
@@ -1736,7 +1733,9 @@ export class ConversationService {
         const lockKey = this.getConversationReplyLockKey(conversationId);
         const holderToken = await this.redisService?.get(lockKey);
         const holderTtlMs = await (
-          this.redisService as RedisService & { pttl(key: string): Promise<number> }
+          this.redisService as RedisService & {
+            pttl(key: string): Promise<number>;
+          }
         )?.pttl(lockKey);
         this.logger.error(
           '[conversation-reply] lock busy after slow wait, conversationId=%s, userId=%s, waitMs=%s, traceId=%s, jobId=%s, holderToken=%s, holderTtlMs=%s',
@@ -2875,7 +2874,8 @@ export class ConversationService {
       // 这样每条消息只派生一个索引任务 + 一个抽取任务，队列任务量直接少三分之一。
       // 只把"事实型"原话写进检索索引：问句、情绪、纯应答不入库，
       // 否则相似检索只会捞回情绪与问句碎片（用户反馈"检索意义不大"）。
-      const searchableDialogueEvidence = isSearchableDialogueEvidence(searchableText);
+      const searchableDialogueEvidence =
+        isSearchableDialogueEvidence(searchableText);
       if (searchableDialogueEvidence) {
         const indexed = await this.milvusService.indexConversationMessage({
           messageId: this.stringifyObjectId(message.id),
@@ -3706,8 +3706,7 @@ export class ConversationService {
       ? (await this.findPreviousAssistantMessage(message))?.content?.trim()
       : undefined;
     const contextMessages = await this.loadBoundedDialogueContext(message);
-    const temporalQaContext =
-      await this.loadBoundedTemporalQaContext(message);
+    const temporalQaContext = await this.loadBoundedTemporalQaContext(message);
 
     const [, , memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
       await Promise.all([
@@ -4187,8 +4186,7 @@ export class ConversationService {
     }
     const instruction = detectExplicitAgentName(text);
     if (!instruction) return;
-    const field =
-      instruction.kind === 'realName' ? 'realName' : 'iCallAgent';
+    const field = instruction.kind === 'realName' ? 'realName' : 'iCallAgent';
     if ((agent[field] || '').trim() === instruction.name) return;
     try {
       await this.agentModel.updateOne(
@@ -6634,10 +6632,7 @@ export class ConversationService {
           await this.resolveConversationRecognitionJourneyOwnership(
             options.runtime
           );
-        if (
-          ownership.resolved &&
-          ownership.mode === 'subsequent_relative'
-        ) {
+        if (ownership.resolved && ownership.mode === 'subsequent_relative') {
           journey = buildInitialRecognitionJourney({
             mode: 'subsequent_relative',
             mentionCallName: ownership.mentionCallName,
@@ -7463,7 +7458,10 @@ export class ConversationService {
         this.describeReplyError(error)
       );
       for (const item of options.agents) {
-        contracts.set(item.key, buildAgentIdentityContract({ agent: item.agent }));
+        contracts.set(
+          item.key,
+          buildAgentIdentityContract({ agent: item.agent })
+        );
       }
     }
     return contracts;
@@ -9248,9 +9246,7 @@ export class ConversationService {
     timing.logged = true;
     const stages = timing.marks
       .map((mark, index) => {
-        const previous = index
-          ? timing.marks[index - 1].at
-          : timing.startedAt;
+        const previous = index ? timing.marks[index - 1].at : timing.startedAt;
         return `${mark.stage}=${mark.at - previous}ms`;
       })
       .join(',');
@@ -9571,7 +9567,10 @@ export class ConversationService {
     latestMessage?: MessageEntity | null,
     identity?: AgentIdentityContract
   ): ConversationSummary {
-    const isSharedConversation = this.isSharedConversationFor(conversation, agent);
+    const isSharedConversation = this.isSharedConversationFor(
+      conversation,
+      agent
+    );
     // 自有会话用统一 identity 契约；共享会话的称呼来自会话级 ACL，无 agent 契约。
     const displayAddress = this.displayAddresses(agent, identity);
 
@@ -10156,9 +10155,13 @@ export class ConversationService {
         const suffix =
           typeof distance === 'number' ? `，距离 ${distance.toFixed(2)}` : '';
         if (face.decision === FaceRecognitionDecision.confirmed) {
-          parts.push(`第 ${index + 1} 张脸最像「${name}」（较为确定${suffix}）`);
+          parts.push(
+            `第 ${index + 1} 张脸最像「${name}」（较为确定${suffix}）`
+          );
         } else if (face.decision === FaceRecognitionDecision.ask) {
-          parts.push(`第 ${index + 1} 张脸可能是「${name}」（不确定${suffix}）`);
+          parts.push(
+            `第 ${index + 1} 张脸可能是「${name}」（不确定${suffix}）`
+          );
         }
       });
       return parts.join('；');
@@ -11020,7 +11023,9 @@ export class ConversationService {
       const [x0, y0] = points[i - 1];
       const [x1, y1] = points[i];
       if (speed <= x1) {
-        return Math.round((y0 + ((speed - x0) / (x1 - x0)) * (y1 - y0)) * 100) / 100;
+        return (
+          Math.round((y0 + ((speed - x0) / (x1 - x0)) * (y1 - y0)) * 100) / 100
+        );
       }
     }
     return 0;
@@ -11049,7 +11054,9 @@ export class ConversationService {
     agent?: AgentEntity | null
   ): Promise<VoiceTimbreEntity | undefined> {
     const voiceTimbreId = this.normalizeObjectId(agent?.voiceTimbreId);
-    const logKey = `${this.stringifyObjectId(agent?.id)}:${this.stringifyObjectId(voiceTimbreId)}`;
+    const logKey = `${this.stringifyObjectId(
+      agent?.id
+    )}:${this.stringifyObjectId(voiceTimbreId)}`;
 
     if (voiceTimbreId) {
       const timbre =
@@ -11068,6 +11075,12 @@ export class ConversationService {
       if (timbre) {
         return timbre;
       }
+    }
+
+    // 运营/用户明确解绑（voiceTimbreId 为空）：不要自动回退，否则解绑会被
+    // 下一次语音对话立刻「重新绑定」成用户最新的音色。
+    if (!voiceTimbreId) {
+      return undefined;
     }
 
     // 配置的音色可能被删除/停用；不要每次语音都失败，回退到该用户最新的
@@ -13663,7 +13676,9 @@ export class ConversationService {
         order: { replySegmentIndex: 'ASC', createdAt: 'ASC' },
       });
       const text = segments
-        .map(message => (message.mediaTranscript || message.content || '').trim())
+        .map(message =>
+          (message.mediaTranscript || message.content || '').trim()
+        )
         .filter(Boolean)
         .join('\n');
       if (text) return text;
