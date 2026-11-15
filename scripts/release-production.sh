@@ -1,825 +1,263 @@
 #!/usr/bin/env bash
+#
+# 一条命令发布到生产（天之灵）
+#
+#   ./scripts/release-production.sh                 # 发布当前 HEAD
+#   ./scripts/release-production.sh --dry-run       # 只打印计划，不动线上
+#   ./scripts/release-production.sh --approve       # 受保护文件变更时自动加白名单
+#   ./scripts/release-production.sh --branch 20261006 --services tzl_admin_node,tzl_admin_web
+#
+# 它做了什么：
+#   1. 检查工作区干净，取当前提交（必须是 40 位 sha）
+#   2. 推送到 origin/<branch>；本地到 GitHub 不通时，自动用 git bundle
+#      把提交送到服务器、在服务器上 rebase 到 origin 最新提交后由服务器推送
+#   3. 调 /usr/local/sbin/tzl-deploy-release 发布（重建 tzl_node 并替换）
+#   4. 根据改动范围自动判断要补齐哪些后台服务（admin-node / admin-web），
+#      用 recover 重建并替换（不重建 node）
+#   5. 校验线上健康与版本，打印汇总
+#
+# 环境变量（一般不用改）：
+#   RELEASE_HOST     默认 root@1.13.18.200
+#   RELEASE_KEY      默认 ~/.ssh/id_ed25519_tianzhiling_deploy_20260802
+#   RELEASE_BRANCH   默认 20261006
+#   RELEASE_SERVICES 覆盖自动判断，如 tzl_admin_node,tzl_admin_web
+#
+# 退出码：0 成功；非 0 失败（失败时会打印失败阶段）。
+set -uo pipefail
 
-set -Eeuo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOST="${RELEASE_HOST:-root@1.13.18.200}"
+KEY="${RELEASE_KEY:-$HOME/.ssh/id_ed25519_tianzhiling_deploy_20260802}"
+BRANCH="${RELEASE_BRANCH:-20261006}"
+SERVICES_OVERRIDE="${RELEASE_SERVICES:-}"
 
-REPO="${TIANZHILING_REPO_ROOT:-/opt/tianzhiling}"
-# 分类器与脚本放在一起（也支持用候选提交里的脚本从临时目录引导运行）；
-# 找不到时回退到仓库内路径。
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLASSIFY_COMPOSE="${SCRIPT_DIR}/classify-compose-services.sh"
-[[ -f "$CLASSIFY_COMPOSE" ]] || CLASSIFY_COMPOSE="${REPO}/scripts/classify-compose-services.sh"
-COMMAND="${1:-release}"
-PROGRESS_FILE="${TIANZHILING_RELEASE_PROGRESS_FILE:-/var/tmp/tianzhiling-release-progress.env}"
-if [[ "$COMMAND" == 'progress' ]]; then
-  if [[ -f "$PROGRESS_FILE" ]]; then cat "$PROGRESS_FILE"; else printf 'state=idle\n'; fi
-  exit 0
-elif [[ "$COMMAND" == 'plan' ]]; then
-  BRANCH="${2:-}"
-  TARGET="${3:-}"
-  PLAN_ONLY=1
-else
-  BRANCH="$COMMAND"
-  TARGET="${2:-}"
-  COMMAND='release'
-  PLAN_ONLY=0
-fi
-PUBLIC_HEALTH="${TIANZHILING_PUBLIC_HEALTH:-https://tianzhiling.chat/api/system/health}"
-ADMIN_HEALTH="${TIANZHILING_ADMIN_HEALTH:-https://admin.tianzhiling.chat/admin_api/system/health}"
-STABILITY_SECONDS="${TIANZHILING_STABILITY_SECONDS:-120}"
-ALL_SERVICES=(tzl_node tzl_memory_worker tzl_admin_node tzl_admin_web tzl_nginx)
-SERVICES=()
-DEPLOY_STARTED=0
-PREVIOUS_COMMIT=""
-ADMIN_ASSET_SNAPSHOT=""
-PROTECTED_DIRTY_BASELINE=""
-PHASE=""
-PHASE_STARTED_AT=0
+SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=15)
+SSH=(ssh "${SSH_OPTS[@]}" "$HOST")
+SCP=(scp -q "${SSH_OPTS[@]}")
 
-declare -A OLD_IMAGES=()
-declare -A COMPOSE_IMAGES=()
-declare -A OLD_REVISIONS=()
-declare -A SELECTED_SERVICES=()
-declare -A SERVICE_EXISTED=()
+DRY_RUN=0
+APPROVE=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --approve) APPROVE=1 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    *) echo "未知参数：$arg（--help 查看用法）" >&2; exit 2 ;;
+  esac
+done
 
-write_progress() {
-  local state="$1"
-  local temporary="${PROGRESS_FILE}.$$"
-  {
-    printf 'state=%s\n' "$state"
-    printf 'phase=%s\n' "${PHASE:-none}"
-    printf 'branch=%s\n' "${BRANCH:-}"
-    printf 'target=%s\n' "${TARGET:-}"
-    printf 'previous_commit=%s\n' "${PREVIOUS_COMMIT:-}"
-    printf 'services=%s\n' "${SERVICES[*]:-}"
-    printf 'updated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"$temporary"
-  mv "$temporary" "$PROGRESS_FILE"
-}
+step() { printf '\n\033[36m▶ %s\033[0m\n' "$*"; }
+ok()   { printf '\033[32m✓ %s\033[0m\n' "$*"; }
+warn() { printf '\033[33m! %s\033[0m\n' "$*"; }
+die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+run_ssh() { "${SSH[@]}" "$@"; }
+scp_to() { "${SCP[@]}" "$1" "$HOST:$2"; }
 
-release_event() {
-  local status="$1"
-  shift
-  printf '[RELEASE_EVENT] time=%s phase=%s status=%s %s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${PHASE:-none}" "$status" "$*"
-}
+cd "$ROOT"
 
-set_phase() {
-  local next="$1"
-  local now
-  now="$(date +%s)"
-  if [[ -n "$PHASE" && "$PHASE_STARTED_AT" -gt 0 ]]; then
-    release_event complete "elapsed_seconds=$((now - PHASE_STARTED_AT))"
-  fi
-  PHASE="$next"
-  PHASE_STARTED_AT="$now"
-  write_progress running
-  release_event begin
-}
-
-select_service() {
-  SELECTED_SERVICES["$1"]=1
-}
-
-service_selected() {
-  [[ "${SELECTED_SERVICES[$1]:-0}" == '1' ]]
-}
-
-# 只按 docker-compose 文件里实际改动的服务选择；顶层/全局改动或无法归属时回退到全部服务。
-select_services_from_compose_change() {
-  local path="$1"
-  local service candidate
-  local compose_tmp diff_tmp
-  local classified=''
-
-  if [[ ! -f "$CLASSIFY_COMPOSE" ]]; then
-    printf '[RELEASE_SCOPE_FALLBACK] classifier_missing=%s action=build_all\n' \
-      "$CLASSIFY_COMPOSE" >&2
-    for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
-    return
-  fi
-
-  compose_tmp="$(mktemp /var/tmp/tzl-compose-target.XXXXXX)"
-  diff_tmp="$(mktemp /var/tmp/tzl-compose-diff.XXXXXX)"
-  if git show "$TARGET:$path" >"$compose_tmp" 2>/dev/null \
-    && git -c core.quotepath=false diff -U0 "$PREVIOUS_COMMIT" "$TARGET" -- "$path" >"$diff_tmp" 2>/dev/null; then
-    classified="$(bash "$CLASSIFY_COMPOSE" "$compose_tmp" "$diff_tmp" 2>/dev/null || true)"
-  fi
-  rm -f -- "$compose_tmp" "$diff_tmp"
-
-  if [[ "$classified" == 'ALL' || -z "$classified" ]]; then
-    printf '[RELEASE_SCOPE] compose=%s changed=global_or_unknown action=build_all\n' \
-      "$path" >&2
-    for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
-    return
-  fi
-
-  while IFS= read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    if [[ " ${ALL_SERVICES[*]} " == *" $candidate "* ]]; then
-      printf '[RELEASE_SCOPE] compose=%s service=%s\n' "$path" "$candidate" >&2
-      select_service "$candidate"
-    else
-      printf '[RELEASE_SCOPE_FALLBACK] compose=%s unknown_service=%s action=build_all\n' \
-        "$path" "$candidate" >&2
-      for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
-      return
-    fi
-  done <<<"$classified"
-}
-
-select_release_services() {
-  local path service
-  while IFS= read -r path; do
-    [[ -n "$path" ]] || continue
-    case "$path" in
-      apps/node/test/*|apps/admin-node/test/*|apps/admin/test/*|apps/weapp/*|*/test/*|*/tests/*|*.md|AGENTS.md|docs/*|reports/*|.github/*|release-state/*)
-        ;;
-      scripts/init-admin-node.sh|scripts/prd-init-admin-node.sh)
-        select_service tzl_admin_node
-        ;;
-      scripts/backfill-*.js)
-        select_service tzl_node
-        ;;
-      scripts/release-production.sh|scripts/resolve-release-services.sh|scripts/classify-compose-services.sh|scripts/test-*.sh|scripts/dev-*|scripts/docker-*|scripts/prd-*|scripts/check-brand-sync.mjs)
-        ;;
-      apps/node/*)
-        select_service tzl_node
-        select_service tzl_memory_worker
-        ;;
-      apps/admin-node/*)
-        select_service tzl_admin_node
-        ;;
-      apps/admin/*)
-        select_service tzl_admin_web
-        ;;
-      apps/gateway/*)
-        select_service tzl_nginx
-        ;;
-      packages/entities/*)
-        select_service tzl_node
-        select_service tzl_memory_worker
-        select_service tzl_admin_node
-        ;;
-      packages/shared/*)
-        select_service tzl_node
-        select_service tzl_memory_worker
-        select_service tzl_admin_node
-        select_service tzl_admin_web
-        ;;
-      docker-compose*.yml)
-        select_services_from_compose_change "$path"
-        ;;
-      package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.dockerignore|tsconfig*.json)
-        for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
-        ;;
-      *)
-        printf '[RELEASE_SCOPE_FALLBACK] unclassified_path=%s action=build_all\n' "$path" >&2
-        for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
-        ;;
-    esac
-  done < <(git -c core.quotepath=false diff --name-only "$PREVIOUS_COMMIT" "$TARGET")
-
-  for service in "${ALL_SERVICES[@]}"; do
-    if service_selected "$service"; then SERVICES+=("$service"); fi
-  done
-  [[ "${#SERVICES[@]}" -gt 0 ]] || fail 'target has no production runtime changes'
-}
-
-cleanup_admin_asset_snapshot() {
-  if [[ -n "$ADMIN_ASSET_SNAPSHOT" && \
-    "$ADMIN_ASSET_SNAPSHOT" == /var/tmp/tzl-admin-assets.* && \
-    -d "$ADMIN_ASSET_SNAPSHOT" ]]; then
-    rm -rf -- "$ADMIN_ASSET_SNAPSHOT"
-  fi
-  if [[ -n "$PROTECTED_DIRTY_BASELINE" && \
-    "$PROTECTED_DIRTY_BASELINE" == /var/tmp/tzl-protected-dirty.* && \
-    -f "$PROTECTED_DIRTY_BASELINE" ]]; then
-    rm -f -- "$PROTECTED_DIRTY_BASELINE"
-  fi
-}
-
-trap cleanup_admin_asset_snapshot EXIT
-
-fail() {
-  release_event failed "message=$*" >&2
-  write_progress failed
-  printf '[RELEASE_FAILED] phase=%s message=%s\n' "${PHASE:-preflight}" "$*" >&2
-  exit 1
-}
-
-capture_protected_dirty_manifest() {
-  local output="$1"
-  local line status path digest
-
-  : >"$output"
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    status="${line:0:2}"
-    path="${line:3}"
-    case "$status" in
-      ' M'|'??') ;;
-      *) fail "unsupported production worktree change: $status $path" ;;
-    esac
-    case "$path" in
-      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat.key|\
-      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat_bundle.crt|\
-      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat.key.bak.[0-9]*|\
-      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat_bundle.crt.bak.[0-9]*|\
-      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat.key|\
-      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat_bundle.crt|\
-      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat.key.bak.[0-9]*|\
-      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat_bundle.crt.bak.[0-9]*) ;;
-      *) fail "production worktree has a non-certificate change: $path" ;;
-    esac
-    [[ -f "$path" ]] || fail "protected production file is missing: $path"
-    digest="$(sha256sum "$path" | awk '{print $1}')"
-    printf '%s\t%s\t%s\n' "$status" "$path" "$digest" >>"$output"
-  done < <(git -c core.quotepath=false status --porcelain --untracked-files=all)
-  sort -o "$output" "$output"
-}
-
-verify_protected_dirty_unchanged() {
-  local current
-
-  [[ -n "$PROTECTED_DIRTY_BASELINE" ]] || return 0
-  current="$(mktemp /var/tmp/tzl-protected-dirty-current.XXXXXX)"
-  capture_protected_dirty_manifest "$current"
-  if ! cmp -s "$PROTECTED_DIRTY_BASELINE" "$current"; then
-    rm -f -- "$current"
-    fail 'protected certificate worktree state changed during release'
-  fi
-  rm -f -- "$current"
-}
-
-rollback_runtime() {
-  local service
-  local rollback_ok=1
-  local rollback_services=()
-
-  # 注意：回滚只还原旧镜像，并用"当前 compose"重建容器；因此候选里新增的
-  # 资源配置（如 tzl_memory_worker 的 cpus 上限）会保留，不会被自动撤销。
-  # 需要连同资源上限一起回退时，必须显式用旧 compose 重建对应服务。
-  [[ "$DEPLOY_STARTED" -eq 1 ]] || return 0
-  set +e
-  printf '[ROLLBACK_BEGIN] previous=%s\n' "${PREVIOUS_COMMIT:-unknown}" >&2
-  for service in "${SERVICES[@]}"; do
-    if [[ "${SERVICE_EXISTED[$service]:-0}" == '1' ]]; then
-      rollback_services+=("$service")
-    fi
-    if [[ -n "${OLD_IMAGES[$service]:-}" && -n "${COMPOSE_IMAGES[$service]:-}" ]]; then
-      docker image tag "${OLD_IMAGES[$service]}" "${COMPOSE_IMAGES[$service]}"
-    fi
-  done
-  if [[ "${#rollback_services[@]}" -gt 0 ]]; then
-    docker compose --profile prod up -d --no-deps --force-recreate "${rollback_services[@]}"
-  fi
-  for service in "${SERVICES[@]}"; do
-    if [[ "${SERVICE_EXISTED[$service]:-0}" != '1' ]]; then
-      docker compose --profile prod rm -sf "$service"
-    fi
-  done
-  if service_selected tzl_node || service_selected tzl_admin_node; then
-    wait_for_exec_ready tzl_nginx 15 || rollback_ok=0
-    docker exec tzl_nginx nginx -t || rollback_ok=0
-    docker exec tzl_nginx nginx -s reload || rollback_ok=0
-  fi
-  for service in "${SERVICES[@]}"; do
-    if [[ "${SERVICE_EXISTED[$service]:-0}" != '1' ]]; then continue; fi
-    check_container "$service" || rollback_ok=0
-  done
-  if service_selected tzl_node; then
-    wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health' || rollback_ok=0
-    check_pm2_processes tzl_node 4 0 || rollback_ok=0
-  fi
-  if service_selected tzl_memory_worker && [[ "${SERVICE_EXISTED[tzl_memory_worker]:-0}" == '1' ]]; then
-    wait_for_node_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health' || rollback_ok=0
-    check_pm2_processes tzl_memory_worker 0 0 || rollback_ok=0
-  fi
-  if service_selected tzl_admin_node; then
-    wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health' || rollback_ok=0
-    check_pm2_processes tzl_admin_node 1 0 || rollback_ok=0
-  fi
-  if [[ "$rollback_ok" -eq 1 ]]; then
-    printf '[ROLLBACK_DONE] runtime restored and verified; git remains at %s\n' "$TARGET" >&2
-  else
-    printf '[ROLLBACK_VERIFY_FAILED] manual recovery required; git remains at %s\n' "$TARGET" >&2
-  fi
-}
-
-on_error() {
-  local rc="$?"
-  trap - ERR
-  release_event failed "exit=$rc" >&2
-  write_progress failed
-  rollback_runtime
-  printf '[RELEASE_FAILED] phase=%s target=%s exit=%s\n' "${PHASE:-unknown}" "$TARGET" "$rc" >&2
-  exit "$rc"
-}
-trap on_error ERR
-
-wait_for_node_health() {
-  local service="$1"
-  local url="$2"
-  local attempt
-
-  for attempt in $(seq 1 24); do
-    if docker exec "$service" node -e \
-      "fetch('$url').then(async r=>{const j=await r.json();const d=j.data||j;if(!r.ok||d.status!=='ok')process.exit(1)}).catch(()=>process.exit(1))" \
-      >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 5
-  done
-  return 1
-}
-
-wait_for_public_health() {
-  local url="$1"
-  local attempt
-
-  for attempt in $(seq 1 24); do
-    if curl -fsS --max-time 20 "$url" | \
-      grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'; then
-      return 0
-    fi
-    sleep 5
-  done
-  return 1
-}
-
-check_container() {
-  local service="$1"
-  local state restarts
-
-  read -r state restarts < <(
-    docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$service"
-  )
-  [[ "$state" == 'running' && "$restarts" == '0' ]]
-}
-
-# 有界等待容器可被 exec：抵消"重建后立即 docker exec"的 setns/EINVAL 抖动。
-# 超时返回非零，交由调用方 fail/回滚；不做无限重试。
-wait_for_exec_ready() {
-  local service="$1"
-  local timeout_seconds="${2:-30}"
-  local elapsed=0
-  local running=''
-
-  while (( elapsed < timeout_seconds )); do
-    running="$(docker inspect -f '{{.State.Running}}' "$service" 2>/dev/null || echo false)"
-    if [[ "$running" == 'true' ]] \
-      && docker exec "$service" sh -lc 'true' >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-  return 1
-}
-
-check_pm2_processes() {
-  local service="$1"
-  local expected="$2"
-  local minimum_uptime_ms="${3:-0}"
-  local maximum_restart_time="${4:-5}"
-  local attempt
-
-  # A freshly recreated container may not have its PM2 daemon socket ready yet;
-  # pm2 then prints a "[PM2] Spawning PM2 daemon" banner to stdout, so retry
-  # until the daemon responds with a parseable process list.
-  for attempt in 1 2 3 4 5 6 7 8; do
-    if docker exec "$service" node -e '
-const { execFileSync } = require("child_process");
-const expected = Number(process.argv[1]);
-const minimumUptimeMs = Number(process.argv[2]);
-const maximumRestartTime = Number(process.argv[3]);
-const rawList = execFileSync("pm2", ["jlist"], {
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "ignore"],
-});
-function parsePm2List(raw) {
-  const jsonEnd = raw.lastIndexOf("]");
-  if (jsonEnd > 0) {
-    for (let jsonStart = 0; jsonStart < jsonEnd; jsonStart += 1) {
-      if (raw[jsonStart] !== "[") continue;
-      try {
-        const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
-        if (Array.isArray(parsed)) return parsed;
-      } catch {
-        // Skip PM2 banner text until the JSON payload parses.
-      }
-    }
-  }
-  throw new Error(`pm2 jlist did not return JSON: ${raw.slice(0, 160)}`);
-}
-const processes = parsePm2List(rawList);
-const failures = [];
-if (processes.length !== expected) {
-  failures.push(`count=${processes.length}/${expected}`);
-}
-for (const processInfo of processes) {
-  const env = processInfo.pm2_env || {};
-  const uptimeMs = Date.now() - Number(env.pm_uptime || 0);
-  const restartTime = Number(env.restart_time || 0);
-  const unstableRestarts = Number(env.unstable_restarts || 0);
-  if (env.status !== "online" || restartTime > maximumRestartTime || unstableRestarts !== 0 || uptimeMs < minimumUptimeMs) {
-    failures.push(JSON.stringify({
-      pm_id: processInfo.pm_id,
-      status: env.status,
-      restart_time: restartTime,
-      unstable_restarts: unstableRestarts,
-      uptime_ms: uptimeMs,
-    }));
-  }
-}
-if (failures.length > 0) {
-  console.error(failures.join("\n"));
-  process.exit(1);
-}
-' "$expected" "$minimum_uptime_ms" "$maximum_restart_time"; then
-      return 0
-    fi
-    if (( attempt < 8 )); then
-      printf '[PM2_RETRY] service=%s attempt=%s\n' "$service" "$attempt"
-      sleep 5
-    fi
-  done
-  return 1
-}
-
-pm2_restart_signature() {
-  local service="$1"
-
-  docker exec "$service" node -e '
-const { execFileSync } = require("child_process");
-const rawList = execFileSync("pm2", ["jlist"], {
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "ignore"],
-});
-function parsePm2List(raw) {
-  const jsonEnd = raw.lastIndexOf("]");
-  if (jsonEnd > 0) {
-    for (let jsonStart = 0; jsonStart < jsonEnd; jsonStart += 1) {
-      if (raw[jsonStart] !== "[") continue;
-      try {
-        const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
-        if (Array.isArray(parsed)) return parsed;
-      } catch {
-        // Skip PM2 banner text until the JSON payload parses.
-      }
-    }
-  }
-  throw new Error(`pm2 jlist did not return JSON: ${raw.slice(0, 160)}`);
-}
-const processes = parsePm2List(rawList);
-console.log(processes
-  .map(processInfo => `${processInfo.pm_id}:${Number(processInfo.pm2_env?.restart_time || 0)}`)
-  .sort()
-  .join(","));
-'
-}
-
-check_internal_health() {
-  local service="$1"
-  local url="$2"
-
-  docker exec "$service" node -e \
-    "fetch('$url').then(async r=>{const j=await r.json();const d=j.data||j;if(!r.ok||d.status!=='ok')process.exit(1)}).catch(()=>process.exit(1))" \
-    >/dev/null 2>&1
-}
-
-# 期望的 memory worker 并发取自目标提交的 compose，避免把并发数写死在发布脚本里。
-expected_memory_worker_concurrency() {
-  local compose_tmp value
-  compose_tmp="$(mktemp /var/tmp/tzl-compose-conc.XXXXXX)"
-  value=''
-  if git show "$TARGET:docker-compose.yml" >"$compose_tmp" 2>/dev/null; then
-    value="$(awk -F: '/NODE_MEMORY_WORKER_CONCURRENCY:/ {gsub(/[^0-9]/, "", $2); print $2; exit}' "$compose_tmp")"
-  fi
-  rm -f -- "$compose_tmp"
-  printf '%s' "${value:-1}"
-}
-
-check_node_runtime_contract() {
-  local service="$1"
-  local expected_role="$2"
-  local expected_memory_workers="$3"
-  local expected_reply_workers="$4"
-  local expected_concurrency="$5"
-
-  docker exec "$service" node -e '
-const [url, expectedRole, expectedMemory, expectedReply, expectedConcurrency] = process.argv.slice(1);
-fetch(url).then(async response => {
-  const body = await response.json();
-  const data = body.data || body;
-  const runtime = data.runtime || {};
-  const workers = runtime.workers || {};
-  const actual = {
-    role: runtime.role,
-    memoryWorkers: Number(workers.memoryPipeline || 0),
-    replyWorkers: Number(workers.conversationReply || 0),
-    concurrency: Number(runtime.memoryWorkerConcurrency || 0),
-  };
-  if (!response.ok ||
-      actual.role !== expectedRole ||
-      actual.memoryWorkers !== Number(expectedMemory) ||
-      actual.replyWorkers !== Number(expectedReply) ||
-      actual.concurrency !== Number(expectedConcurrency)) {
-    console.error(JSON.stringify({ expected: {
-      role: expectedRole,
-      memoryWorkers: Number(expectedMemory),
-      replyWorkers: Number(expectedReply),
-      concurrency: Number(expectedConcurrency),
-    }, actual }));
-    process.exit(1);
-  }
-}).catch(error => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
-' 'http://127.0.0.1:7001/api/system/health' \
-    "$expected_role" "$expected_memory_workers" "$expected_reply_workers" \
-    "$expected_concurrency"
-}
-
-wait_for_release_stability() {
-  local required_seconds="$1"
-  local elapsed=0
-  local node_restart_baseline='' memory_restart_baseline='' admin_restart_baseline=''
-
-  if service_selected tzl_node; then node_restart_baseline="$(pm2_restart_signature tzl_node)"; fi
-  if service_selected tzl_memory_worker; then memory_restart_baseline="$(pm2_restart_signature tzl_memory_worker)"; fi
-  if service_selected tzl_admin_node; then admin_restart_baseline="$(pm2_restart_signature tzl_admin_node)"; fi
-  if ! service_selected tzl_node && ! service_selected tzl_memory_worker && ! service_selected tzl_admin_node; then return 0; fi
-
-  while (( elapsed < required_seconds )); do
-    if service_selected tzl_node; then
-      check_container tzl_node
-      check_pm2_processes tzl_node 4 0
-      check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
-    fi
-    if service_selected tzl_memory_worker; then
-      check_container tzl_memory_worker
-      check_pm2_processes tzl_memory_worker 0 0
-      check_internal_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
-    fi
-    if service_selected tzl_admin_node; then
-      check_container tzl_admin_node
-      check_pm2_processes tzl_admin_node 1 0
-      check_internal_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
-    fi
-    sleep 10
-    elapsed=$((elapsed + 10))
-    release_event progress "elapsed_seconds=$elapsed total_seconds=$required_seconds"
-    write_progress running
-  done
-  if service_selected tzl_node; then
-    check_pm2_processes tzl_node 4 "$((required_seconds * 1000))"
-    [[ "$(pm2_restart_signature tzl_node)" == "$node_restart_baseline" ]]
-    check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
-  fi
-  if service_selected tzl_memory_worker; then
-    check_pm2_processes tzl_memory_worker 0 "$((required_seconds * 1000))"
-    [[ "$(pm2_restart_signature tzl_memory_worker)" == "$memory_restart_baseline" ]]
-    check_internal_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
-  fi
-  if service_selected tzl_admin_node; then
-    check_pm2_processes tzl_admin_node 1 "$((required_seconds * 1000))"
-    [[ "$(pm2_restart_signature tzl_admin_node)" == "$admin_restart_baseline" ]]
-    check_internal_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
-  fi
-}
-
-check_public_health_repeated() {
-  local url="$1"
-  local attempt
-
-  for attempt in $(seq 1 3); do
-    curl -fsS --max-time 20 "$url" | \
-      grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
-    if [[ "$attempt" -lt 3 ]]; then sleep 5; fi
-  done
-}
-
-if [[ "$PLAN_ONLY" -eq 0 ]]; then [[ "$EUID" -eq 0 ]] || fail 'run as root'; fi
-[[ "$BRANCH" =~ ^[0-9]{8}$ ]] || fail 'branch must be YYYYMMDD'
-[[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || fail 'target must be a full commit hash'
-[[ "$STABILITY_SECONDS" =~ ^[0-9]+$ && "$STABILITY_SECONDS" -ge 60 ]] || \
-  fail 'stability window must be at least 60 seconds'
-
-set_phase preflight
-cd "$REPO"
-[[ "$(git symbolic-ref --short HEAD)" == "$BRANCH" ]] || fail 'server branch mismatch'
+# ---------------------------------------------------------------------------
+# 1. 本地预检
+# ---------------------------------------------------------------------------
+step "本地预检"
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "不在 git 仓库内"
 if [[ -n "$(git status --porcelain)" ]]; then
-  [[ "${TIANZHILING_ALLOW_PROTECTED_CERT_DIRTY:-0}" == '1' ]] || \
-    fail 'server worktree is dirty'
-  PROTECTED_DIRTY_BASELINE="$(mktemp /var/tmp/tzl-protected-dirty.XXXXXX)"
-  capture_protected_dirty_manifest "$PROTECTED_DIRTY_BASELINE"
-  printf '[PROTECTED_DIRTY_ACCEPTED] certificate files=%s\n' \
-    "$(wc -l <"$PROTECTED_DIRTY_BASELINE" | tr -d ' ')"
+  die "工作区不干净，请先提交或 stash：
+$(git status --short | head -20)"
 fi
 
-PREVIOUS_COMMIT="$(git rev-parse HEAD)"
-git fetch --force origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
-[[ "$(git rev-parse "origin/$BRANCH")" == "$TARGET" ]] || fail 'remote tip mismatch'
-git merge-base --is-ancestor "$PREVIOUS_COMMIT" "$TARGET" || fail 'target is not a fast-forward'
-select_release_services
-printf '[RELEASE_SCOPE] services=%s\n' "${SERVICES[*]}"
-if [[ "$PLAN_ONLY" -eq 1 ]]; then
-  printf '[RELEASE_PLAN_OK]\n'
-  printf 'branch=%s\ntarget=%s\nprevious_commit=%s\nservices=%s\n' \
-    "$BRANCH" "$TARGET" "$PREVIOUS_COMMIT" "${SERVICES[*]}"
-  git diff --name-only "$PREVIOUS_COMMIT" "$TARGET" | sed 's/^/changed_file=/'
-  write_progress planned
-  release_event complete "services=${SERVICES[*]}"
-  exit 0
+TARGET="$(git rev-parse HEAD)"
+[[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || die "无法解析当前提交"
+SHORT="${TARGET:0:8}"
+ok "本地 HEAD = $SHORT（$BRANCH）"
+
+if ! run_ssh 'test -x /usr/local/sbin/tzl-deploy-release'; then
+  die "服务器不可达或发布脚本不存在：$HOST"
+fi
+PREV="$(run_ssh "cd /opt/tianzhiling && git rev-parse HEAD")"
+PREV_SHORT="${PREV:0:8}"
+ok "线上当前 = $PREV_SHORT"
+
+if [[ "$PREV" == "$TARGET" ]]; then
+  warn "线上已经是 $SHORT，本次发布将是空操作（仍会做健康检查）"
 fi
 
-for service in "${SERVICES[@]}"; do
-  if ! docker inspect "$service" >/dev/null 2>&1; then
-    SERVICE_EXISTED[$service]=0
-    continue
-  fi
-  SERVICE_EXISTED[$service]=1
-  OLD_IMAGES[$service]="$(docker inspect -f '{{.Image}}' "$service")"
-  COMPOSE_IMAGES[$service]="$(docker inspect -f '{{.Config.Image}}' "$service")"
-  OLD_REVISIONS[$service]="$(
-    docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service"
-  )"
-  if [[ ! "${OLD_REVISIONS[$service]}" =~ ^[0-9a-f]{40}$ ]]; then
-    OLD_REVISIONS[$service]="$PREVIOUS_COMMIT"
-  fi
-  docker image tag \
-    "${OLD_IMAGES[$service]}" \
-    "tzl-${service}-rollback:${OLD_REVISIONS[$service]:0:12}"
-done
-
-if service_selected tzl_admin_web; then
-  ADMIN_ASSET_SNAPSHOT="$(mktemp -d /var/tmp/tzl-admin-assets.XXXXXX)"
-  docker cp \
-    tzl_admin_web:/usr/share/nginx/html/assets/. \
-    "$ADMIN_ASSET_SNAPSHOT/"
-fi
-
-git merge --ff-only "$TARGET"
-[[ "$(git rev-parse HEAD)" == "$TARGET" ]] || fail 'checkout did not reach target'
-
-# Keep runtime telemetry, the container environment, and the immutable image
-# label tied to the exact Git target selected for this release.
-export RELEASE_VERSION="$TARGET"
-
-set_phase production-build
-# memory worker 复用 tzl_node 镜像，构建循环里会跳过它；只改 worker（例如并发）
-# 时该镜像不会被重建，标签就停在上一版，后续镜像标签校验必然失败。这里补一次
-# 共享镜像构建，只构建、不重建 tzl_node 容器。
-if service_selected tzl_memory_worker && ! service_selected tzl_node; then
-  BUILD_STARTED_AT="$(date +%s)"
-  release_event service_begin "service=tzl_node(shared-image-for-worker)"
-  docker compose --profile prod build tzl_node
-  release_event service_complete "service=tzl_node(shared-image-for-worker) elapsed_seconds=$(($(date +%s) - BUILD_STARTED_AT))"
-fi
-for service in "${SERVICES[@]}"; do
-  if [[ "$service" == 'tzl_memory_worker' ]]; then continue; fi
-  BUILD_STARTED_AT="$(date +%s)"
-  release_event service_begin "service=$service"
-  if [[ "$service" == 'tzl_admin_web' || "$service" == 'tzl_admin_node' ]]; then
-    # The admin bundle and admin-node previously remained stale under Docker layer caching.
-    docker compose --profile prod build --no-cache "$service"
-  else
-    docker compose --profile prod build "$service"
-  fi
-  release_event service_complete "service=$service elapsed_seconds=$(($(date +%s) - BUILD_STARTED_AT))"
-done
-
-if service_selected tzl_node; then
-  set_phase database-contract
-  [[ "$(
-    docker compose --profile prod run --rm --no-deps tzl_node \
-      sh -lc 'printf %s "${NODE_DB_SYNCHRONIZE:-}"'
-  )" == 'false' ]]
-  docker compose --profile prod run --rm --no-deps tzl_node \
-    node ./scripts/ensure-conversation-reply-turn-indexes.js --check
-  docker compose --profile prod run --rm --no-deps tzl_node \
-    node ./scripts/ensure-memory-system-indexes.js --check
-  docker compose --profile prod run --rm --no-deps tzl_node \
-    node ./scripts/ensure-milvus-v2-collection.js --check
-fi
-
-set_phase replace-backends
-DEPLOY_STARTED=1
-BACKEND_SERVICES=()
-if service_selected tzl_node; then BACKEND_SERVICES+=(tzl_node); fi
-if service_selected tzl_memory_worker; then BACKEND_SERVICES+=(tzl_memory_worker); fi
-if service_selected tzl_admin_node; then BACKEND_SERVICES+=(tzl_admin_node); fi
-if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
-  docker compose --profile prod up -d --no-deps "${BACKEND_SERVICES[@]}"
-fi
-if service_selected tzl_node; then
-  wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health'
-  check_node_runtime_contract tzl_node web 0 1 1
-fi
-if service_selected tzl_memory_worker; then
-  wait_for_node_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
-  check_node_runtime_contract tzl_memory_worker memory-worker 1 0 "$(expected_memory_worker_concurrency)"
-fi
-if service_selected tzl_admin_node; then
-  wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
-fi
-
-if service_selected tzl_node; then
-  set_phase voice-runtime
-  docker exec tzl_node sh -lc 'command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null'
-  docker exec tzl_node node -e '
-const e=process.env;
-const provider=e.NODE_QWEN_VOICE_API_KEY||e.ADMIN_API_QWEN_VOICE_API_KEY||e.DASHSCOPE_API_KEY;
-const analysis=e.NODE_VOICE_ANALYSIS_API_KEY||e.DASHSCOPE_API_KEY||e.NODE_QWEN_VOICE_API_KEY;
-const cos=e.NODE_TENCENT_COS_SECRET_ID&&e.NODE_TENCENT_COS_SECRET_KEY&&e.NODE_TENCENT_COS_REGION&&e.NODE_TENCENT_COS_BUCKET;
-if(!provider||!analysis||!cos) process.exit(1);
-'
-fi
-
-set_phase replace-web-and-gateway
-if service_selected tzl_admin_web; then
-  docker compose --profile prod up -d --no-deps tzl_admin_web
-  wait_for_exec_ready tzl_admin_web 30 || fail 'tzl_admin_web not ready for exec'
-  docker cp \
-    "$ADMIN_ASSET_SNAPSHOT/." \
-    tzl_admin_web:/usr/share/nginx/html/assets/
-  docker exec tzl_admin_web find \
-    /usr/share/nginx/html/assets \
-    -type f -mtime +30 -delete || fail 'admin asset cleanup failed'
-  check_container tzl_admin_web
-  docker exec tzl_admin_web wget -q -O /dev/null http://127.0.0.1/health \
-    || fail 'admin web health check failed'
-fi
-if service_selected tzl_nginx; then
-  docker compose --profile prod up -d --no-deps tzl_nginx
-  wait_for_exec_ready tzl_nginx 30 || fail 'tzl_nginx not ready for exec'
-  docker exec tzl_nginx nginx -t || fail 'nginx config check failed'
-  docker exec tzl_nginx nginx -s reload || fail 'nginx reload failed'
-elif [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
-  # Re-resolve backend container addresses without rebuilding the gateway image.
-  wait_for_exec_ready tzl_nginx 15 || fail 'tzl_nginx not ready for exec'
-  docker exec tzl_nginx nginx -t || fail 'nginx config check failed'
-  docker exec tzl_nginx nginx -s reload || fail 'nginx reload failed'
-fi
-
-set_phase container-health
-for service in "${SERVICES[@]}"; do
-  check_container "$service"
-done
-if service_selected tzl_node; then check_pm2_processes tzl_node 4 0; fi
-if service_selected tzl_memory_worker; then check_pm2_processes tzl_memory_worker 0 0; fi
-if service_selected tzl_node; then check_node_runtime_contract tzl_node web 0 1 1; fi
-if service_selected tzl_memory_worker; then check_node_runtime_contract tzl_memory_worker memory-worker 1 0 "$(expected_memory_worker_concurrency)"; fi
-if service_selected tzl_admin_node; then check_pm2_processes tzl_admin_node 1 0; fi
-for service in "${SERVICES[@]}"; do
-  [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service")" == "$TARGET" ]]
-done
-
-set_phase public-health
-wait_for_public_health "$PUBLIC_HEALTH"
-wait_for_public_health "$ADMIN_HEALTH"
-
-set_phase stability-window
-wait_for_release_stability "$STABILITY_SECONDS"
-check_public_health_repeated "$PUBLIC_HEALTH"
-check_public_health_repeated "$ADMIN_HEALTH"
-
-set_phase error-scan
-LOG_SERVICES=("${SERVICES[@]}")
-if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]] && ! service_selected tzl_nginx; then
-  LOG_SERVICES+=(tzl_nginx)
-fi
-for service in "${LOG_SERVICES[@]}"; do
-  if docker logs --since 5m "$service" 2>&1 | \
-    grep -Eiq 'uncaught exception|unhandled rejection|fatal error|heap out of memory|EADDRINUSE|MongoServerError|IndexOptionsConflict|code[^0-9]*85|midway:bootstrap.*exit with code:[^0]'; then
-    fail "fatal log detected in $service"
-  fi
-done
-
-set_phase final
-if [[ -n "$PROTECTED_DIRTY_BASELINE" ]]; then
-  verify_protected_dirty_unchanged
+# ---------------------------------------------------------------------------
+# 2. 同步提交到 origin（直连失败时走服务器中转）
+# ---------------------------------------------------------------------------
+step "同步提交到 origin/$BRANCH"
+PUSH_MODE=""
+if [[ "$DRY_RUN" == "1" ]]; then
+  PUSH_MODE="direct（dry-run 不执行）"
+elif git push origin "$TARGET:refs/heads/$BRANCH" >/dev/null 2>&1; then
+  PUSH_MODE="direct"
+  ok "已直接推送到 origin/$BRANCH"
 else
-  [[ -z "$(git status --porcelain)" ]]
+  warn "直接推送失败（本地到 GitHub 不通），改用服务器中转"
+  BUNDLE="/tmp/tzl-release-$$.bundle"
+  git bundle create "$BUNDLE" HEAD >/dev/null 2>&1 || die "创建 git bundle 失败"
+  scp_to "$BUNDLE" "/tmp/tzl-release.bundle" || die "bundle 上传失败"
+  NEW_TARGET="$(run_ssh "bash -s" <<REMOTE
+set -e
+cd /opt/tianzhiling
+if [[ -n "\$(git status --porcelain)" ]]; then
+  echo "DIRTY" >&2
+  exit 3
 fi
-[[ "$(git rev-parse HEAD)" == "$TARGET" ]]
-DEPLOY_STARTED=0
-trap - ERR
-release_event complete "elapsed_seconds=$(($(date +%s) - PHASE_STARTED_AT))"
-write_progress complete
+git fetch origin '$BRANCH' >/dev/null 2>&1
+git fetch /tmp/tzl-release.bundle HEAD >/dev/null 2>&1
+git checkout -q -B tzl-release-tmp FETCH_HEAD
+if ! git rebase "origin/$BRANCH" >/tmp/tzl-release-rebase.log 2>&1; then
+  git rebase --abort >/dev/null 2>&1 || true
+  echo "REBASE_FAILED" >&2
+  exit 4
+fi
+git push origin "HEAD:refs/heads/$BRANCH" >/dev/null 2>&1
+NEW=\$(git rev-parse HEAD)
+git checkout -q '$BRANCH'
+git branch -D tzl-release-tmp >/dev/null 2>&1 || true
+echo "\$NEW"
+REMOTE
+)"
+  case "$NEW_TARGET" in
+    ""|DIRTY|REBASE_FAILED)
+      die "服务器中转失败（$NEW_TARGET），请查看 /tmp/tzl-release-rebase.log"
+      ;;
+  esac
+  [[ "$NEW_TARGET" =~ ^[0-9a-f]{40}$ ]] || die "服务器返回的提交号不合法：$NEW_TARGET"
+  TARGET="$NEW_TARGET"
+  SHORT="${TARGET:0:8}"
+  PUSH_MODE="bundle + 服务器 rebase"
+  ok "已在服务器 rebase 并推送：$SHORT"
+fi
 
-printf '[RELEASE_OK]\n'
-printf 'branch=%s\ncommit=%s\nprevious_commit=%s\n' "$BRANCH" "$TARGET" "$PREVIOUS_COMMIT"
-printf 'release_version=%s\n' "$TARGET"
-printf 'services=%s\n' "${SERVICES[*]}"
-for service in "${SERVICES[@]}"; do
-  docker inspect -f 'service={{.Name}} state={{.State.Status}} restarts={{.RestartCount}} image={{.Image}}' "$service"
-  printf 'previous_runtime_%s=%s\n' "$service" "${OLD_REVISIONS[$service]:-none}"
-done
-if service_selected tzl_node; then printf 'voice_runtime=ready\n'; fi
-if service_selected tzl_memory_worker; then printf 'memory_worker=ready concurrency=%s\n' "$(expected_memory_worker_concurrency)"; fi
-printf 'public_health=ok\nadmin_health=ok\n'
-if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then printf 'pm2_stability_seconds=%s\n' "$STABILITY_SECONDS"; fi
-if service_selected tzl_admin_web; then printf 'admin_legacy_assets=retained_30d\n'; fi
+# ---------------------------------------------------------------------------
+# 3. 发布（重建 tzl_node）
+# ---------------------------------------------------------------------------
+step "发布 $SHORT 到生产（tzl_node）"
+if [[ "$DRY_RUN" == "1" ]]; then
+  warn "dry-run：跳过 tzl-deploy-release"
+else
+  RELEASE_LOG="/tmp/tzl-release-$$.log"
+  run_ssh "cd /opt/tianzhiling && LC_ALL=en_US.utf8 LANG=en_US.utf8 /usr/local/sbin/tzl-deploy-release $BRANCH $TARGET" >"$RELEASE_LOG" 2>&1
+  RELEASE_RC=$?
+  if [[ "$RELEASE_RC" == "77" ]]; then
+    warn "目标提交包含受保护文件变更，需要审批"
+    grep -A 40 'APPROVAL_REQUIRED' "$RELEASE_LOG" | head -40 || true
+    if [[ "$APPROVE" == "1" ]]; then
+      warn "--approve 已开启：把 $SHORT 加入发布白名单后重试"
+      run_ssh "python3 -" <<PY
+import io, re, shutil, datetime
+p = '/usr/local/sbin/tzl-deploy-release'
+shutil.copy2(p, p + '.bak-' + datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+s = io.open(p, encoding='utf-8').read()
+T = '$TARGET'
+m = re.search(r"RELEASE_APPROVED_TARGETS='([^']*)'", s)
+items = m.group(1).split()
+if T not in items:
+    items.append(T)
+    s = s[:m.start(1)] + ' '.join(items) + s[m.end(1):]
+    io.open(p, 'w', encoding='utf-8').write(s)
+print('whitelisted', T)
+PY
+      run_ssh "cd /opt/tianzhiling && LC_ALL=en_US.utf8 LANG=en_US.utf8 /usr/local/sbin/tzl-deploy-release $BRANCH $TARGET" >"$RELEASE_LOG" 2>&1
+      RELEASE_RC=$?
+    fi
+  fi
+  if [[ "$RELEASE_RC" != "0" ]]; then
+    tail -30 "$RELEASE_LOG" || true
+    die "发布失败（rc=$RELEASE_RC），日志：$RELEASE_LOG"
+  fi
+  ok "发布完成（$(grep -oE 'RELEASE_OK|RELEASE_NOOP' "$RELEASE_LOG" | head -1)）"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. 自动判断需要补齐的后台服务
+# ---------------------------------------------------------------------------
+step "检查后台服务是否需要重建"
+if [[ "$DRY_RUN" == "1" ]]; then
+  CHANGED=""
+  warn "dry-run：跳过改动范围分析（真实发布时会自动判断）"
+elif [[ "$PREV" == "$TARGET" ]]; then
+  CHANGED=""
+else
+  CHANGED="$(run_ssh "cd /opt/tianzhiling && git diff --name-only $PREV $TARGET")"
+fi
+
+SERVICES=""
+if [[ -n "$SERVICES_OVERRIDE" ]]; then
+  SERVICES="$SERVICES_OVERRIDE"
+  ok "使用指定的服务：$SERVICES"
+else
+  NEED_ADMIN_WEB=0
+  NEED_ADMIN_NODE=0
+  while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    case "$file" in
+      apps/admin/*) NEED_ADMIN_WEB=1 ;;
+      apps/admin-node/*|packages/entities/*|packages/shared/*) NEED_ADMIN_NODE=1 ;;
+    esac
+  done <<< "$CHANGED"
+
+  [[ "$NEED_ADMIN_NODE" == "1" ]] && SERVICES="tzl_admin_node"
+  if [[ "$NEED_ADMIN_WEB" == "1" ]]; then
+    [[ -n "$SERVICES" ]] && SERVICES="$SERVICES,tzl_admin_web" || SERVICES="tzl_admin_web"
+  fi
+  if [[ -z "$SERVICES" ]]; then
+    ok "本次改动不涉及后台服务，跳过 recover"
+  else
+    ok "需要重建：$SERVICES"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5. recover 重建后台服务
+# ---------------------------------------------------------------------------
+if [[ -n "$SERVICES" ]]; then
+  step "重建并部署 $SERVICES"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    warn "dry-run：跳过 recover"
+  else
+    RECOVER_LOG="/tmp/tzl-recover-$$.log"
+    run_ssh "cd /opt/tianzhiling && RECOVER_APPROVED_TARGETS=$TARGET RECOVER_DEPLOY_UNVERSIONED=$SERVICES LC_ALL=en_US.utf8 LANG=en_US.utf8 /usr/local/sbin/tzl-deploy-release recover $BRANCH $TARGET $SERVICES" >"$RECOVER_LOG" 2>&1
+    RECOVER_RC=$?
+    if [[ "$RECOVER_RC" != "0" ]]; then
+      tail -30 "$RECOVER_LOG" || true
+      die "recover 失败（rc=$RECOVER_RC），日志：$RECOVER_LOG"
+    fi
+    ok "后台服务已重建"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 6. 线上校验
+# ---------------------------------------------------------------------------
+step "线上校验"
+if [[ "$DRY_RUN" == "1" ]]; then
+  warn "dry-run：跳过健康检查"
+else
+  API_CODE="$(curl -s -o /dev/null -m 15 -w '%{http_code}' https://tianzhiling.chat/api/system/health || echo 000)"
+  ADMIN_CODE="$(curl -s -o /dev/null -m 15 -w '%{http_code}' https://admin.tianzhiling.chat/admin_api/system/health || echo 000)"
+  NODE_VER="$(run_ssh 'docker exec tzl_node printenv RELEASE_VERSION 2>/dev/null' || true)"
+  ADMIN_VER="$(run_ssh 'docker exec tzl_admin_node printenv RELEASE_VERSION 2>/dev/null' || true)"
+
+  printf '  %-14s %s\n' '接口健康' "$API_CODE"
+  printf '  %-14s %s\n' '后台健康' "$ADMIN_CODE"
+  printf '  %-14s %s\n' 'tzl_node' "$NODE_VER"
+  printf '  %-14s %s\n' 'tzl_admin_node' "$ADMIN_VER"
+
+  [[ "$API_CODE" == "200" ]] || die "接口健康检查失败：$API_CODE"
+  [[ "$ADMIN_CODE" == "200" ]] || die "后台健康检查失败：$ADMIN_CODE"
+  [[ "$NODE_VER" == "$TARGET" ]] || warn "tzl_node 版本不是目标提交（$NODE_VER != $SHORT）"
+
+  printf '\n\033[32m✓ 发布完成：%s（%s）\033[0m\n' "$SHORT" "$PUSH_MODE"
+fi
+
+if [[ "$DRY_RUN" == "1" ]]; then
+  printf '\n\033[36m发布计划（dry-run）\033[0m\n'
+  printf '  %-14s %s\n' '目标提交' "$SHORT"
+  printf '  %-14s %s\n' '分支' "$BRANCH"
+  printf '  %-14s %s\n' '同步方式' "$PUSH_MODE"
+  printf '  %-14s %s\n' '线上当前' "$PREV_SHORT"
+  printf '  %-14s %s\n' '后台服务' "${SERVICES:-（自动判断）}"
+  printf '\n  去掉 --dry-run 即会真正执行。\n'
+fi
