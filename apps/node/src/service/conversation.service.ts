@@ -74,8 +74,8 @@ import {
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { PresenceStateService } from './agents/presence-state.service';
-import { applyMomentFrameToSegments } from './agents/moment-frame';
-import { normalizePersonReferenceInReply } from './agents/person-reference';
+import { applyMomentFrameToSegments, resolveMomentFrame } from './agents/moment-frame';
+import { normalizePersonReferenceOutsideQuotes } from './agents/person-reference';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { MemoryValueService } from './agents/memory-value.service';
@@ -590,6 +590,13 @@ interface ReplyRoutingAudit {
   intent?: StructuredReplyIntent;
   route?: ReplySceneRoute;
   brief?: ReplyBrief;
+  momentType?: string;
+  momentNeed?: string;
+  momentMemoryPermission?: string;
+  momentBubbleBudget?: number;
+  momentFilterApplied?: boolean;
+  personReferenceNormalized?: boolean;
+  lowInfoStatus?: boolean;
   skipReply?: boolean;
   fallbackSource?: string;
   generationFailureStage?: 'context' | 'completion' | 'parse';
@@ -6251,11 +6258,17 @@ export class ConversationService {
       replyBrief.momentFrame
     );
     const referenceAdjustedSegments = momentAdjustedSegments.map(segment =>
-      normalizePersonReferenceInReply(
+      normalizePersonReferenceOutsideQuotes(
         before.searchableText,
         segment
       )
     );
+    const momentFilterApplied =
+      JSON.stringify(participationResult.segments) !==
+      JSON.stringify(momentAdjustedSegments);
+    const personReferenceNormalized =
+      JSON.stringify(momentAdjustedSegments) !==
+      JSON.stringify(referenceAdjustedSegments);
     const addressGuardedSegments = await this.guardPersonAddressSegments(
       runtime.conversation.userId,
       referenceAdjustedSegments
@@ -6273,6 +6286,16 @@ export class ConversationService {
           intent: context.replyIntent ?? context.replyRoute?.intent,
           route: context.replyRoute,
           brief: replyBrief,
+          momentType: replyBrief.momentFrame?.momentType,
+          momentNeed: replyBrief.momentFrame?.primaryNeed,
+          momentMemoryPermission:
+            replyBrief.momentFrame?.memoryPermission,
+          momentBubbleBudget:
+            replyBrief.momentFrame?.bubbleBudget,
+          momentFilterApplied,
+          personReferenceNormalized,
+          lowInfoStatus:
+            replyBrief.momentFrame?.momentType === 'low_info_status',
           guardrailRewritten: guarded.rewritten,
           guardrailReason: guarded.reason,
           guardrailInterventionLevel: guarded.interventionLevel,
@@ -6471,9 +6494,32 @@ export class ConversationService {
       );
     }
 
-    const replySegments = splitReplyContentForDelivery(
+    const generatedSegments = splitReplyContentForDelivery(
       inspectedSegments.map(segment => segment.output).filter(Boolean)
     );
+    const microMomentFrame = resolveMomentFrame({
+      currentQuery: options.before.searchableText,
+      recentMessages: options.currentTurnMessages,
+      isDeceased: Boolean(options.runtime.agent?.deathDate),
+    });
+    const microMomentAdjustedSegments = applyMomentFrameToSegments(
+      generatedSegments,
+      microMomentFrame
+    );
+    const microReferenceAdjustedSegments = microMomentAdjustedSegments.map(
+      segment =>
+        normalizePersonReferenceOutsideQuotes(
+          options.before.searchableText,
+          segment
+        )
+    );
+    const microMomentFilterApplied =
+      JSON.stringify(generatedSegments) !==
+      JSON.stringify(microMomentAdjustedSegments);
+    const microPersonReferenceNormalized =
+      JSON.stringify(microMomentAdjustedSegments) !==
+      JSON.stringify(microReferenceAdjustedSegments);
+    const replySegments = microReferenceAdjustedSegments;
     if (!replySegments.length) {
       throw new AppError(
         'LIGHTWEIGHT_REPLY_EMPTY',
@@ -6527,6 +6573,13 @@ export class ConversationService {
       routing: {
         replyPlanningMode: 'micro_model',
         replyPlanningReason: `closed_social_turn:${options.category}`,
+        momentType: microMomentFrame.momentType,
+        momentNeed: microMomentFrame.primaryNeed,
+        momentMemoryPermission: microMomentFrame.memoryPermission,
+        momentBubbleBudget: microMomentFrame.bubbleBudget,
+        momentFilterApplied: microMomentFilterApplied,
+        personReferenceNormalized: microPersonReferenceNormalized,
+        lowInfoStatus: microMomentFrame.momentType === 'low_info_status',
         replyIntentModelCallCount: 0,
         strategyVersion: SHORT_TURN_RUNTIME_VERSION,
         strategySource: 'model_generated_lightweight',
@@ -12472,6 +12525,13 @@ export class ConversationService {
     replyTurnContractVersion?: string;
     replyTurnContractFocusDimensions?: string[];
     replyBriefMode?: string;
+    replyMomentType?: string;
+    replyMomentNeed?: string;
+    replyMomentMemoryPermission?: string;
+    replyMomentBubbleBudget?: number;
+    replyMomentFilterApplied?: boolean;
+    replyPersonReferenceNormalized?: boolean;
+    replyLowInfoStatus?: boolean;
     replyBriefStrictGrounding?: boolean;
     replyBriefFactClaimMode?: string;
     replyBriefMaxSegments?: number;
@@ -12599,6 +12659,13 @@ export class ConversationService {
       replyTurnContractFocusDimensions:
         routing?.turnContractFocusDimensions?.filter(Boolean),
       replyBriefMode: routing?.brief?.mode,
+      replyMomentType: routing?.momentType,
+      replyMomentNeed: routing?.momentNeed,
+      replyMomentMemoryPermission: routing?.momentMemoryPermission,
+      replyMomentBubbleBudget: routing?.momentBubbleBudget,
+      replyMomentFilterApplied: routing?.momentFilterApplied,
+      replyPersonReferenceNormalized: routing?.personReferenceNormalized,
+      replyLowInfoStatus: routing?.lowInfoStatus,
       replyBriefStrictGrounding: routing?.brief?.strictGrounding,
       replyBriefFactClaimMode: routing?.brief?.factClaimMode,
       replyBriefMaxSegments: routing?.brief?.bubblePlan?.maxSegments,

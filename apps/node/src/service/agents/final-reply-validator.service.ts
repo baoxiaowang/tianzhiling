@@ -94,7 +94,8 @@ export interface FinalReplyIssue {
   blockingKind?:
     | 'real_world_actionable_fabrication'
     | 'major_decision_overreach'
-    | 'real_world_capability_claim';
+    | 'real_world_capability_claim'
+    | 'unsupported_memory_assertion';
   problem: string;
   evidence?: string;
   repairGoal: string;
@@ -650,6 +651,9 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'unsupported_user_preference',
         severity: 'hard',
+        onlineAction: 'exact_patch',
+        blockingKind: 'unsupported_memory_assertion',
+        sourceStatus: 'missing',
         problem: '回复把当下分享升级成了没有证据的稳定用户偏好',
         evidence: matchEvidence(content, USER_PREFERENCE_ASSERTION_PATTERN),
         repairGoal:

@@ -55,6 +55,20 @@ describe('moment frame', () => {
     ).toEqual(['躺好，别瞎动。']);
   });
 
+  it('treats a short hunger report as one low-info landing turn', () => {
+    const frame = resolveMomentFrame({
+      currentQuery: '有点饿',
+      recentMessages: recent,
+      isDeceased: true,
+    });
+    expect(frame).toMatchObject({
+      momentType: 'low_info_status',
+      primaryNeed: 'land',
+      memoryPermission: 'none',
+      bubbleBudget: 1,
+    });
+  });
+
   it('treats a short distress update as one comfort turn without old memory', () => {
     const frame = resolveMomentFrame({
       currentQuery: '好累',
@@ -136,5 +150,31 @@ describe('moment frame', () => {
       isDeceased: true,
     });
     expect(frame.primaryNeed).toBe('accompany');
+  });
+});
+
+
+describe('moment frame time and distress calibration', () => {
+  it('ignores old trip context outside the recent window', () => {
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const frame = resolveMomentFrame({
+      currentQuery: '进屋了',
+      recentMessages: [
+        { role: 'user', content: '沈阳这一天不好', createdAt: old },
+        { role: 'user', content: '打车回家', createdAt: old },
+      ],
+      isDeceased: true,
+    });
+    expect(frame.momentType).toBe('arrival_home');
+    expect(frame.emotionalExposure).toBe('medium');
+  });
+
+  it('does not treat solo living as distress', () => {
+    const frame = resolveMomentFrame({
+      currentQuery: '我一个人住',
+      recentMessages: [],
+      isDeceased: true,
+    });
+    expect(frame.momentType).not.toBe('distress');
   });
 });
