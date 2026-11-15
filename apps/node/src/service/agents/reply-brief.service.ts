@@ -47,6 +47,7 @@ import {
   shouldApplyMomentPrompt,
   type MomentFrame,
 } from './moment-frame';
+import { buildPersonReferenceDirective } from './person-reference';
 import {
   isExplicitRememberRequest,
   isForgetMemoryRequest,
@@ -2037,6 +2038,11 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     brief.momentFrame && shouldApplyMomentPrompt(brief.momentFrame)
       ? [buildMomentFramePrompt(brief.momentFrame), '']
       : [];
+  const personReferenceLines =
+    buildPersonReferenceDirective(brief.currentQuery || '')?.prompt;
+  const referenceLines = personReferenceLines
+    ? [personReferenceLines, '']
+    : [];
   const sourceLabels: Record<ReplyBriefEvidenceSource, string> = {
     current_user: '当前用户原话',
     confirmed_fact: '已确认事实',
@@ -2368,6 +2374,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '未确认人物沿用用户称呼，不猜关系、性别或性格。',
     ...relationshipLines,
     ...relationshipContinuityLines,
+    ...referenceLines,
     ...momentLines,
     ...presenceLines,
     ...(boundaryContract.prompt ? ['', boundaryContract.prompt] : []),
