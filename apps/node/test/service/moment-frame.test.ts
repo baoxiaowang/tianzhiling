@@ -173,6 +173,7 @@ describe('moment frame time and distress calibration', () => {
     for (const currentQuery of [
       '睡得很差 每小时醒一次',
       '不知道 睡得不踏实',
+      '还好，你走后我的睡眠一直不怎么好',
       '我有点头晕',
     ]) {
       const frame = resolveMomentFrame({
