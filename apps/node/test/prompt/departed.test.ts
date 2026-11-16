@@ -32,6 +32,7 @@ describe('buildDepartedSystemPrompt', () => {
     const prompt = buildDepartedSystemPrompt({
       userId: USER_ID,
       agentId: AGENT_ID,
+      honestyVirtue: false,
       agent: createAgent(),
     });
 
@@ -82,6 +83,7 @@ describe('buildDepartedSystemPrompt', () => {
     const prompt = buildDepartedSystemPrompt({
       userId: USER_ID,
       agentId: AGENT_ID,
+      honestyVirtue: false,
       agent: createAgent({
         name: '方方',
         sex: AgentSex.woman,
