@@ -51,10 +51,11 @@ export class ConversationReplyFinalizationService {
       segments: options.segments,
       brief: options.brief,
     });
-    // Only non-negotiable world, evidence, capability and persistent-risk
-    // constraints can reach online governance. Conversation plans, turn
-    // contracts, participation, question, length and bubble preferences stay
-    // in diagnostics and cannot trigger a production rewrite.
+    // 默认仍只允许世界、证据、能力和持续风险约束进入 online governance；
+    // 对话计划、问题策略、长度/气泡偏好保持 diagnostics。
+    // H1 政策变更：最近助手原话复读是用户可见的质量问题，不是普通偏好；
+    // avoidRecentMoves / avoidLiteralClauses 可以进入 outputConstraints，
+    // 并在 finalize 尾部做确定性删除/单句回退。这不是复活 turn contract。
     const recentAssistantTexts = extractRecentAssistantTexts(options.messages);
     const recentLiteralClauses = extractLiteralClauses(recentAssistantTexts);
     const recentReplyMoves = deriveRecentReplyMoves(recentAssistantTexts);
