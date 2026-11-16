@@ -56,6 +56,7 @@ import { ChatTraceArtifactKind, ChatTraceService } from '../chat-trace.service';
 import {
   AgentMemoryFactService,
   AgentMemoryFactSummary,
+  buildAgentTimeMarkers,
 } from './agent-memory-fact.service';
 import {
   AgentProfileFactService,
@@ -65,6 +66,7 @@ import { UserIdentityMemoryService } from './user-identity-memory.service';
 import { UserRelativeProfileService } from './user-relative-profile.service';
 import { UserSelfMemoryService } from './user-self-memory.service';
 import {
+  ConversationEntityLedgerPromptEntry,
   ConversationEntityLedgerService,
   renderConversationEntityPrompt,
 } from './conversation-entity-ledger.service';
@@ -359,6 +361,8 @@ export interface AgentContextDiagnostics {
   memorySelectedCandidateKeys: string[];
   memoryCoverageFallbackApplied: boolean;
   memoryRetrievalMode: MemoryRetrievalMode;
+  /** 本次触发检索的请柬类型（entity_name/defer_return/ritual_anchor；空=键/信号/规划器路径） */
+  memoryRetrievalInvitation?: string;
   memoryRetrievalRequestCount: number;
   memoryRetrievalConceptCount: number;
   memoryRetrievedEvidenceCount: number;
@@ -460,6 +464,32 @@ const MEMORY_QUERY_SIGNAL_PATTERN =
   /还记得|记不记得|记得|以前|之前|上次|当年|那时候|小时候|谁|哪年|哪天|生日|忌日|祭日|去世|过世|离世|走了|走后|住院|手术|生病|结婚|离婚|怀孕|出生|上学|幼儿园|工作|上班|搬家|买房|纪念日|老家|籍贯|属相|几岁/;
 // 太短的句子不检索（“好/嗯/在吗”），至少 4 个实义字符。
 const MEMORY_QUERY_MIN_CORE_CHARACTERS = 4;
+
+// ── 检索请柬（硬特征）：用户动作或程序事实显式开启记忆检索 ─────────────
+// defer 标记（封闭集）：用户明说“等一下（我）再跟你聊/回头说”，之后的回归轮
+// 属于恢复挂起线程，允许检索。标记与动词之间允许 ≤4 字符的有界间隔（“我再跟你”）。
+const MEMORY_DEFER_MARKER_PATTERN =
+  /(?:等(?:一下|会儿)|回头|晚点|待会儿|稍后|下次)[^，。,]{0,4}?(?:聊|说|谈|讲|唠)/u;
+
+/** 近期用户消息（不含本轮）出现过 defer 标记 → 本轮视为挂起线程回归。 */
+export function hasRecentDeferMarker(recentUserTexts: string[]): boolean {
+  return recentUserTexts
+    .slice(-6)
+    .some(text => MEMORY_DEFER_MARKER_PATTERN.test(String(text || '')));
+}
+
+/** 今天是否命中仪式锚点（忌日/生日，按月日比较；不预判情绪）。 */
+export function isRitualAnchorToday(
+  agent: { birthday?: Date | null; deathDate?: Date | null },
+  now: Date = new Date()
+): boolean {
+  const monthDay = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate()
+  ).padStart(2, '0')}`;
+  return buildAgentTimeMarkers(agent).some(
+    marker => marker.source !== 'user_mentioned' && marker.monthDay === monthDay
+  );
+}
 // 多条候选的 top1/top2 分数差小于该值时，只保留 top1：说明它们多是同质碎片，
 // 多注入只会重复占 token。真正有区分度的多条证据才一起注入。
 const MEMORY_INJECT_MIN_SCORE_GAP = 0.02;
@@ -787,22 +817,42 @@ export function resolveSemanticRetrievalQuery(
 }
 
 /**
+ * 检索请柬：实体命中 / defer 回归 / 仪式锚点。
+ * 三者都是用户动作或程序事实（不靠模型猜），命中即在 ack 守卫之后放行检索。
+ */
+export interface MemoryRetrievalInvitation {
+  entityNameMatched?: boolean;
+  deferReturn?: boolean;
+  ritualAnchorToday?: boolean;
+}
+
+/**
  * 候选：是否值得发起一次自动检索。
  * - 规划器已要求记忆 → 检索；
  * - 抽到人物/时间/事件/习惯键 → 检索；
+ * - 纯应答（“好/嗯”）一律不检索；
+ * - 检索请柬（实体命中 / defer 回归 / 仪式锚点）→ 检索；
  * - 否则只有显式“回忆/问句”信号才检索（不再对每句寒暄、情绪都发 embedding）。
  */
 export function shouldTriggerMemoryRetrieval(
   extractedKeys: string,
   currentUserText: string,
-  plannerMemoryRequested = false
+  plannerMemoryRequested = false,
+  invitation: MemoryRetrievalInvitation = {}
 ): boolean {
   if (plannerMemoryRequested) return true;
   if ((extractedKeys || '').trim()) return true;
   const text = currentUserText || '';
   const core = memoryEvidenceCore(text);
-  if (core.length < MEMORY_QUERY_MIN_CORE_CHARACTERS) return false;
   if (MEMORY_EVIDENCE_ACK_PATTERN.test(core)) return false;
+  if (
+    invitation.entityNameMatched ||
+    invitation.deferReturn ||
+    invitation.ritualAnchorToday
+  ) {
+    return true;
+  }
+  if (core.length < MEMORY_QUERY_MIN_CORE_CHARACTERS) return false;
   return MEMORY_QUERY_SIGNAL_PATTERN.test(text);
 }
 
@@ -918,11 +968,13 @@ export class AgentContextService {
   ): Promise<AgentConversationContext> {
     let entityLedgerPrompt = '';
     let entityPinnedMessageIds: string[] = [];
+    let entityLedgerEntries: ConversationEntityLedgerPromptEntry[] = [];
     try {
       const entityLedger =
         (await this.conversationEntityLedgerService?.loadForPrompt({
           conversationId: options.conversation.id,
         })) || [];
+      entityLedgerEntries = entityLedger;
       entityLedgerPrompt = renderConversationEntityPrompt(entityLedger);
       const currentTurnIds = new Set(options.currentTurnMessageIds || []);
       entityPinnedMessageIds = entityLedger
@@ -1262,20 +1314,49 @@ export class AgentContextService {
         ...(relative.aliases || [])
       );
     }
-    const memoryEntityNames = memoryEntityNamePool.filter(
-      (name): name is string => Boolean(name && name.trim().length >= 2)
+    const memoryEntityNames = Array.from(
+      new Set([
+        ...memoryEntityNamePool.filter(
+          (name): name is string => Boolean(name && name.trim().length >= 2)
+        ),
+        // 会话实体台账的名字同样参与匹配与查询：用户点名台账实体即"请柬"。
+        ...entityLedgerEntries
+          .map(entry => entry?.name?.trim())
+          .filter((name): name is string => Boolean(name && name.length >= 2)),
+      ])
     );
     const semanticRetrievalQuery = resolveSemanticRetrievalQuery(
       memoryRetrievalQuery,
       memoryGateText,
       memoryEntityNames
     );
+    // ── 检索请柬（硬特征）判定：全部为用户动作或程序事实 ──
+    const entityNameMatched = memoryEntityNames.some(name =>
+      memoryGateText.includes(name)
+    );
+    const deferReturn = hasRecentDeferMarker(
+      routingHistoryMessages
+        .filter(message => message.role === 'user')
+        .map(message => String(message.content || ''))
+    );
+    const ritualAnchorToday = isRitualAnchorToday({
+      birthday: options.agent?.birthday ?? null,
+      deathDate: options.agent?.deathDate ?? null,
+    });
+    const memoryRetrievalInvitation = entityNameMatched
+      ? 'entity_name'
+      : deferReturn
+      ? 'defer_return'
+      : ritualAnchorToday
+      ? 'ritual_anchor'
+      : '';
     const memoryRetrievalReady =
       !memoryRetrievalBlocked &&
       shouldTriggerMemoryRetrieval(
         memoryRetrievalQuery,
         memoryGateText,
-        plannerMemoryRequested
+        plannerMemoryRequested,
+        { entityNameMatched, deferReturn, ritualAnchorToday }
       ) &&
       (useMemoryModule
         ? Boolean(semanticRetrievalQuery)
@@ -1905,6 +1986,7 @@ export class AgentContextService {
         memorySelectedCandidateKeys: selectedFactKeys,
         memoryCoverageFallbackApplied,
         memoryRetrievalMode: effectiveMemoryRetrievalMode,
+        memoryRetrievalInvitation,
         memoryRetrievalRequestCount: 0,
         memoryRetrievalConceptCount: memoryRetrieval.conceptCount,
         memoryRetrievedEvidenceCount: evidence.filter(item =>

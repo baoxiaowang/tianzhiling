@@ -644,6 +644,9 @@ export class MessageEntity extends BaseEntity {
   @Column()
   replyMemoryRetrievalMode?: string;
 
+  // 触发检索的请柬类型：entity_name / defer_return / ritual_anchor；空=键/信号/规划器
+  replyMemoryRetrievalInvitation?: string;
+
   @Column()
   replyMemoryRetrievalRequestCount?: number;
 

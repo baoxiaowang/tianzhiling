@@ -672,6 +672,8 @@ interface ReplyRoutingAudit {
     | 'legacy_query'
     | 'suppressed'
     | 'tool_takeover';
+  /** 触发检索的请柬类型：entity_name / defer_return / ritual_anchor；空=键/信号/规划器 */
+  memoryRetrievalInvitation?: string;
   memoryRetrievalRequestCount?: number;
   memoryRetrievalConceptCount?: number;
   memoryRetrievedEvidenceCount?: number;
@@ -12711,6 +12713,7 @@ export class ConversationService {
     replyMemoryCandidateCount?: number;
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
+    replyMemoryRetrievalInvitation?: string;
     replyMemoryRetrievalRequestCount?: number;
     replyMemoryRetrievalConceptCount?: number;
     replyMemoryRetrievedEvidenceCount?: number;
@@ -12942,6 +12945,8 @@ export class ConversationService {
         routing?.memorySelectedCandidateKeys?.filter(Boolean),
       replyMemoryRetrievalMode:
         routing?.memoryRetrievalMode?.trim() || undefined,
+      replyMemoryRetrievalInvitation:
+        routing?.memoryRetrievalInvitation?.trim() || undefined,
       replyMemoryRetrievalRequestCount: routing?.memoryRetrievalRequestCount,
       replyMemoryRetrievalConceptCount: routing?.memoryRetrievalConceptCount,
       replyMemoryRetrievedEvidenceCount: routing?.memoryRetrievedEvidenceCount,
@@ -13098,6 +13103,7 @@ export class ConversationService {
     replyMemoryCandidateCount?: number;
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
+    replyMemoryRetrievalInvitation?: string;
     replyMemoryRetrievalRequestCount?: number;
     replyMemoryRetrievalConceptCount?: number;
     replyMemoryRetrievedEvidenceCount?: number;
@@ -13397,6 +13403,8 @@ export class ConversationService {
       options.replyMemorySelectedCandidateKeys?.filter(Boolean);
     message.replyMemoryRetrievalMode =
       options.replyMemoryRetrievalMode?.trim() || undefined;
+    message.replyMemoryRetrievalInvitation =
+      options.replyMemoryRetrievalInvitation?.trim() || undefined;
     message.replyMemoryRetrievalRequestCount = this.normalizeTokenCount(
       options.replyMemoryRetrievalRequestCount
     );
