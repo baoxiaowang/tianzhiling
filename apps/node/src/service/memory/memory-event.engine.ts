@@ -185,6 +185,8 @@ const OPEN_ITEM_ACTIVE_STATES: MemoryOpenItemState[] = [
 interface GroupQueryWindow {
   topicKey?: string;
   topicKeys?: string[];
+  /** 场次制：join 候选限定同一会话（跨会话/跨亲人不并场）。 */
+  conversationId?: string;
   from?: Date;
   to?: Date;
 }
@@ -543,6 +545,9 @@ export class MemoryEventEngine implements MemoryModule {
   }): Promise<string | undefined> {
     const candidates = await this.listGroups(options.userId, {
       topicKey: options.topicKey,
+      conversationId: stringifyObjectId(options.conversationId),
+      // 幂等窗口保持宽（重放/重试时能找到既有成员的组）；
+      // join 判定由场次间隔收紧（同会话 + 相邻 ≤ 场次间隔才并场）。
       from: new Date(options.occurredAt.getTime() - EVENT_GROUP_MAX_GAP_MS),
       to: new Date(options.occurredAt.getTime() + 24 * 60 * 60 * 1000),
     });
@@ -560,11 +565,13 @@ export class MemoryEventEngine implements MemoryModule {
     const assignment = resolveGroupAssignment({
       topicKey: options.topicKey,
       subjectRef: options.subjectRef,
+      conversationId: stringifyObjectId(options.conversationId),
       occurredAt: options.occurredAt,
       candidates: candidates.map(group => ({
         groupId: stringifyObjectId(group.id),
         topicKey: group.topicKey,
         subjectRef: group.subjectRef,
+        conversationId: stringifyObjectId(group.conversationId),
         spanTo: group.spanTo,
       })),
     });
@@ -645,6 +652,7 @@ export class MemoryEventEngine implements MemoryModule {
     };
     if (topicKeys.length === 1) where.topicKey = topicKeys[0];
     if (topicKeys.length > 1) where.topicKey = { $in: topicKeys };
+    if (window.conversationId) where.conversationId = window.conversationId;
     if (window.from) where.spanTo = { $gte: window.from };
     if (window.to) where.spanFrom = { $lte: window.to };
 
