@@ -31,6 +31,11 @@ export class WeappLoginDTO {
   allowCreate?: boolean;
 }
 
+export class WechatLoginDTO {
+  @Rule(requiredStringRule.max(512))
+  code: string;
+}
+
 export class WeappPhoneLoginDTO {
   @Rule(requiredStringRule.max(256))
   jsCode: string;

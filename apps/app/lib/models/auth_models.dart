@@ -109,23 +109,3 @@ class AuthUser {
     };
   }
 }
-
-class SendSmsCodeResult {
-  const SendSmsCodeResult({
-    required this.expiresInSeconds,
-    required this.resendAfterSeconds,
-    this.debugCode,
-  });
-
-  final int expiresInSeconds;
-  final int resendAfterSeconds;
-  final String? debugCode;
-
-  factory SendSmsCodeResult.fromJson(Map<String, dynamic> json) {
-    return SendSmsCodeResult(
-      expiresInSeconds: json['expiresInSeconds'] as int? ?? 300,
-      resendAfterSeconds: json['resendAfterSeconds'] as int? ?? 60,
-      debugCode: json['debugCode'] as String?,
-    );
-  }
-}

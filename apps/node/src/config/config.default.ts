@@ -420,6 +420,17 @@ export default {
       ''
     ),
   },
+  wechatOpenApp: {
+    // 微信开放平台移动应用（App 微信登录）配置；小程序 appid 与开放平台 AppID 不同，不能复用。
+    appId: readNonEmptyStringFrom(
+      ['NODE_WECHAT_OPEN_APP_ID', 'WECHAT_OPEN_APP_ID'],
+      ''
+    ),
+    appSecret: readNonEmptyStringFrom(
+      ['NODE_WECHAT_OPEN_APP_SECRET', 'WECHAT_OPEN_APP_SECRET'],
+      ''
+    ),
+  },
   wechatPay: {
     enabled: readBooleanFrom(['NODE_WECHAT_PAY_ENABLED'], false),
     appId: readStringFrom(['NODE_WECHAT_PAY_APP_ID', 'WECHAT_PAY_APP_ID'], ''),

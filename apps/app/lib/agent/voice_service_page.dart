@@ -13,7 +13,7 @@ String _fmtDuration(double s) {
   final sec = s.round();
   final m = sec ~/ 60;
   final rem = sec % 60;
-  return m > 0 ? '${m}分${rem}秒' : '${rem}秒';
+  return m > 0 ? '$m分$rem秒' : '$rem秒';
 }
 
 // ===== Main Page =====
@@ -401,12 +401,14 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
 
   Widget _buildBody() {
     if (_isLoading && _session == null) return const Center(child: CircularProgressIndicator());
-    if (_loadError != null && _session == null) return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.wifi_off, size: 48, color: Color(0xFFBBBBBB)), const SizedBox(height: 12),
-      const Text('声音服务加载失败', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 8),
-      Text(_loadError!, style: const TextStyle(fontSize: 13, color: Color(0xFF999999))), const SizedBox(height: 16),
-      ElevatedButton(onPressed: _prepare, child: const Text('重新加载')),
-    ]));
+    if (_loadError != null && _session == null) {
+      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.wifi_off, size: 48, color: Color(0xFFBBBBBB)), const SizedBox(height: 12),
+        const Text('声音服务加载失败', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 8),
+        Text(_loadError!, style: const TextStyle(fontSize: 13, color: Color(0xFF999999))), const SizedBox(height: 16),
+        ElevatedButton(onPressed: _prepare, child: const Text('重新加载')),
+      ]));
+    }
     final status = _session?.status ?? 'collecting';
     return SingleChildScrollView(padding: const EdgeInsets.all(16), child: Column(children: [
       _msgCard(), const SizedBox(height: 16),
@@ -472,7 +474,7 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
     margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(color: const Color(0xFFF8F8FA), borderRadius: BorderRadius.circular(10)),
     child: Row(children: [
-      Container(width: 36, height: 36, decoration: BoxDecoration(color: const Color(0xFFED776C).withOpacity(0.12), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.audio_file, color: Color(0xFFED776C), size: 18)),
+      Container(width: 36, height: 36, decoration: BoxDecoration(color: const Color(0xFFED776C).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.audio_file, color: Color(0xFFED776C), size: 18)),
       const SizedBox(width: 10),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(m.name, style: const TextStyle(fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -489,7 +491,7 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
       margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: err ? const Color(0xFFFFF5F5) : const Color(0xFFF8F8FA), borderRadius: BorderRadius.circular(10), border: err ? Border.all(color: const Color(0xFFFFCDD2)) : null),
       child: Row(children: [
-        Container(width: 36, height: 36, decoration: BoxDecoration(color: (err ? const Color(0xFFE57373) : const Color(0xFFED776C)).withOpacity(0.12), borderRadius: BorderRadius.circular(8)), child: Icon(Icons.audio_file, color: err ? const Color(0xFFE57373) : const Color(0xFFED776C), size: 18)),
+        Container(width: 36, height: 36, decoration: BoxDecoration(color: (err ? const Color(0xFFE57373) : const Color(0xFFED776C)).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)), child: Icon(Icons.audio_file, color: err ? const Color(0xFFE57373) : const Color(0xFFED776C), size: 18)),
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(item.name, style: const TextStyle(fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -621,7 +623,15 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
     final sel = _session?.selectedAgentId == a.id;
     final bs = _session?.voiceBindingStatus;
     String hint = '选择他';
-    if (sel) { if (bs == 'bound') hint = '声音已接入'; else if (bs == 'existing_voice_preserved') hint = '已保留原有声音'; else hint = '已选择，等待接入'; }
+    if (sel) {
+      if (bs == 'bound') {
+        hint = '声音已接入';
+      } else if (bs == 'existing_voice_preserved') {
+        hint = '已保留原有声音';
+      } else {
+        hint = '已选择，等待接入';
+      }
+    }
     return ListTile(leading: CircleAvatar(radius: 20, backgroundImage: a.avatar?.isNotEmpty == true ? NetworkImage(a.avatar!) : null, child: a.avatar?.isEmpty != false ? Text(a.name.isNotEmpty ? a.name[0] : '?') : null), title: Text(a.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)), subtitle: Text(hint, style: TextStyle(fontSize: 12, color: sel ? _primary : const Color(0xFF999999))), trailing: sel ? const Icon(Icons.check_circle, color: _primary) : null, onTap: () => _selectAgent(a.id));
   }
 

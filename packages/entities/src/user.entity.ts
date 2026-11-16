@@ -80,6 +80,15 @@ export class UserEntity extends BaseEntity {
   @Column()
   phoneVerified?: boolean;
 
+  /**
+   * 微信开放平台 unionid（App 与小程序共用同一开放平台账号时打通用户）。
+   *
+   * 小程序绑定开放平台后才由 code2session 返回，App 微信登录由
+   * sns/oauth2/access_token 返回；历史用户缺失该字段属正常情况。
+   */
+  @Column()
+  unionid?: string;
+
   @Column()
   gender?: UserGender;
 

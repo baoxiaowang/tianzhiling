@@ -9,35 +9,14 @@ export 'package:tianzhiling_app/models/auth_models.dart';
 class AuthApi {
   static final ApiClient _client = ApiClient.instance;
 
-  static Future<SendSmsCodeResult> sendSmsCode(String phone) async {
+  /// App 微信登录：用微信开放平台授权 code 换后端会话。
+  ///
+  /// 后端按 unionid 复用 weapp/App 同一账号，未命中时创建 `wechat:<openid>` 新账号；
+  /// 会话保存复用 [AuthSessionStore.save]。
+  static Future<AuthSessionData> wechatLogin({required String code}) async {
     final data = await _client.post(
-      '/api/user/sms-code',
-      body: <String, dynamic>{'phone': phone},
-    );
-
-    return SendSmsCodeResult.fromJson(data);
-  }
-
-  static Future<AuthSessionData> phoneLogin({
-    required String phone,
-    required String code,
-  }) async {
-    final data = await _client.post(
-      '/api/user/phone-login',
-      body: <String, dynamic>{'phone': phone, 'code': code},
-    );
-    final session = AuthSessionData.fromJson(data);
-    await AuthSessionStore.save(session);
-    return session;
-  }
-
-  static Future<AuthSessionData> passwordLogin({
-    required String account,
-    required String password,
-  }) async {
-    final data = await _client.post(
-      '/api/user/password-login',
-      body: <String, dynamic>{'account': account, 'password': password},
+      '/api/user/wechat-login',
+      body: <String, dynamic>{'code': code},
     );
     final session = AuthSessionData.fromJson(data);
     await AuthSessionStore.save(session);

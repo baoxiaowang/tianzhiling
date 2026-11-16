@@ -1,2 +1,7 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
 #include "Generated.xcconfig"
+
+// 微信开放平台移动应用 AppID（iOS 回跳 URL Scheme 必须是该 AppID，wx 开头）。
+// 当前为占位值：拿到正式 AppID 后改为 wx<AppID>，与 Flutter 构建参数
+// --dart-define=WECHAT_APP_ID 保持一致；也可 xcodebuild WECHAT_APP_URL_SCHEME=wx... 覆盖。
+WECHAT_APP_URL_SCHEME=wx0000000000000000

@@ -1,7 +1,6 @@
 import 'dart:async';
 import '../config/brand_config.dart';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:tianzhiling_app/api/api_client.dart';
@@ -339,7 +338,7 @@ class _VoiceTimbreDetailPageState extends State<VoiceTimbreDetailPage> {
       title: Text(name, style: const TextStyle(fontSize: 13)),
       subtitle: Text([
         if (duration != null) _formatDuration(duration.toDouble()),
-        if (qualityLabel != null) qualityLabel,
+        ?qualityLabel,
       ].join(' · '), style: const TextStyle(fontSize: 11, color: Color(0xFF999999))),
     );
   }
@@ -348,6 +347,6 @@ class _VoiceTimbreDetailPageState extends State<VoiceTimbreDetailPage> {
     final sec = s.round();
     final m = sec ~/ 60;
     final rem = sec % 60;
-    return m > 0 ? '${m}分${rem}秒' : '${rem}秒';
+    return m > 0 ? '$m分$rem秒' : '$rem秒';
   }
 }

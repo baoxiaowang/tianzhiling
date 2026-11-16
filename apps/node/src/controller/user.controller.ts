@@ -16,6 +16,7 @@ import {
   UpdateUserRegionDTO,
   WeappLoginDTO,
   WeappPhoneLoginDTO,
+  WechatLoginDTO,
 } from '../dto/user.dto';
 import { UserService } from '../service/user.service';
 import { AccountCancellationService } from '../service/account-cancellation.service';
@@ -52,6 +53,11 @@ export class UserController {
   @Post('/password-login')
   async passwordLogin(@Body() body: PasswordLoginDTO) {
     return this.userService.passwordLogin(body);
+  }
+
+  @Post('/wechat-login')
+  async wechatLogin(@Body() body: WechatLoginDTO) {
+    return this.userService.wechatLogin(body);
   }
 
   @Post('/weapp-login')

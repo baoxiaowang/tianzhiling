@@ -1,76 +1,64 @@
-import 'dart:async';
-import '../config/brand_config.dart';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:tianzhiling_app/api/auth_api.dart';
+import 'package:tianzhiling_app/auth/wechat_auth_client.dart';
+import 'package:tianzhiling_app/config/brand_config.dart';
 import 'package:tianzhiling_app/main_tab_page.dart';
 
-enum AuthMode { phone, password }
+/// 微信登录环境状态，用于给用户明确提示。
+enum _WechatAvailability {
+  checking,
+  unconfigured,
+  notInstalled,
+  ready,
+}
 
+/// 登录页：仅保留微信一键登录（2026-11-16 拍板，无备用登录通道）。
 class AuthPage extends StatefulWidget {
-  const AuthPage({super.key});
+  const AuthPage({super.key, this.wechatAuthClient});
 
   static const String routeName = '/auth';
+
+  /// 单测注入假实现用；线上传 null 时使用 fluwx 实现。
+  final WechatAuthClient? wechatAuthClient;
 
   @override
   State<AuthPage> createState() => _AuthPageState();
 }
 
 class _AuthPageState extends State<AuthPage> {
-  static final RegExp _chinaPhoneRegExp = RegExp(r'^1[3-9]\d{9}$');
-
-  AuthMode _mode = AuthMode.phone;
-  int _modeDirection = 1;
+  late final WechatAuthClient _wechatAuthClient;
+  _WechatAvailability _availability = _WechatAvailability.checking;
   bool _agreed = true;
   bool _isSubmitting = false;
-  bool _isSendingCode = false;
-  int _codeCooldownSeconds = 0;
-  Timer? _codeCooldownTimer;
-
-  final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _codeController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-
-  bool get _isPhoneValid {
-    return _chinaPhoneRegExp.hasMatch(_phoneController.text.trim());
-  }
 
   @override
-  void dispose() {
-    _codeCooldownTimer?.cancel();
-    _phoneController.dispose();
-    _codeController.dispose();
-    _passwordController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _wechatAuthClient = widget.wechatAuthClient ?? FluwxWechatAuthClient();
+    _checkWechatAvailability();
   }
 
-  bool get _canSubmit {
-    if (!_agreed || !_isPhoneValid || _isSubmitting) {
-      return false;
+  Future<void> _checkWechatAvailability() async {
+    if (!_wechatAuthClient.isConfigured) {
+      if (mounted) {
+        setState(() {
+          _availability = _WechatAvailability.unconfigured;
+        });
+      }
+      return;
     }
 
-    switch (_mode) {
-      case AuthMode.phone:
-        return _codeController.text.trim().length == 6;
-      case AuthMode.password:
-        return _passwordController.text.trim().isNotEmpty;
-    }
-  }
+    final installed = await _wechatAuthClient.isWeChatInstalled();
 
-  void _refresh() {
-    setState(() {});
-  }
-
-  void _changeMode(AuthMode mode) {
-    if (_mode == mode) {
+    if (!mounted) {
       return;
     }
 
     setState(() {
-      _modeDirection = mode.index > _mode.index ? 1 : -1;
-      _mode = mode;
+      _availability = installed
+          ? _WechatAvailability.ready
+          : _WechatAvailability.notInstalled;
     });
   }
 
@@ -84,17 +72,23 @@ class _AuthPageState extends State<AuthPage> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _submit() async {
-    if (!_canSubmit) {
-      final message = !_agreed
-          ? '请先勾选用户协议与隐私政策'
-          : !_isPhoneValid
-          ? '请输入正确的中国大陆手机号'
-          : _mode == AuthMode.phone
-          ? '请输入 6 位短信验证码'
-          : '请输入手机号和密码';
+  Future<void> _login() async {
+    if (_isSubmitting) {
+      return;
+    }
 
-      _showSnackBar(message);
+    if (!_agreed) {
+      _showSnackBar('请先阅读并勾选用户协议与隐私政策');
+      return;
+    }
+
+    if (_availability == _WechatAvailability.unconfigured) {
+      _showSnackBar('当前安装包未配置微信登录参数，暂时无法登录');
+      return;
+    }
+
+    if (_availability == _WechatAvailability.notInstalled) {
+      _showSnackBar('未检测到微信，请先安装微信后再登录');
       return;
     }
 
@@ -103,27 +97,31 @@ class _AuthPageState extends State<AuthPage> {
     });
 
     try {
-      if (_mode == AuthMode.phone) {
-        final session = await AuthApi.phoneLogin(
-          phone: _phoneController.text.trim(),
-          code: _codeController.text.trim(),
-        );
-        _showSnackBar(session.isNewUser ? '首次登录成功，已为你创建账号' : '登录成功');
-      } else {
-        await AuthApi.passwordLogin(
-          account: _phoneController.text.trim(),
-          password: _passwordController.text.trim(),
-        );
-        _showSnackBar('登录成功');
-      }
+      final code = await _wechatAuthClient.requestAuthCode();
+      final session = await AuthApi.wechatLogin(code: code);
+
+      _showSnackBar(
+        session.isNewUser ? '首次登录成功，已为你创建账号' : '登录成功',
+      );
 
       if (!mounted) {
         return;
       }
 
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const MainTabPage()));
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const MainTabPage()),
+      );
+    } on WechatAuthException catch (error) {
+      if (error.failure == WechatAuthFailure.notConfigured) {
+        _markUnconfigured();
+      } else if (error.failure == WechatAuthFailure.notInstalled) {
+        if (mounted) {
+          setState(() {
+            _availability = _WechatAvailability.notInstalled;
+          });
+        }
+      }
+      _showSnackBar(error.message);
     } on ApiException catch (error) {
       _showSnackBar(error.message);
     } catch (_) {
@@ -137,64 +135,39 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
-  Future<void> _sendCode() async {
-    if (!_isPhoneValid || _isSendingCode || _codeCooldownSeconds > 0) {
-      if (!_isPhoneValid) {
-        _showSnackBar('请输入正确的中国大陆手机号');
-      }
+  void _markUnconfigured() {
+    if (!mounted) {
       return;
     }
 
     setState(() {
-      _isSendingCode = true;
+      _availability = _WechatAvailability.unconfigured;
     });
+  }
 
-    try {
-      final result = await AuthApi.sendSmsCode(_phoneController.text.trim());
-      _startCodeCooldown(result.resendAfterSeconds);
-      final debugCodeHint =
-          kDebugMode && (result.debugCode?.isNotEmpty ?? false)
-          ? '，测试验证码：${result.debugCode}'
-          : '';
-      _showSnackBar('验证码已发送，请注意查收$debugCodeHint');
-    } on ApiException catch (error) {
-      _showSnackBar(error.message);
-    } catch (_) {
-      _showSnackBar('验证码发送失败，请稍后重试');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSendingCode = false;
-        });
-      }
+  String get _availabilityHint {
+    switch (_availability) {
+      case _WechatAvailability.checking:
+        return '正在检测微信环境…';
+      case _WechatAvailability.unconfigured:
+        return '当前安装包未配置微信登录参数，暂时无法登录';
+      case _WechatAvailability.notInstalled:
+        return '未检测到微信，请先安装微信后再登录';
+      case _WechatAvailability.ready:
+        return '将打开微信完成授权登录';
     }
   }
 
-  void _startCodeCooldown(int seconds) {
-    _codeCooldownTimer?.cancel();
-
-    setState(() {
-      _codeCooldownSeconds = seconds;
-    });
-
-    _codeCooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-
-      if (_codeCooldownSeconds <= 1) {
-        timer.cancel();
-        setState(() {
-          _codeCooldownSeconds = 0;
-        });
-        return;
-      }
-
-      setState(() {
-        _codeCooldownSeconds -= 1;
-      });
-    });
+  IconData get _availabilityIcon {
+    switch (_availability) {
+      case _WechatAvailability.checking:
+        return Icons.hourglass_top_rounded;
+      case _WechatAvailability.unconfigured:
+      case _WechatAvailability.notInstalled:
+        return Icons.info_outline_rounded;
+      case _WechatAvailability.ready:
+        return Icons.verified_user_outlined;
+    }
   }
 
   @override
@@ -226,8 +199,6 @@ class _AuthPageState extends State<AuthPage> {
                 children: [
                   Expanded(
                     child: SingleChildScrollView(
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
                       padding: EdgeInsets.fromLTRB(
                         24 * scale,
                         14 * scale,
@@ -247,46 +218,26 @@ class _AuthPageState extends State<AuthPage> {
                             ),
                             SizedBox(height: 28 * scale),
                             _GreetingBlock(scale: scale),
-                            SizedBox(height: 34 * scale),
-                            _AuthTabs(
+                            SizedBox(height: 56 * scale),
+                            _WechatLoginPanel(scale: scale),
+                            SizedBox(height: 36 * scale),
+                            _WechatLoginButton(
                               scale: scale,
-                              mode: _mode,
-                              onChanged: _changeMode,
-                            ),
-                            SizedBox(height: 26 * scale),
-                            _AuthForm(
-                              scale: scale,
-                              mode: _mode,
-                              modeDirection: _modeDirection,
-                              phoneController: _phoneController,
-                              codeController: _codeController,
-                              passwordController: _passwordController,
-                              onChanged: (_) => _refresh(),
-                              canSendCode:
-                                  _isPhoneValid &&
-                                  !_isSendingCode &&
-                                  _codeCooldownSeconds == 0,
-                              sendCodeLabel: _isSendingCode
-                                  ? '发送中...'
-                                  : _codeCooldownSeconds > 0
-                                  ? '${_codeCooldownSeconds}s'
-                                  : '获取验证码',
-                              onSendCode: _sendCode,
-                            ),
-                            SizedBox(height: 28 * scale),
-                            _PrimaryLoginButton(
-                              scale: scale,
-                              enabled: _canSubmit,
                               loading: _isSubmitting,
-                              onTap: _submit,
+                              onTap: _login,
                             ),
-                            SizedBox(height: 42 * scale),
-                            _OrDivider(scale: scale),
-                            SizedBox(height: 28 * scale),
-                            _WeChatLogin(
+                            SizedBox(height: 18 * scale),
+                            _AvailabilityHint(
                               scale: scale,
-                              onTap: () => _showSnackBar('微信登录暂未接入'),
+                              icon: _availabilityIcon,
+                              message: _availabilityHint,
+                              warning:
+                                  _availability ==
+                                      _WechatAvailability.unconfigured ||
+                                  _availability ==
+                                      _WechatAvailability.notInstalled,
                             ),
+                            SizedBox(height: 28 * scale),
                           ],
                         ),
                       ),
@@ -402,471 +353,103 @@ class _GreetingBlock extends StatelessWidget {
   }
 }
 
-class _AuthTabs extends StatelessWidget {
-  const _AuthTabs({
-    required this.scale,
-    required this.mode,
-    required this.onChanged,
-  });
+class _WechatLoginPanel extends StatelessWidget {
+  const _WechatLoginPanel({required this.scale});
 
   final double scale;
-  final AuthMode mode;
-  final ValueChanged<AuthMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    const phoneTitle = '手机号登陆/注册';
-    const passwordTitle = '密码登陆';
-    final gap = 32 * scale;
-    final phoneActiveWidth = _measureTabWidth(
-      context,
-      phoneTitle,
-      scale,
-      active: true,
-    );
-    final phoneInactiveWidth = _measureTabWidth(
-      context,
-      phoneTitle,
-      scale,
-      active: false,
-    );
-    final passwordActiveWidth = _measureTabWidth(
-      context,
-      passwordTitle,
-      scale,
-      active: true,
-    );
-    final passwordInactiveWidth = _measureTabWidth(
-      context,
-      passwordTitle,
-      scale,
-      active: false,
-    );
-    final phoneSlotWidth = phoneActiveWidth > phoneInactiveWidth
-        ? phoneActiveWidth
-        : phoneInactiveWidth;
-    final passwordSlotWidth = passwordActiveWidth > passwordInactiveWidth
-        ? passwordActiveWidth
-        : passwordInactiveWidth;
-    final indicatorLeft = mode == AuthMode.phone ? 0.0 : phoneSlotWidth + gap;
-    final indicatorWidth = mode == AuthMode.phone
-        ? phoneActiveWidth
-        : passwordActiveWidth;
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: SizedBox(
-        width: phoneSlotWidth + gap + passwordSlotWidth,
-        height: 36 * scale,
-        child: Stack(
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: phoneSlotWidth,
-                  child: _AuthTabItem(
-                    scale: scale,
-                    title: phoneTitle,
-                    active: mode == AuthMode.phone,
-                    onTap: () => onChanged(AuthMode.phone),
-                  ),
-                ),
-                SizedBox(width: gap),
-                SizedBox(
-                  width: passwordSlotWidth,
-                  child: _AuthTabItem(
-                    scale: scale,
-                    title: passwordTitle,
-                    active: mode == AuthMode.password,
-                    onTap: () => onChanged(AuthMode.password),
-                  ),
-                ),
-              ],
-            ),
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 360),
-              curve: Curves.easeInOutCubicEmphasized,
-              left: indicatorLeft,
-              bottom: 0,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 360),
-                curve: Curves.easeInOutCubicEmphasized,
-                width: indicatorWidth,
-                height: 4 * scale,
-                decoration: BoxDecoration(
-                  color: _AuthColors.accent,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  double _measureTabWidth(
-    BuildContext context,
-    String text,
-    double scale, {
-    required bool active,
-  }) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: 18 * scale,
-          fontWeight: active ? FontWeight.w600 : FontWeight.w500,
-        ),
-      ),
-      maxLines: 1,
-      textDirection: Directionality.of(context),
-    )..layout();
-
-    return painter.width;
-  }
-}
-
-class _AuthTabItem extends StatelessWidget {
-  const _AuthTabItem({
-    required this.scale,
-    required this.title,
-    required this.active,
-    required this.onTap,
-  });
-
-  final double scale;
-  final String title;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: 14 * scale),
-        child: AnimatedDefaultTextStyle(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-          style: TextStyle(
-            fontSize: 18 * scale,
-            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
-            color: active ? _AuthColors.textPrimary : const Color(0xFF9CA3AF),
-          ),
-          child: Text(title),
-        ),
-      ),
-    );
-  }
-}
-
-class _AuthForm extends StatelessWidget {
-  const _AuthForm({
-    required this.scale,
-    required this.mode,
-    required this.modeDirection,
-    required this.phoneController,
-    required this.codeController,
-    required this.passwordController,
-    required this.onChanged,
-    required this.canSendCode,
-    required this.sendCodeLabel,
-    required this.onSendCode,
-  });
-
-  final double scale;
-  final AuthMode mode;
-  final int modeDirection;
-  final TextEditingController phoneController;
-  final TextEditingController codeController;
-  final TextEditingController passwordController;
-  final ValueChanged<String> onChanged;
-  final bool canSendCode;
-  final String sendCodeLabel;
-  final VoidCallback onSendCode;
-
-  @override
-  Widget build(BuildContext context) {
-    final activeKey = ValueKey<AuthMode>(mode);
-
-    return Column(
-      children: [
-        _InputCard(
-          scale: scale,
-          icon: Icons.phone_android_rounded,
-          child: _InlineField(
-            controller: phoneController,
-            hintText: '请输入手机号',
-            keyboardType: TextInputType.phone,
-            scale: scale,
-            onChanged: onChanged,
-          ),
-        ),
-        SizedBox(height: 16 * scale),
-        AnimatedSize(
-          duration: const Duration(milliseconds: 420),
-          curve: Curves.easeInOutCubicEmphasized,
-          alignment: Alignment.topCenter,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 460),
-            reverseDuration: const Duration(milliseconds: 320),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            layoutBuilder: (currentChild, previousChildren) {
-              return Stack(
-                alignment: Alignment.topCenter,
-                children: [
-                  ...previousChildren,
-                  ...?(currentChild != null ? [currentChild] : null),
-                ],
-              );
-            },
-            transitionBuilder: (child, animation) {
-              final isIncoming = child.key == activeKey;
-              final fade = CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-              );
-              final slide = Tween<Offset>(
-                begin: isIncoming
-                    ? Offset(modeDirection * 0.18, 0.02)
-                    : Offset(-modeDirection * 0.14, -0.01),
-                end: Offset.zero,
-              ).animate(fade);
-              final scaleAnimation = Tween<double>(
-                begin: isIncoming ? 0.97 : 0.94,
-                end: 1,
-              ).animate(fade);
-
-              return ClipRect(
-                child: FadeTransition(
-                  opacity: fade,
-                  child: SlideTransition(
-                    position: slide,
-                    child: ScaleTransition(scale: scaleAnimation, child: child),
-                  ),
-                ),
-              );
-            },
-            child: mode == AuthMode.phone
-                ? _InputCard(
-                    key: const ValueKey(AuthMode.phone),
-                    scale: scale,
-                    icon: Icons.verified_user_outlined,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _InlineField(
-                            controller: codeController,
-                            hintText: '请输入验证码',
-                            keyboardType: TextInputType.number,
-                            scale: scale,
-                            onChanged: onChanged,
-                          ),
-                        ),
-                        SizedBox(width: 10 * scale),
-                        _MiniGradientButton(
-                          scale: scale,
-                          label: sendCodeLabel,
-                          enabled: canSendCode,
-                          onTap: onSendCode,
-                        ),
-                      ],
-                    ),
-                  )
-                : _InputCard(
-                    key: const ValueKey(AuthMode.password),
-                    scale: scale,
-                    icon: Icons.lock_outline_rounded,
-                    child: _InlineField(
-                      controller: passwordController,
-                      hintText: '请输入密码',
-                      scale: scale,
-                      obscureText: true,
-                      onChanged: onChanged,
-                    ),
-                  ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _InputCard extends StatelessWidget {
-  const _InputCard({
-    super.key,
-    required this.scale,
-    required this.icon,
-    required this.child,
-  });
-
-  final double scale;
-  final IconData icon;
-  final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 50,
-      padding: EdgeInsets.symmetric(horizontal: 16 * scale),
+      padding: EdgeInsets.symmetric(
+        horizontal: 20 * scale,
+        vertical: 24 * scale,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14 * scale),
+        borderRadius: BorderRadius.circular(20 * scale),
         border: Border.all(color: const Color(0xFFF3F4F6)),
         boxShadow: [
           BoxShadow(
             color: const Color(0x14000000),
-            blurRadius: 14 * scale,
-            offset: Offset(0, 4 * scale),
+            blurRadius: 18 * scale,
+            offset: Offset(0, 6 * scale),
           ),
         ],
       ),
       child: Row(
         children: [
-          Icon(icon, size: 24 * scale, color: const Color(0xFF9CA3AF)),
-          SizedBox(width: 12 * scale),
-          Expanded(child: child),
+          Container(
+            width: 56 * scale,
+            height: 56 * scale,
+            decoration: const BoxDecoration(
+              color: Color(0xFF07C160),
+              shape: BoxShape.circle,
+            ),
+            child: _WeChatGlyph(scale: scale),
+          ),
+          SizedBox(width: 16 * scale),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '微信一键登录',
+                  style: TextStyle(
+                    fontSize: 18 * scale,
+                    fontWeight: FontWeight.w600,
+                    color: _AuthColors.textPrimary,
+                  ),
+                ),
+                SizedBox(height: 6 * scale),
+                Text(
+                  '登录后可与小程序共享同一账号与会员权益',
+                  style: TextStyle(
+                    fontSize: 13 * scale,
+                    height: 1.35,
+                    color: const Color(0xFF6B7280),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _InlineField extends StatelessWidget {
-  const _InlineField({
-    required this.controller,
-    required this.hintText,
+class _WechatLoginButton extends StatelessWidget {
+  const _WechatLoginButton({
     required this.scale,
-    required this.onChanged,
-    this.keyboardType,
-    this.obscureText = false,
-  });
-
-  final TextEditingController controller;
-  final String hintText;
-  final double scale;
-  final ValueChanged<String> onChanged;
-  final TextInputType? keyboardType;
-  final bool obscureText;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-      onChanged: onChanged,
-      keyboardType: keyboardType,
-      obscureText: obscureText,
-      style: TextStyle(fontSize: 16 * scale, color: _AuthColors.textPrimary),
-      decoration: InputDecoration(
-        isCollapsed: true,
-        border: InputBorder.none,
-        hintText: hintText,
-        hintStyle: TextStyle(
-          fontSize: 16 * scale,
-          color: const Color(0xFF9CA3AF),
-        ),
-      ),
-    );
-  }
-}
-
-class _MiniGradientButton extends StatelessWidget {
-  const _MiniGradientButton({
-    required this.scale,
-    required this.label,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final double scale;
-  final String label;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final backgroundGradient = enabled
-        ? const [Color(0xFFFC7A4E), Color(0xFFFF603A)]
-        : const [Color(0xFFE5E7EB), Color(0xFFD1D5DB)];
-    final textColor = enabled ? Colors.white : const Color(0xFF9CA3AF);
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        gradient: LinearGradient(colors: backgroundGradient),
-        boxShadow: enabled
-            ? [
-                BoxShadow(
-                  color: const Color(0x40FF603A),
-                  blurRadius: 12 * scale,
-                  offset: Offset(0, 4 * scale),
-                ),
-              ]
-            : null,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: enabled ? onTap : null,
-          borderRadius: BorderRadius.circular(999),
-          child: Container(
-            height: 30,
-            alignment: Alignment.center,
-            padding: EdgeInsets.symmetric(horizontal: 16 * scale),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 14 * scale,
-                fontWeight: FontWeight.w500,
-                color: textColor,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PrimaryLoginButton extends StatelessWidget {
-  const _PrimaryLoginButton({
-    required this.scale,
-    required this.enabled,
     required this.loading,
     required this.onTap,
   });
 
   final double scale;
-  final bool enabled;
   final bool loading;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final colors = enabled
-        ? const [Color(0xFFFC7A4E), Color(0xFFFF603A)]
-        : const [Color(0xFFF0A58A), Color(0xFFE99E8E)];
-
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
-        gradient: LinearGradient(colors: colors),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2BD97C), Color(0xFF07C160)],
+        ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0x40FF603A),
-            blurRadius: 12 * scale,
-            offset: Offset(0, 4 * scale),
+            color: const Color(0x3D07C160),
+            blurRadius: 14 * scale,
+            offset: Offset(0, 5 * scale),
           ),
         ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: onTap,
+          onTap: loading ? null : onTap,
           borderRadius: BorderRadius.circular(999),
           child: Padding(
             padding: EdgeInsets.symmetric(vertical: 16 * scale),
@@ -874,7 +457,7 @@ class _PrimaryLoginButton extends StatelessWidget {
               duration: const Duration(milliseconds: 180),
               child: loading
                   ? SizedBox(
-                      key: const ValueKey('loading'),
+                      key: const ValueKey('wechat-login-loading'),
                       width: 22 * scale,
                       height: 22 * scale,
                       child: const CircularProgressIndicator(
@@ -882,15 +465,25 @@ class _PrimaryLoginButton extends StatelessWidget {
                         valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     )
-                  : Text(
-                      '登陆',
-                      key: const ValueKey('label'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 18 * scale,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.white,
-                      ),
+                  : Row(
+                      key: const ValueKey('wechat-login-label'),
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.wechat_rounded,
+                          size: 22 * scale,
+                          color: Colors.white,
+                        ),
+                        SizedBox(width: 8 * scale),
+                        Text(
+                          '微信登录',
+                          style: TextStyle(
+                            fontSize: 18 * scale,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
             ),
           ),
@@ -900,66 +493,38 @@ class _PrimaryLoginButton extends StatelessWidget {
   }
 }
 
-class _OrDivider extends StatelessWidget {
-  const _OrDivider({required this.scale});
+class _AvailabilityHint extends StatelessWidget {
+  const _AvailabilityHint({
+    required this.scale,
+    required this.icon,
+    required this.message,
+    required this.warning,
+  });
 
   final double scale;
+  final IconData icon;
+  final String message;
+  final bool warning;
 
   @override
   Widget build(BuildContext context) {
+    final color = warning
+        ? const Color(0xFFB45309)
+        : const Color(0xFF6B7280);
+
     return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Expanded(child: Divider(color: Color(0xFFE5E7EB), thickness: 1)),
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * scale),
+        Icon(icon, size: 16 * scale, color: color),
+        SizedBox(width: 6 * scale),
+        Flexible(
           child: Text(
-            'or',
-            style: TextStyle(
-              fontSize: 14 * scale,
-              fontWeight: FontWeight.w500,
-              color: const Color(0xFF9CA3AF),
-            ),
+            message,
+            style: TextStyle(fontSize: 13 * scale, height: 1.35, color: color),
           ),
         ),
-        const Expanded(child: Divider(color: Color(0xFFE5E7EB), thickness: 1)),
       ],
-    );
-  }
-}
-
-class _WeChatLogin extends StatelessWidget {
-  const _WeChatLogin({required this.scale, required this.onTap});
-
-  final double scale;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        children: [
-          GestureDetector(
-            onTap: onTap,
-            child: Container(
-              width: 56 * scale,
-              height: 56 * scale,
-              decoration: const BoxDecoration(
-                color: Color(0xFF07C160),
-                shape: BoxShape.circle,
-              ),
-              child: _WeChatGlyph(scale: scale),
-            ),
-          ),
-          SizedBox(height: 8 * scale),
-          Text(
-            '微信一键登录',
-            style: TextStyle(
-              fontSize: 12 * scale,
-              color: const Color(0xFF6B7280),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -1016,14 +581,14 @@ class _AgreementFooter extends StatelessWidget {
                   height: 1.4,
                   color: const Color(0xFF6B7280),
                 ),
-                children: const [
-                  TextSpan(text: '我已阅读并同意'),
+                children: [
+                  const TextSpan(text: '我已阅读并同意'),
                   TextSpan(
                     text: '《${BrandConfig.name}用户服务协议》',
-                    style: TextStyle(color: Color(0xFF374151)),
+                    style: const TextStyle(color: Color(0xFF374151)),
                   ),
-                  TextSpan(text: '及'),
-                  TextSpan(
+                  const TextSpan(text: '及'),
+                  const TextSpan(
                     text: '《隐私政策》',
                     style: TextStyle(color: Color(0xFF374151)),
                   ),

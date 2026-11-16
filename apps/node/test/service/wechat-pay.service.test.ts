@@ -327,3 +327,112 @@ describe('WechatPayService virtual payment signing', () => {
     });
   });
 });
+
+describe('WechatPayService app wechat login', () => {
+  function createOpenAppService() {
+    const service = new WechatPayService();
+
+    service.wechatMiniProgramConfig = {
+      appId: 'mini-app-id',
+      appSecret: 'mini-app-secret',
+    } as any;
+    service.wechatOpenAppConfig = {
+      appId: 'open-app-id',
+      appSecret: 'open-app-secret',
+    } as any;
+
+    return service;
+  }
+
+  it('exchanges the app login code with the open platform appid and secret', async () => {
+    const service = createOpenAppService();
+
+    (service as any).getJson = jest.fn().mockResolvedValue({
+      access_token: 'access-token',
+      openid: 'openid-1',
+      unionid: 'unionid-1',
+    });
+
+    await expect(
+      service.exchangeAppLoginCode(' wx-app-code ')
+    ).resolves.toEqual({
+      openid: 'openid-1',
+      unionid: 'unionid-1',
+    });
+
+    const url = (service as any).getJson.mock.calls[0][0] as string;
+    const params = new URL(url).searchParams;
+
+    expect(url.startsWith('https://api.weixin.qq.com/sns/oauth2/access_token?')).toBe(
+      true
+    );
+    expect(params.get('appid')).toBe('open-app-id');
+    expect(params.get('secret')).toBe('open-app-secret');
+    expect(params.get('code')).toBe('wx-app-code');
+    expect(params.get('grant_type')).toBe('authorization_code');
+  });
+
+  it('rejects the wechat api error for an invalid app login code', async () => {
+    const service = createOpenAppService();
+
+    (service as any).getJson = jest.fn().mockResolvedValue({
+      errcode: 40029,
+      errmsg: 'invalid code',
+    });
+
+    await expect(
+      service.exchangeAppLoginCode('invalid-code')
+    ).rejects.toMatchObject({
+      code: 'WECHAT_APP_LOGIN_FAILED',
+      status: 400,
+    });
+  });
+
+  it('requires the open platform app config before calling wechat', async () => {
+    const service = createOpenAppService();
+
+    service.wechatOpenAppConfig = undefined as any;
+    (service as any).getJson = jest.fn();
+
+    await expect(
+      service.exchangeAppLoginCode('wx-app-code')
+    ).rejects.toMatchObject({
+      code: 'WECHAT_OPEN_APP_CONFIG_MISSING',
+      status: 500,
+    });
+    expect((service as any).getJson).not.toHaveBeenCalled();
+  });
+
+  it('returns unionid from jscode2session for weapp login backfill', async () => {
+    const service = createOpenAppService();
+
+    (service as any).getJson = jest.fn().mockResolvedValue({
+      openid: 'openid-1',
+      session_key: 'session-key',
+      unionid: 'unionid-1',
+    });
+
+    await expect(
+      service.getWeappLoginSessionByJsCode('wx-code')
+    ).resolves.toEqual({
+      openid: 'openid-1',
+      unionid: 'unionid-1',
+    });
+  });
+
+  it('keeps weapp login working when unionid is absent', async () => {
+    const service = createOpenAppService();
+
+    (service as any).getJson = jest.fn().mockResolvedValue({
+      openid: 'openid-1',
+      session_key: 'session-key',
+    });
+
+    await expect(
+      service.getWeappLoginSessionByJsCode('wx-code')
+    ).resolves.toEqual({
+      openid: 'openid-1',
+      unionid: undefined,
+    });
+  });
+});

@@ -13,7 +13,7 @@ class VoiceApi {
   }
 
   static Future<VoiceServiceSession> startSession({String? agentId}) async {
-    final d = await _c.post('/api/voice-services/start', body: {if (agentId != null) 'agentId': agentId});
+    final d = await _c.post('/api/voice-services/start', body: {'agentId': ?agentId});
     return VoiceServiceSession.fromJson(d);
   }
 

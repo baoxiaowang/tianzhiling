@@ -27,6 +27,22 @@ interface WechatMiniProgramConfig {
   appSecret?: string;
 }
 
+interface WechatOpenAppConfig {
+  appId?: string;
+  appSecret?: string;
+}
+
+interface WechatAppAccessTokenResponse {
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  openid?: string;
+  scope?: string;
+  unionid?: string;
+  errcode?: number;
+  errmsg?: string;
+}
+
 interface WechatVirtualPayConfig {
   enabled?: boolean;
   offerId?: string;
@@ -69,6 +85,11 @@ export interface WechatMsgSecCheckResponse {
 export interface WechatSessionPayload {
   openid: string;
   sessionKey: string;
+}
+
+export interface WechatLoginSessionPayload {
+  openid: string;
+  unionid?: string;
 }
 
 export interface WechatMessageContentSafetyResult {
@@ -294,6 +315,9 @@ export class WechatPayService {
   @Config('wechatMiniProgram')
   wechatMiniProgramConfig: WechatMiniProgramConfig;
 
+  @Config('wechatOpenApp')
+  wechatOpenAppConfig: WechatOpenAppConfig;
+
   @Config('wechatVirtualPay')
   wechatVirtualPayConfig: WechatVirtualPayConfig;
 
@@ -414,6 +438,18 @@ export class WechatPayService {
     return response.openid;
   }
 
+  /**
+   * 小程序登录用：返回 openid 与（小程序绑定开放平台后才会返回的）unionid。
+   * unionid 用于与 App 微信登录打通同一用户，缺失时不报错。
+   */
+  async getWeappLoginSessionByJsCode(
+    jsCode: string
+  ): Promise<WechatLoginSessionPayload> {
+    const response = await this.exchangeJsCode(jsCode);
+
+    return this.buildLoginSessionPayload(response);
+  }
+
   async getSessionByJsCode(jsCode: string): Promise<WechatSessionPayload> {
     const response = await this.exchangeJsCode(jsCode);
 
@@ -431,6 +467,57 @@ export class WechatPayService {
     return {
       openid: response.openid,
       sessionKey: response.session_key,
+    };
+  }
+
+  /**
+   * App 微信登录：用开放平台 AppID + AppSecret 以授权 code 换 openid / unionid。
+   *
+   * 配置来自 .env 的 WECHAT_OPEN_APP_ID / WECHAT_OPEN_APP_SECRET（见 config.default.ts
+   * 的 wechatOpenApp），缺失时按配置错误返回，避免把配置问题混进用户业务错误。
+   */
+  async exchangeAppLoginCode(code: string): Promise<WechatLoginSessionPayload> {
+    const loginCode = code?.trim();
+
+    if (!loginCode) {
+      throw new AppError('INVALID_WECHAT_CODE', 'wechat code is required');
+    }
+
+    const appId = this.requireOpenAppConfig('appId');
+    const appSecret = this.requireOpenAppConfig('appSecret');
+    const params = new URLSearchParams({
+      appid: appId,
+      secret: appSecret,
+      code: loginCode,
+      grant_type: 'authorization_code',
+    });
+    const response = await this.getJson<WechatAppAccessTokenResponse>(
+      `https://api.weixin.qq.com/sns/oauth2/access_token?${params.toString()}`
+    );
+
+    if (response.errcode) {
+      throw new AppError(
+        'WECHAT_APP_LOGIN_FAILED',
+        response.errmsg || 'failed to exchange wechat app login code'
+      );
+    }
+
+    return this.buildLoginSessionPayload(response);
+  }
+
+  private buildLoginSessionPayload(response: {
+    openid?: string;
+    unionid?: string;
+  }): WechatLoginSessionPayload {
+    if (!response.openid) {
+      throw new AppError('WECHAT_OPENID_MISSING', 'wechat openid is missing');
+    }
+
+    const unionid = response.unionid?.trim();
+
+    return {
+      openid: response.openid,
+      unionid: unionid || undefined,
     };
   }
 
@@ -1000,6 +1087,20 @@ export class WechatPayService {
     throw new AppError(
       'WECHAT_MINI_PROGRAM_CONFIG_MISSING',
       `wechat mini program config ${String(key)} is missing`,
+      500
+    );
+  }
+
+  private requireOpenAppConfig(key: keyof WechatOpenAppConfig): string {
+    const value = this.wechatOpenAppConfig?.[key];
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+
+    throw new AppError(
+      'WECHAT_OPEN_APP_CONFIG_MISSING',
+      `wechat open platform app config ${String(key)} is missing`,
       500
     );
   }

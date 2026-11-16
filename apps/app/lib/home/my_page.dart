@@ -76,7 +76,7 @@ class _ProfileCard extends StatelessWidget {
             const SizedBox(width: 4),
             GestureDetector(
               onTap: () { Clipboard.setData(ClipboardData(text: account)); ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(const SnackBar(content: Text('ID已复制'), behavior: SnackBarBehavior.floating, duration: Duration(seconds: 1))); },
-              child: Container(width: 28, height: 28, child: const Icon(Icons.copy_rounded, size: 14, color: Color(0xFF999999))),
+              child: SizedBox(width: 28, height: 28, child: const Icon(Icons.copy_rounded, size: 14, color: Color(0xFF999999))),
             ),
           ]),
         ])),

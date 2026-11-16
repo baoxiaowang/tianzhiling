@@ -125,7 +125,7 @@ class VoiceServiceReviewClip {
     final sec = s.round();
     final m = sec ~/ 60;
     final rem = sec % 60;
-    return m > 0 ? '${m}分${rem}秒' : '${rem}秒';
+    return m > 0 ? '$m分$rem秒' : '$rem秒';
   }
 }
 

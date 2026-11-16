@@ -44,6 +44,7 @@ import {
   UpdateUserRegionDTO,
   WeappLoginDTO,
   WeappPhoneLoginDTO,
+  WechatLoginDTO,
 } from '../dto/user.dto';
 import { MongoRepository } from 'typeorm';
 import { PostImageService } from './post-image.service';
@@ -91,6 +92,7 @@ interface SmsCodeCacheValue {
 const PHONE_LOGIN_PURPOSE = 'phone_login';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const WEAPP_ACCOUNT_HASH_LENGTH = 12;
+const WECHAT_APP_ACCOUNT_PREFIX = 'wechat:';
 const DEV_LOGIN_ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const LOCAL_DEV_LOGIN_ACCOUNT = 'dev-test';
 const LOCAL_DEV_LOGIN_OPENID = 'dev-openid';
@@ -477,7 +479,8 @@ export class UserService {
       throw new AppError('INVALID_WECHAT_JS_CODE', 'jsCode is required');
     }
 
-    const openid = await this.wechatPayService.getOpenidByJsCode(jsCode);
+    const { openid, unionid } =
+      await this.wechatPayService.getWeappLoginSessionByJsCode(jsCode);
     const now = new Date();
     let userAccount = await this.findWeappAccountByOpenid(openid);
 
@@ -492,11 +495,12 @@ export class UserService {
         );
       }
 
+      const savedUser = await this.backfillWechatUnionid(user, unionid, now);
       userAccount = this.normalizeWeappAccount(userAccount, openid, now);
       userAccount.updatedAt = now;
       userAccount = await this.userAccountModel.save(userAccount);
 
-      return this.buildLoginResult(user, userAccount, false);
+      return this.buildLoginResult(savedUser, userAccount, false);
     }
 
     if (payload?.allowCreate === false) {
@@ -508,12 +512,13 @@ export class UserService {
     }
 
     const user = new UserEntity();
-    user.name = this.buildDefaultWeappUserName(openid);
+    user.name = this.buildDefaultWechatUserName(openid);
     user.avatar = '';
     user.phone = '';
     user.phoneVerified = false;
     user.gender = 'unknown';
     user.region = null;
+    user.unionid = unionid;
     user.accountStatus = UserAccountStatus.active;
     this.initializeChatTrial(user, now);
     user.createdAt = now;
@@ -529,6 +534,80 @@ export class UserService {
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
     userAccount = await this.userAccountModel.save(userAccount);
+
+    return this.buildLoginResult(savedUser, userAccount, true);
+  }
+
+  /**
+   * App 微信登录（开放平台移动应用授权 code）。
+   *
+   * 账号规则：
+   * 1. 同一 App openid 已登录过 -> 复用该 openid 对应的登录账号；
+   * 2. 微信返回 unionid 且命中已有用户（如小程序已绑定开放平台）-> 复用用户，
+   *    仅为 App 补建 `wechat:<openid>` 登录账号（双端会员权益随用户走）；
+   * 3. 都未命中 -> 创建新用户并落 unionid（微信未返回 unionid 时留空，等绑定开放平台后回填）。
+   */
+  async wechatLogin(payload: WechatLoginDTO): Promise<PasswordLoginResult> {
+    const code = payload?.code?.trim();
+
+    if (!code) {
+      throw new AppError('INVALID_WECHAT_CODE', 'wechat code is required');
+    }
+
+    const { openid, unionid } =
+      await this.wechatPayService.exchangeAppLoginCode(code);
+    const now = new Date();
+
+    const existingAccount = await this.findWechatAppAccountByOpenid(openid);
+
+    if (existingAccount) {
+      const user = await this.findUserById(existingAccount.userId);
+
+      if (!user) {
+        throw new AppError(
+          'USER_NOT_FOUND',
+          'user profile does not exist',
+          404
+        );
+      }
+
+      const savedUser = await this.backfillWechatUnionid(user, unionid, now);
+
+      return this.buildLoginResult(savedUser, existingAccount, false);
+    }
+
+    const unionidUser = unionid
+      ? await this.findUserByWechatUnionid(unionid)
+      : null;
+
+    if (unionidUser) {
+      const userAccount = await this.createWechatAppAccount(
+        unionidUser,
+        openid,
+        now
+      );
+
+      return this.buildLoginResult(unionidUser, userAccount, false);
+    }
+
+    const user = new UserEntity();
+    user.name = this.buildDefaultWechatUserName(openid);
+    user.avatar = '';
+    user.phone = '';
+    user.phoneVerified = false;
+    user.gender = 'unknown';
+    user.region = null;
+    user.unionid = unionid;
+    user.accountStatus = UserAccountStatus.active;
+    this.initializeChatTrial(user, now);
+    user.createdAt = now;
+    user.updatedAt = now;
+    const savedUser = await this.userModel.save(user);
+    const userAccount = await this.createWechatAppAccount(
+      savedUser,
+      openid,
+      now
+    );
 
     return this.buildLoginResult(savedUser, userAccount, true);
   }
@@ -1515,12 +1594,78 @@ export class UserService {
     return `${brandName()}用户${phone.slice(-4)}`;
   }
 
-  private buildDefaultWeappUserName(openid: string): string {
+  private buildDefaultWechatUserName(openid: string): string {
     return `${brandName()}用户${this.hashWeappOpenid(openid).slice(-4)}`;
   }
 
   private buildWeappAccount(openid: string): string {
     return `${WEAPP_ACCOUNT_PREFIX}${this.hashWeappOpenid(openid)}`;
+  }
+
+  /** App 微信登录账号标识；openid 按 AppID 隔离，故无需再哈希区分。 */
+  private buildWechatAppAccount(openid: string): string {
+    return `${WECHAT_APP_ACCOUNT_PREFIX}${openid}`;
+  }
+
+  private async findWechatAppAccountByOpenid(
+    openid: string
+  ): Promise<UserAccountEntity | null> {
+    return this.userAccountModel.findOne({
+      where: {
+        account: this.buildWechatAppAccount(openid),
+      },
+    });
+  }
+
+  private async createWechatAppAccount(
+    user: UserEntity,
+    openid: string,
+    now: Date
+  ): Promise<UserAccountEntity> {
+    const existingAccount = await this.findWechatAppAccountByOpenid(openid);
+
+    if (existingAccount) {
+      return existingAccount;
+    }
+
+    const userAccount = new UserAccountEntity();
+    userAccount.userId = user.id;
+    userAccount.account = this.buildWechatAppAccount(openid);
+    userAccount.password = '';
+    userAccount.status = UserLoginAccountStatus.active;
+    userAccount.createdAt = now;
+    userAccount.updatedAt = now;
+
+    return this.userAccountModel.save(userAccount);
+  }
+
+  private async findUserByWechatUnionid(
+    unionid: string
+  ): Promise<UserEntity | null> {
+    return this.userModel.findOne({
+      where: {
+        unionid,
+      },
+    });
+  }
+
+  /**
+   * 微信返回 unionid 时回填到用户（App/weapp 登录共用）。
+   * 未返回或未变化时不做多余写入，避免影响历史登录行为。
+   */
+  private async backfillWechatUnionid(
+    user: UserEntity,
+    unionid: string | undefined,
+    now: Date
+  ): Promise<UserEntity> {
+    if (!unionid || user.unionid === unionid) {
+      return user;
+    }
+
+    user.unionid = unionid;
+    user.updatedAt = now;
+
+    return this.userModel.save(user);
   }
 
   private buildLegacyWeappAccount(openid: string): string {

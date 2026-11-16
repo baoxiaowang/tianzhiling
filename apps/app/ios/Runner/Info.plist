@@ -83,5 +83,29 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- 微信开放平台：App 微信登录回跳 URL Scheme，取值为开放平台移动应用 AppID（wx 开头）。
+	     Xcode 构建变量定义见 ios/Flutter/Debug.xcconfig / Release.xcconfig 的
+	     WECHAT_APP_URL_SCHEME；拿到正式 AppID 后同步修改（与 --dart-define=WECHAT_APP_ID 一致）。 -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>weixin</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(WECHAT_APP_URL_SCHEME)</string>
+			</array>
+		</dict>
+	</array>
+	<!-- 微信 SDK 唤起/检测微信需要的 scheme 白名单。 -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>weixin</string>
+		<string>wechat</string>
+		<string>weixinULAPI</string>
+		<string>weixinURLParamsAPI</string>
+	</array>
 </dict>
 </plist>
