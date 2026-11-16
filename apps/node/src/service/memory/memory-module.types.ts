@@ -79,10 +79,33 @@ export interface MemoryShadowDiagnostics {
   elapsedMs?: number;
 }
 
+/** 前情链上的一场：标题与时间跨度，只能当背景。 */
+export interface MemoryPackageChainView {
+  title: string;
+  spanFrom: string;
+  spanTo: string;
+  memberCount: number;
+}
+
+/** 一场（episode）的包视图：注入侧据此渲染叙事块。 */
+export interface MemoryPackageView {
+  groupId: string;
+  title: string;
+  subjectRef?: string;
+  topicKey: string;
+  spanFrom: string;
+  spanTo: string;
+  memberEvidenceIds: string[];
+  /** 同话题同主体的历史场次（近 2 场）。 */
+  chain?: MemoryPackageChainView[];
+}
+
 export interface MemoryRecallResult {
   evidence: MemoryEvidence[];
   status: 'ok' | 'empty' | 'skipped' | 'failed';
   diagnostics: MemoryRecallDiagnostics;
+  /** 按包视图（场次）：叙事化注入用；evidence 仍为扁平列表。 */
+  packages?: MemoryPackageView[];
   /** shadow 模式下影子引擎的对照结果：只记录，不注入。 */
   shadow?: MemoryShadowDiagnostics;
 }

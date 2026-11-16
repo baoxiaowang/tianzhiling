@@ -34,6 +34,8 @@ export interface PackageInjectionCapacity {
   minPackageScoreGap?: number;
   /** 时间降权（与 agent.context 的 recencyFactor 同源）。 */
   recencyFactor?: (createdAt?: string) => number;
+  /** 超限处理：drop=丢最旧（旧行为）；summarize=压缩行+保留成员（默认）。 */
+  compression?: 'drop' | 'summarize';
 }
 
 export interface MemoryInjectionPackageStat {
@@ -45,6 +47,8 @@ export interface MemoryInjectionPackageStat {
   originalChars: number;
   /** 超出容量硬顶被截断（含全局预算导致的截断）。 */
   truncated: boolean;
+  /** summarize 模式下超限包的压缩说明行（背景，不可断言）。 */
+  compressionLine?: string;
 }
 
 export interface PackageInjectionResult {
@@ -56,11 +60,17 @@ export interface PackageInjectionResult {
 }
 
 const DEFAULT_MAX_PACKAGES = 2;
-const DEFAULT_MAX_MEMBERS_PER_PACKAGE = 6;
-const DEFAULT_MAX_CHARS_PER_PACKAGE = 420;
-const DEFAULT_MAX_TOTAL_MEMBERS = 8;
-const DEFAULT_MAX_TOTAL_CHARS = 640;
+const DEFAULT_MAX_MEMBERS_PER_PACKAGE = 10;
+const DEFAULT_MAX_CHARS_PER_PACKAGE = 720;
+const DEFAULT_MAX_TOTAL_MEMBERS = 12;
+const DEFAULT_MAX_TOTAL_CHARS = 1080;
 const DEFAULT_MIN_PACKAGE_SCORE_GAP = 0.02;
+
+/** 容量全部 env 可调（NODE_MEMORY_PKG_*）：调容量不改代码。 */
+function envCap(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 interface PackageBucket {
   key: string;
@@ -135,27 +145,40 @@ export function selectInjectableMemoryPackages(
   items: InjectableMemoryItem[],
   capacity: PackageInjectionCapacity = {}
 ): PackageInjectionResult {
-  const maxPackages = Math.max(1, capacity.maxPackages ?? DEFAULT_MAX_PACKAGES);
+  const maxPackages = Math.max(
+    1,
+    capacity.maxPackages ?? envCap('NODE_MEMORY_PKG_MAX_PACKAGES', DEFAULT_MAX_PACKAGES)
+  );
   const maxMembersPerPackage = Math.max(
     1,
-    capacity.maxMembersPerPackage ?? DEFAULT_MAX_MEMBERS_PER_PACKAGE
+    capacity.maxMembersPerPackage ??
+      envCap('NODE_MEMORY_PKG_MAX_MEMBERS', DEFAULT_MAX_MEMBERS_PER_PACKAGE)
   );
   const maxCharsPerPackage = Math.max(
     1,
-    capacity.maxCharsPerPackage ?? DEFAULT_MAX_CHARS_PER_PACKAGE
+    capacity.maxCharsPerPackage ??
+      envCap('NODE_MEMORY_PKG_MAX_CHARS_PER_PACKAGE', DEFAULT_MAX_CHARS_PER_PACKAGE)
   );
   const maxTotalMembers = Math.max(
     1,
-    capacity.maxTotalMembers ?? DEFAULT_MAX_TOTAL_MEMBERS
+    capacity.maxTotalMembers ??
+      envCap('NODE_MEMORY_PKG_MAX_TOTAL_MEMBERS', DEFAULT_MAX_TOTAL_MEMBERS)
   );
   const maxTotalChars = Math.max(
     1,
-    capacity.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS
+    capacity.maxTotalChars ??
+      envCap('NODE_MEMORY_PKG_MAX_TOTAL_CHARS', DEFAULT_MAX_TOTAL_CHARS)
   );
   const minPackageScoreGap =
     capacity.minPackageScoreGap ?? DEFAULT_MIN_PACKAGE_SCORE_GAP;
   const recencyFactor =
     capacity.recencyFactor ?? (() => 1);
+  const compression =
+    capacity.compression ??
+    ((process.env.NODE_MEMORY_PACKAGE_COMPRESSION || 'summarize').trim().toLowerCase() ===
+    'drop'
+      ? 'drop'
+      : 'summarize');
 
   // 1. 分区：groupId 聚包，无 groupId 为单件包。
   const buckets = new Map<string, PackageBucket>();
@@ -241,6 +264,8 @@ export function selectInjectableMemoryPackages(
     totalMembers += trimmed.kept.length;
     totalChars += injectedChars;
     flatItems.push(...trimmed.kept);
+    const truncated =
+      trimmed.kept.length < originalMembers || injectedChars < originalChars;
     stats.push({
       groupId: pack.groupId,
       injectedMembers: trimmed.kept.length,
@@ -248,8 +273,13 @@ export function selectInjectableMemoryPackages(
       injectedChars,
       originalChars,
       // 截断来源可能是单包硬顶，也可能是全局预算；统一标记为可观测。
-      truncated:
-        trimmed.kept.length < originalMembers || injectedChars < originalChars,
+      truncated,
+      // summarize：不静默丢成员，给一行诚实的压缩说明（背景，不可断言）。
+      ...(truncated && compression === 'summarize'
+        ? {
+            compressionLine: `【本场共 ${originalMembers} 条提及，超容量保留 ${trimmed.kept.length} 条】`,
+          }
+        : {}),
     });
   }
 
@@ -258,4 +288,63 @@ export function selectInjectableMemoryPackages(
     packages: stats,
     oversizedCount: stats.filter(stat => stat.truncated).length,
   };
+}
+
+// ── 叙事化注入渲染 ─────────────────────────────────────────────────
+// 程序拼装结构（标题/前情/压缩说明），原话仍逐条带引号引用。
+// 全部为背景层：可断言内容只认带引号的原话。
+
+export interface NarrativePackageView {
+  groupId: string;
+  title: string;
+  subjectRef?: string;
+  topicKey: string;
+  spanFrom: string;
+  spanTo: string;
+  chain?: Array<{
+    title: string;
+    spanFrom: string;
+    spanTo: string;
+    memberCount: number;
+  }>;
+}
+
+function narrativeDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+    date.getDate()
+  ).padStart(2, '0')}`;
+}
+
+/**
+ * 一场的叙事块：标题行（谁的事｜跨度）+ 前情链行 + 压缩说明 + 原话引用（时间正序）。
+ */
+export function renderMemoryPackageNarrative(
+  view: NarrativePackageView,
+  quotes: string[],
+  compressionLine?: string
+): string {
+  const subject = view.subjectRef ? `${view.subjectRef}的` : '';
+  const span =
+    narrativeDate(view.spanFrom) && narrativeDate(view.spanTo)
+      ? `｜${narrativeDate(view.spanFrom)}~${narrativeDate(view.spanTo)}`
+      : '';
+  const lines: string[] = [`【${subject}${view.topicKey}${span}】`];
+  for (const chain of view.chain || []) {
+    lines.push(
+      `前情：${chain.title}（${narrativeDate(chain.spanFrom)}~${narrativeDate(
+        chain.spanTo
+      )}，${chain.memberCount} 次提及）`
+    );
+  }
+  if (compressionLine) lines.push(compressionLine);
+  if (quotes.length) {
+    lines.push('原话（按时间先后，引用只认带引号部分）：');
+    for (const quote of quotes) {
+      const text = String(quote || '').trim();
+      if (text) lines.push(`- 「${text}」`);
+    }
+  }
+  return lines.join('\n');
 }

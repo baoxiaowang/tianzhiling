@@ -136,6 +136,65 @@ export function buildOpenItemFingerprint(options: {
   );
 }
 
+/**
+ * 场次热度（读时计算，烘焙进证据分数用）：
+ * 成员数（对数压制）× 新近度 × 未了结加成，钳制 [0.6, 1.5]。
+ * 热度只影响"哪场先被看见"，不改变证据的可断言性。
+ */
+export function heatForGroup(input: {
+  memberCount: number;
+  spanTo: Date;
+  hasActiveOpenItem?: boolean;
+  now?: Date;
+}): number {
+  const now = input.now ?? new Date();
+  const ageDays = Math.max(0, (now.getTime() - input.spanTo.getTime()) / 86400000);
+  // 新近度：7 天内 1.0，每 30 天衰减 ~8%，半年 ~0.85，两年 ~0.7（下限）。
+  const recency = Math.max(0.7, 1 - (ageDays / 730) * 0.3);
+  const volume = 1 + 0.15 * Math.log2(1 + Math.max(0, input.memberCount));
+  const unresolved = input.hasActiveOpenItem ? 1.3 : 1;
+  const raw = recency * volume * unresolved;
+  return Math.min(1.5, Math.max(0.6, Number(raw.toFixed(4))));
+}
+
+export interface ChainableGroupLike {
+  id: string;
+  title: string;
+  subjectRef?: string;
+  spanFrom: Date;
+  spanTo: Date;
+  memberCount: number;
+}
+
+/**
+ * 链视图：给定本场，从同话题的历史场次里选相关前情（同主体优先，
+ * 按场次时间倒序取 count 场）。跨场纵向关联——同场合并已被场次制禁止，
+ * 前情靠链呈现。
+ */
+export function buildChainViews(
+  current: { subjectRef?: string; spanFrom: Date },
+  historical: ChainableGroupLike[],
+  count = 2
+): Array<{ title: string; spanFrom: string; spanTo: string; memberCount: number }> {
+  const subject = normalizeSubject(current.subjectRef);
+  return historical
+    .filter(group => group.spanTo.getTime() < current.spanFrom.getTime())
+    .filter(
+      group =>
+        !subject ||
+        !normalizeSubject(group.subjectRef) ||
+        normalizeSubject(group.subjectRef) === subject
+    )
+    .sort((left, right) => right.spanTo.getTime() - left.spanTo.getTime())
+    .slice(0, Math.max(0, count))
+    .map(group => ({
+      title: group.title,
+      spanFrom: group.spanFrom.toISOString(),
+      spanTo: group.spanTo.toISOString(),
+      memberCount: group.memberCount,
+    }));
+}
+
 /** 组合标题：只能当背景，不可作为事实断言。 */
 export function buildGroupTitle(options: {
   topicKey: string;

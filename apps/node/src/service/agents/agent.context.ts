@@ -59,7 +59,9 @@ import {
   buildAgentTimeMarkers,
 } from './agent-memory-fact.service';
 import {
+  NarrativePackageView,
   PackageInjectionResult,
+  renderMemoryPackageNarrative,
   selectInjectableMemoryPackages,
 } from './memory-injection-package';
 import {
@@ -1382,15 +1384,21 @@ export class AgentContextService {
           ));
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
       memoryRetrievalReady ? 'active' : 'suppressed';
-    // 按包注入开关：off 回退逐条选择（回滚 = 改一个环境变量）。
+    // 按包注入模式：off=逐条（回滚点0）；package=按包（回滚点1）；narrative=按包+叙事块（默认）。
+    const memoryPackageInjectionMode = (
+      process.env.NODE_MEMORY_PACKAGE_INJECTION || 'narrative'
+    )
+      .trim()
+      .toLowerCase();
     const memoryPackageInjectionEnabled =
-      (process.env.NODE_MEMORY_PACKAGE_INJECTION || 'active')
-        .trim()
-        .toLowerCase() !== 'off';
+      memoryPackageInjectionMode !== 'off';
+    const memoryNarrativeEnabled = memoryPackageInjectionMode === 'narrative';
     const retrievedMemories: RetrievedContextSnippet[] = [];
     let retrievalFailureCount = 0;
     let retrievalDiagnostics: Record<string, unknown> = {};
     let packageInjection: PackageInjectionResult | undefined;
+    let memoryPackageViews: NarrativePackageView[] = [];
+    let memoryNarrativePrompt = '';
     if (effectiveMemoryRetrievalMode === 'active') {
       try {
         // 只注入最相关的少数几条：先丢掉碎片与"当前这轮原话自己"，
@@ -1478,11 +1486,32 @@ export class AgentContextService {
               memoryKind: item.kind,
             }));
           // 按包注入：同组证据整包进出，容量硬顶截断必带标记（详见模块注释）。
+          memoryPackageViews = (recalled.packages || []) as NarrativePackageView[];
           if (memoryPackageInjectionEnabled) {
             packageInjection = selectInjectableMemoryPackages(snippets, {
               recencyFactor,
             });
             retrievedMemories.push(...packageInjection.items);
+            // 叙事块：结构层背景（标题/前情链/压缩说明），原话引用仍走证据流。
+            if (memoryNarrativeEnabled && memoryPackageViews.length) {
+              memoryNarrativePrompt = packageInjection.packages
+                .map(stat => {
+                  const view = memoryPackageViews.find(
+                    candidate => candidate.groupId === stat.groupId
+                  );
+                  if (!view) return '';
+                  const quotes = packageInjection!.items
+                    .filter(item => item.groupId === stat.groupId)
+                    .map(item => item.content);
+                  return renderMemoryPackageNarrative(
+                    view,
+                    quotes,
+                    stat.compressionLine
+                  );
+                })
+                .filter(Boolean)
+                .join('\n\n');
+            }
           } else {
             retrievedMemories.push(...selectInjectable(snippets));
           }
@@ -1795,7 +1824,8 @@ export class AgentContextService {
           historyCoverageNote,
           userPreferencePrompt,
           testModePromptLines,
-          entityLedgerPrompt
+          entityLedgerPrompt,
+          memoryNarrativePrompt
         ),
       {
         evidenceCount: evidence.length,
@@ -2017,7 +2047,9 @@ export class AgentContextService {
         memoryCoverageFallbackApplied,
         memoryRetrievalMode: effectiveMemoryRetrievalMode,
         memoryRetrievalInvitation,
-        memoryInjectionMode: memoryPackageInjectionEnabled
+        memoryInjectionMode: memoryNarrativeEnabled
+          ? 'package_narrative_v1'
+          : memoryPackageInjectionEnabled
           ? 'package_v1'
           : 'item_legacy',
         memoryInjectionPackages: packageInjection?.packages,
@@ -2156,7 +2188,8 @@ export class AgentContextService {
     historyCoveragePrompt = '',
     userPreferencePrompt: UserPreferencePromptSection = { stable: '', task: '' },
     testModePromptLines: string[] = [],
-    entityLedgerPrompt = ''
+    entityLedgerPrompt = '',
+    memoryPackageNarrativePrompt = ''
   ): AgentContextLayer & { dynamicContext?: string } {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -2325,6 +2358,17 @@ export class AgentContextService {
           // 考验模式压掉“直接回答/必须用旧事”，但不压安全、纠正和证据边界。
           suppresses: ['direct_answer', 'return_turn_proof'],
         },
+        ...(memoryPackageNarrativePrompt
+          ? [
+              {
+                id: 'memory_package_narrative',
+                priority: 40,
+                // 一件事的来龙去脉（背景结构+原话引用）：
+                // 结构由程序拼装；可断言内容只认带引号原话。
+                text: `# 一件有来龙去脉的事（背景说明+原话引用）\n${memoryPackageNarrativePrompt}`,
+              },
+            ]
+          : []),
         {
           id: 'main_model_conditional',
           priority: 65,

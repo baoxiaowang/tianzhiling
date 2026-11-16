@@ -18,11 +18,13 @@ import {
   resolveTopicKeys,
 } from '../agents/memory-topics';
 import {
+  buildChainViews,
   buildGroupKey,
   buildGroupTitle,
   buildOpenItemFingerprint,
   EVENT_GROUP_MAX_GAP_MS,
   hashMessageText,
+  heatForGroup,
   resolveGroupAssignment,
 } from './memory-grouping';
 import {
@@ -52,18 +54,32 @@ import type {
   MemoryOpenItemView,
   MemoryOpenItemsRequest,
   MemoryOpenItemsResult,
+  MemoryPackageView,
   MemoryRecallRequest,
   MemoryRecallResult,
   MemoryUpdateOpenItemRequest,
   MemoryUpdateOpenItemResult,
 } from './memory-module.types';
 
+/**
+ * 场次取材：成员 ≤ max 全取；超限取头 2（事情怎么开始）+ 尾 max-2（现在怎样）。
+ * 首因+近因，中段交给压缩/链。
+ */
+function selectEpisodeMembers<T extends { occurredAt: Date }>(
+  members: T[],
+  max: number
+): T[] {
+  if (members.length <= max) return members;
+  return [...members.slice(0, 2), ...members.slice(-(max - 2))];
+}
+
 export const EVENT_MEMORY_ENGINE = 'event_v1' as const;
 
 const MAX_ACTIVE_GROUPS_SCANNED = 40;
 const MAX_GROUPS_EXPANDED = 2;
-const MAX_GROUP_MEMBERS = 6;
-const MAX_EVIDENCE_PER_RECALL = 8;
+/** 场次制：单场最多取 12 条成员原话（头 2 + 尾 10：首因+近因）。 */
+const MAX_GROUP_MEMBERS = 12;
+const MAX_EVIDENCE_PER_RECALL = 16;
 const RECALL_BUDGET_MS = 1200;
 const REBUILD_MESSAGE_LIMIT = 3000;
 /** 每人最多保留 5 条活跃的未了结事项：清单要像"最近惦记的几件事"，不能是流水账。 */
@@ -358,7 +374,7 @@ export class MemoryEventEngine implements MemoryModule {
     const expanded = groups.slice(0, MAX_GROUPS_EXPANDED);
     const memberIds: string[] = [];
     for (const group of expanded) {
-      for (const member of group.members.slice(-MAX_GROUP_MEMBERS)) {
+      for (const member of selectEpisodeMembers(group.members, MAX_GROUP_MEMBERS)) {
         const id = stringifyObjectId(member.messageId);
         if (id && memberIds.indexOf(id) === -1) memberIds.push(id);
       }
@@ -370,34 +386,65 @@ export class MemoryEventEngine implements MemoryModule {
     });
 
     const excluded = new Set(request.currentTurnMessageIds || []);
+    const now = request.now || new Date();
+    // 未了结加成：本场话题/主体若挂着活跃 open item，热度更高。
+    let activeOpenItems: Array<{ topicKey: string; subjectRef?: string }> = [];
+    try {
+      activeOpenItems = await this.itemModel.find({
+        where: { userId, state: { $nin: ['resolved', 'dismissed'] } },
+      } as never);
+    } catch {
+      activeOpenItems = [];
+    }
+    const activeOpenKeys = new Set(
+      activeOpenItems.map(item => `${item.topicKey}|${item.subjectRef ?? ''}`)
+    );
+    const openKeyOf = (topicKey: string, subjectRef?: string) =>
+      `${topicKey}|${subjectRef ?? ''}`;
+
     const evidence: MemoryEvidence[] = [];
+    const packageViews: MemoryPackageView[] = [];
     for (const group of expanded) {
+      const groupId = stringifyObjectId(group.id);
+      const hasActiveOpenItem =
+        activeOpenKeys.has(openKeyOf(group.topicKey, group.subjectRef)) ||
+        [...activeOpenKeys].some(key => key.startsWith(`${group.topicKey}|`));
+      const heat = heatForGroup({
+        memberCount: group.members.length,
+        spanTo: group.spanTo,
+        hasActiveOpenItem,
+        now,
+      });
+
       evidence.push({
-        id: `group:${stringifyObjectId(group.id)}`,
+        id: `group:${groupId}`,
         kind: 'group_summary',
         text: group.title,
         occurredAt: group.spanTo.toISOString(),
         sourceMessageIds: group.members
           .map(member => stringifyObjectId(member.messageId))
           .filter(Boolean),
-        groupId: stringifyObjectId(group.id),
+        groupId,
         groupTitle: group.title,
         ...(group.subjectRef ? { personRef: group.subjectRef } : {}),
         // 组合摘要只能当背景：任何可断言内容必须回原话。
         assertPolicy: 'context',
+        score: heat,
         engine: EVENT_MEMORY_ENGINE,
       });
 
-      const members = group.members
+      const members = selectEpisodeMembers(group.members, MAX_GROUP_MEMBERS)
         .slice()
         .sort(
           (left, right) =>
-            right.occurredAt.getTime() - left.occurredAt.getTime()
+            left.occurredAt.getTime() - right.occurredAt.getTime()
         );
+      const memberEvidenceIds: string[] = [];
       for (const member of members) {
         const id = stringifyObjectId(member.messageId);
         const text = textById.get(id);
         if (!id || !text || excluded.has(id)) continue;
+        memberEvidenceIds.push(id);
         evidence.push({
           id: `member:${id}`,
           kind: 'group_member',
@@ -405,18 +452,50 @@ export class MemoryEventEngine implements MemoryModule {
           role: 'user',
           occurredAt: member.occurredAt.toISOString(),
           sourceMessageIds: [id],
-          groupId: stringifyObjectId(group.id),
+          groupId,
           groupTitle: group.title,
           ...(group.subjectRef ? { personRef: group.subjectRef } : {}),
           assertPolicy: 'quote',
+          score: heat,
           engine: EVENT_MEMORY_ENGINE,
         });
       }
+
+      // 前情链：同话题同主体的历史场次（跨场纵向关联）。
+      const historical = await this.listGroups(userId, {
+        topicKey: group.topicKey,
+        from: new Date(group.spanFrom.getTime() - EVENT_GROUP_MAX_GAP_MS),
+        to: new Date(group.spanFrom.getTime() - 1),
+      });
+      const chain = buildChainViews(
+        { subjectRef: group.subjectRef, spanFrom: group.spanFrom },
+        historical
+          .filter(h => stringifyObjectId(h.id) !== groupId)
+          .map(h => ({
+            id: stringifyObjectId(h.id),
+            title: h.title,
+            subjectRef: h.subjectRef,
+            spanFrom: h.spanFrom,
+            spanTo: h.spanTo,
+            memberCount: h.members.length,
+          }))
+      );
+      packageViews.push({
+        groupId,
+        title: group.title,
+        ...(group.subjectRef ? { subjectRef: group.subjectRef } : {}),
+        topicKey: group.topicKey,
+        spanFrom: group.spanFrom.toISOString(),
+        spanTo: group.spanTo.toISOString(),
+        memberEvidenceIds,
+        ...(chain.length ? { chain } : {}),
+      });
     }
 
-    const selected = evidence.slice(0, limit + 1);
+    const selected = evidence.slice(0, Math.max(limit, MAX_EVIDENCE_PER_RECALL));
     return {
       evidence: selected,
+      ...(packageViews.length ? { packages: packageViews } : {}),
       status: selected.length ? 'ok' : 'empty',
       diagnostics: {
         engine: EVENT_MEMORY_ENGINE,

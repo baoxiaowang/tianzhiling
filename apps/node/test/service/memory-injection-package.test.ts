@@ -1,7 +1,12 @@
 import {
+  renderMemoryPackageNarrative,
   selectInjectableMemoryPackages,
   trimPackageMembersToCapacity,
 } from '../../src/service/agents/memory-injection-package';
+import {
+  buildChainViews,
+  heatForGroup,
+} from '../../src/service/memory/memory-grouping';
 
 function member(
   overrides: Partial<{
@@ -157,5 +162,100 @@ describe('memory package injection', () => {
       },
     });
     expect(result.items[0].groupId).toBe('recent');
+  });
+
+  it('summarize 压缩：超限包产出诚实的压缩行；drop 不产出', () => {
+    const dense = Array.from({ length: 9 }, (_, i) =>
+      member({ id: `d${i}`, groupId: 'g1', score: 0.5, createdAt: T(i + 1) })
+    );
+    const summarized = selectInjectableMemoryPackages(dense, {
+      maxMembersPerPackage: 4,
+      compression: 'summarize',
+    });
+    expect(summarized.packages[0].truncated).toBe(true);
+    expect(summarized.packages[0].compressionLine).toBe(
+      '【本场共 9 条提及，超容量保留 4 条】'
+    );
+    const dropped = selectInjectableMemoryPackages(dense, {
+      maxMembersPerPackage: 4,
+      compression: 'drop',
+    });
+    expect(dropped.packages[0].truncated).toBe(true);
+    expect(dropped.packages[0].compressionLine).toBeUndefined();
+  });
+
+  it('叙事块渲染：标题+前情链+压缩行+时间正序原话引用', () => {
+    const block = renderMemoryPackageNarrative(
+      {
+        groupId: 'g1',
+        title: '复查',
+        subjectRef: '妈妈',
+        topicKey: '就医复查',
+        spanFrom: '2026-11-10T09:00:00+08:00',
+        spanTo: '2026-11-10T10:30:00+08:00',
+        chain: [
+          {
+            title: '住院那段',
+            spanFrom: '2026-06-01T09:00:00+08:00',
+            spanTo: '2026-06-20T09:00:00+08:00',
+            memberCount: 5,
+          },
+        ],
+      },
+      ['妈妈下周要复查', '结果还没出来'],
+      '【本场共 4 条提及，超容量保留 2 条】'
+    );
+    expect(block).toBe(
+      [
+        '【妈妈的就医复查｜11-10~11-10】',
+        '前情：住院那段（06-01~06-20，5 次提及）',
+        '【本场共 4 条提及，超容量保留 2 条】',
+        '原话（按时间先后，引用只认带引号部分）：',
+        '- 「妈妈下周要复查」',
+        '- 「结果还没出来」',
+      ].join('\n')
+    );
+  });
+
+  it('heatForGroup：新近+多成员+未了结升温，陈旧降温，值域钳制', () => {
+    const now = new Date('2026-11-16T12:00:00+08:00');
+    const fresh = heatForGroup({
+      memberCount: 6,
+      spanTo: new Date('2026-11-15T12:00:00+08:00'),
+      hasActiveOpenItem: true,
+      now,
+    });
+    const stale = heatForGroup({
+      memberCount: 1,
+      spanTo: new Date('2024-11-16T12:00:00+08:00'),
+      now,
+    });
+    expect(fresh).toBeGreaterThan(stale);
+    expect(fresh).toBeLessThanOrEqual(1.5);
+    expect(stale).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it('buildChainViews：只链更早场次、同主体优先、按时间倒序取 2', () => {
+    const current = {
+      subjectRef: '妈妈',
+      spanFrom: new Date('2026-11-10T09:00:00+08:00'),
+    };
+    const mk = (id: string, day: string, subjectRef?: string, n = 3) => ({
+      id,
+      title: id,
+      subjectRef,
+      spanFrom: new Date(day),
+      spanTo: new Date(day),
+      memberCount: n,
+    });
+    const chain = buildChainViews(current, [
+      mk('later', '2026-11-12'), // 比本场晚：不链
+      mk('other-person', '2026-11-01', '二哥'), // 主体不同：不链
+      mk('june', '2026-06-10', '妈妈', 5),
+      mk('sept', '2026-09-01', '妈妈', 4),
+      mk('may', '2026-05-01', undefined, 2), // 历史场无主体：视为可链
+    ]);
+    expect(chain.map(entry => entry.title)).toEqual(['sept', 'june']);
+    expect(chain[0].memberCount).toBe(4);
   });
 });
