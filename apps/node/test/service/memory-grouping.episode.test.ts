@@ -1,8 +1,10 @@
 import {
   buildGroupKey,
   EVENT_GROUP_MAX_GAP_MS,
+  heatForGroup,
   resolveEpisodeGapMs,
   resolveGroupAssignment,
+  shouldMarkDisengagement,
 } from '../../src/service/memory/memory-grouping';
 
 const CONV_A = '6af2abcd56eca3f487028e11';
@@ -125,5 +127,29 @@ describe('episode grouping（场次制分组）', () => {
     };
     expect(segment(messages)).toEqual([1, 3]);
     expect(segment(messages)).toEqual(segment([...messages])); // 两遍一致
+  });
+
+  it('回避判定：全短应答才算回避，任一实质内容即不算', () => {
+    expect(shouldMarkDisengagement(['嗯'])).toBe(true);
+    expect(shouldMarkDisengagement(['好', '嗯嗯'])).toBe(true);
+    expect(shouldMarkDisengagement(['嗯', '妈的复查结果还没出来'])).toBe(false);
+    expect(shouldMarkDisengagement(['嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯很长的应答'])).toBe(false);
+    expect(shouldMarkDisengagement([])).toBe(false);
+  });
+
+  it('热度回避惩罚：14 天内回避 ×0.6，15 天外不罚', () => {
+    const now = new Date('2026-11-16T12:00:00+08:00');
+    const base = { memberCount: 4, spanTo: now, now };
+    const engaged = heatForGroup(base);
+    const recentDisengaged = heatForGroup({
+      ...base,
+      lastUserDisengagedAt: new Date('2026-11-14T12:00:00+08:00'),
+    });
+    const oldDisengaged = heatForGroup({
+      ...base,
+      lastUserDisengagedAt: new Date('2026-10-01T12:00:00+08:00'),
+    });
+    expect(recentDisengaged).toBeCloseTo(engaged * 0.6, 3);
+    expect(oldDisengaged).toBe(engaged);
   });
 });

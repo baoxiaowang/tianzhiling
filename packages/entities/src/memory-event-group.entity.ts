@@ -73,6 +73,13 @@ export class MemoryEventGroupEntity extends BaseEntity {
   @Column()
   corrected?: boolean;
 
+  /**
+   * 用户回避时刻：上一轮注入过本场证据、本轮用户短应答/换话题。
+   * 热度惩罚用；可由消息流（replyMemoryUsedEvidenceIds + 用户反应）重建。
+   */
+  @Column()
+  lastUserDisengagedAt?: Date;
+
   @Column()
   createdAt: Date;
 

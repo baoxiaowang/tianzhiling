@@ -26,6 +26,7 @@ import {
   hashMessageText,
   heatForGroup,
   resolveGroupAssignment,
+  shouldMarkDisengagement,
 } from './memory-grouping';
 import {
   buildOpenItemSummary,
@@ -320,11 +321,82 @@ export class MemoryEventEngine implements MemoryModule {
       }
     }
 
+    // 回避反馈：本轮全是短应答且上一轮注入过某场证据 → 给该场降温标记。
+    // 失败静默（不影响主链路）；写入限频 7 天。
+    await this.markDisengagementIfAny({
+      userId,
+      conversationId,
+      reactionTexts: (request.messages || []).map(
+        message => message.content || ''
+      ),
+      now,
+    });
+
     return {
       status: processed ? 'accepted' : 'skipped',
       groupIds,
       ...(processed ? {} : { reason: 'no_fact_bearing_message' }),
     };
+  }
+
+  /**
+   * 用户回避回写：上一轮助手消息带 replyMemoryUsedEvidenceIds（member:<id>），
+   * 且本轮用户全是短应答（shouldMarkDisengagement）→ 命中场写 lastUserDisengagedAt。
+   */
+  private async markDisengagementIfAny(options: {
+    userId: MongoObjectId;
+    conversationId: MongoObjectId;
+    reactionTexts: string[];
+    now: Date;
+  }): Promise<void> {
+    try {
+      if (!shouldMarkDisengagement(options.reactionTexts)) return;
+      const recentAssistant = await this.messageModel.find({
+        where: {
+          conversationId: options.conversationId,
+          role: MessageRole.assistant,
+        },
+        order: { createdAt: 'DESC' },
+        take: 10,
+      } as never);
+      const withEvidence = recentAssistant.find(message => {
+        const ids = (
+          message as unknown as { replyMemoryUsedEvidenceIds?: string[] }
+        ).replyMemoryUsedEvidenceIds;
+        return Array.isArray(ids) && ids.some(id => id.startsWith('member:'));
+      });
+      if (!withEvidence) return;
+      const memberIds = (
+        (withEvidence as unknown as { replyMemoryUsedEvidenceIds?: string[] })
+          .replyMemoryUsedEvidenceIds || []
+      )
+        .filter(id => id.startsWith('member:'))
+        .map(id => toObjectId(id.slice('member:'.length)))
+        .filter(Boolean);
+      if (!memberIds.length) return;
+      const groups = await this.groupModel.find({
+        where: {
+          userId: options.userId,
+          status: MemoryEventGroupStatus.active,
+          'members.messageId': { $in: memberIds },
+        },
+      } as never);
+      const rateLimitMs = 7 * 24 * 60 * 60 * 1000;
+      for (const group of groups) {
+        if (
+          group.lastUserDisengagedAt &&
+          options.now.getTime() - group.lastUserDisengagedAt.getTime() <
+            rateLimitMs
+        ) {
+          continue;
+        }
+        group.lastUserDisengagedAt = options.now;
+        group.updatedAt = options.now;
+        await this.groupModel.save(group);
+      }
+    } catch {
+      // 回避标记失败不影响写入主链路。
+    }
   }
 
   async recall(request: MemoryRecallRequest): Promise<MemoryRecallResult> {
@@ -413,6 +485,7 @@ export class MemoryEventEngine implements MemoryModule {
         memberCount: group.members.length,
         spanTo: group.spanTo,
         hasActiveOpenItem,
+        lastUserDisengagedAt: group.lastUserDisengagedAt,
         now,
       });
 

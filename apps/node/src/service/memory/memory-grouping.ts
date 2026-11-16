@@ -145,6 +145,8 @@ export function heatForGroup(input: {
   memberCount: number;
   spanTo: Date;
   hasActiveOpenItem?: boolean;
+  /** 用户回避时刻：14 天内 ×0.6（叠乘后仍受值域钳制）。 */
+  lastUserDisengagedAt?: Date;
   now?: Date;
 }): number {
   const now = input.now ?? new Date();
@@ -153,8 +155,27 @@ export function heatForGroup(input: {
   const recency = Math.max(0.7, 1 - (ageDays / 730) * 0.3);
   const volume = 1 + 0.15 * Math.log2(1 + Math.max(0, input.memberCount));
   const unresolved = input.hasActiveOpenItem ? 1.3 : 1;
-  const raw = recency * volume * unresolved;
+  const disengagedDaysAgo = input.lastUserDisengagedAt
+    ? (now.getTime() - input.lastUserDisengagedAt.getTime()) / 86400000
+    : Number.POSITIVE_INFINITY;
+  const disengagedPenalty = disengagedDaysAgo < 14 ? 0.6 : 1;
+  const raw = recency * volume * unresolved * disengagedPenalty;
   return Math.min(1.5, Math.max(0.6, Number(raw.toFixed(4))));
+}
+
+/**
+ * 回避判定（纯函数，保守）：本轮用户消息全部为短应答且无话题实质，
+ * 视为对上一轮注入话题的回避。任一条有实质内容即不算回避。
+ */
+const DISENGAGEMENT_ACK_PATTERN =
+  /^(?:嗯+|哦+|呵+|好|好的|行|可以|知道了|收到|嗯嗯|嗯呢|哦哦|好嘞|好滴|是的|对|没事|算了|先这样)[。.!！~～\s]*$/u;
+
+export function shouldMarkDisengagement(reactionTexts: string[]): boolean {
+  const texts = reactionTexts.map(text => String(text || '').trim()).filter(Boolean);
+  if (!texts.length) return false;
+  return texts.every(
+    text => text.length <= 8 && DISENGAGEMENT_ACK_PATTERN.test(text)
+  );
 }
 
 export interface ChainableGroupLike {
