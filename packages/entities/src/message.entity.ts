@@ -647,6 +647,12 @@ export class MessageEntity extends BaseEntity {
   // 触发检索的请柬类型：entity_name / defer_return / ritual_anchor；空=键/信号/规划器
   replyMemoryRetrievalInvitation?: string;
 
+  // 记忆注入选择模式：package_v1（按包）/ item_legacy（逐条）
+  replyMemoryInjectionMode?: string;
+
+  // 本次注入中被容量硬顶截断的包数量（超限包可观测，为未来包压缩/拆分优化提供数据）
+  replyMemoryInjectionOversizedCount?: number;
+
   @Column()
   replyMemoryRetrievalRequestCount?: number;
 

@@ -674,6 +674,10 @@ interface ReplyRoutingAudit {
     | 'tool_takeover';
   /** 触发检索的请柬类型：entity_name / defer_return / ritual_anchor；空=键/信号/规划器 */
   memoryRetrievalInvitation?: string;
+  /** 记忆注入选择模式：package_v1 / item_legacy */
+  memoryInjectionMode?: string;
+  /** 本次注入中被容量硬顶截断的包数量（超限包可观测） */
+  memoryInjectionOversizedCount?: number;
   memoryRetrievalRequestCount?: number;
   memoryRetrievalConceptCount?: number;
   memoryRetrievedEvidenceCount?: number;
@@ -12714,6 +12718,8 @@ export class ConversationService {
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
     replyMemoryRetrievalInvitation?: string;
+    replyMemoryInjectionMode?: string;
+    replyMemoryInjectionOversizedCount?: number;
     replyMemoryRetrievalRequestCount?: number;
     replyMemoryRetrievalConceptCount?: number;
     replyMemoryRetrievedEvidenceCount?: number;
@@ -12947,6 +12953,10 @@ export class ConversationService {
         routing?.memoryRetrievalMode?.trim() || undefined,
       replyMemoryRetrievalInvitation:
         routing?.memoryRetrievalInvitation?.trim() || undefined,
+      replyMemoryInjectionMode:
+        routing?.memoryInjectionMode?.trim() || undefined,
+      replyMemoryInjectionOversizedCount:
+        routing?.memoryInjectionOversizedCount,
       replyMemoryRetrievalRequestCount: routing?.memoryRetrievalRequestCount,
       replyMemoryRetrievalConceptCount: routing?.memoryRetrievalConceptCount,
       replyMemoryRetrievedEvidenceCount: routing?.memoryRetrievedEvidenceCount,
@@ -13104,6 +13114,8 @@ export class ConversationService {
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
     replyMemoryRetrievalInvitation?: string;
+    replyMemoryInjectionMode?: string;
+    replyMemoryInjectionOversizedCount?: number;
     replyMemoryRetrievalRequestCount?: number;
     replyMemoryRetrievalConceptCount?: number;
     replyMemoryRetrievedEvidenceCount?: number;
@@ -13405,6 +13417,10 @@ export class ConversationService {
       options.replyMemoryRetrievalMode?.trim() || undefined;
     message.replyMemoryRetrievalInvitation =
       options.replyMemoryRetrievalInvitation?.trim() || undefined;
+    message.replyMemoryInjectionMode =
+      options.replyMemoryInjectionMode?.trim() || undefined;
+    message.replyMemoryInjectionOversizedCount =
+      options.replyMemoryInjectionOversizedCount;
     message.replyMemoryRetrievalRequestCount = this.normalizeTokenCount(
       options.replyMemoryRetrievalRequestCount
     );

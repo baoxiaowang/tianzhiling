@@ -59,6 +59,10 @@ import {
   buildAgentTimeMarkers,
 } from './agent-memory-fact.service';
 import {
+  PackageInjectionResult,
+  selectInjectableMemoryPackages,
+} from './memory-injection-package';
+import {
   AgentProfileFactService,
   AgentProfileFactSummary,
 } from './agent-profile-fact.service';
@@ -363,6 +367,18 @@ export interface AgentContextDiagnostics {
   memoryRetrievalMode: MemoryRetrievalMode;
   /** 本次触发检索的请柬类型（entity_name/defer_return/ritual_anchor；空=键/信号/规划器路径） */
   memoryRetrievalInvitation?: string;
+  /** 注入选择模式：package_v1（按包）/ item_legacy（逐条，开关 off 时）。 */
+  memoryInjectionMode?: string;
+  /** 按包注入统计：每包原始 vs 注入规模与截断标记（超限包可观测）。 */
+  memoryInjectionPackages?: Array<{
+    groupId: string;
+    injectedMembers: number;
+    originalMembers: number;
+    injectedChars: number;
+    originalChars: number;
+    truncated: boolean;
+  }>;
+  memoryInjectionOversizedCount?: number;
   memoryRetrievalRequestCount: number;
   memoryRetrievalConceptCount: number;
   memoryRetrievedEvidenceCount: number;
@@ -1366,9 +1382,15 @@ export class AgentContextService {
           ));
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
       memoryRetrievalReady ? 'active' : 'suppressed';
+    // 按包注入开关：off 回退逐条选择（回滚 = 改一个环境变量）。
+    const memoryPackageInjectionEnabled =
+      (process.env.NODE_MEMORY_PACKAGE_INJECTION || 'active')
+        .trim()
+        .toLowerCase() !== 'off';
     const retrievedMemories: RetrievedContextSnippet[] = [];
     let retrievalFailureCount = 0;
     let retrievalDiagnostics: Record<string, unknown> = {};
+    let packageInjection: PackageInjectionResult | undefined;
     if (effectiveMemoryRetrievalMode === 'active') {
       try {
         // 只注入最相关的少数几条：先丢掉碎片与"当前这轮原话自己"，
@@ -1455,7 +1477,15 @@ export class AgentContextService {
               personId: item.personRef,
               memoryKind: item.kind,
             }));
-          retrievedMemories.push(...selectInjectable(snippets));
+          // 按包注入：同组证据整包进出，容量硬顶截断必带标记（详见模块注释）。
+          if (memoryPackageInjectionEnabled) {
+            packageInjection = selectInjectableMemoryPackages(snippets, {
+              recencyFactor,
+            });
+            retrievedMemories.push(...packageInjection.items);
+          } else {
+            retrievedMemories.push(...selectInjectable(snippets));
+          }
           retrievalDiagnostics = {
             memoryEngine: recalled.diagnostics.engine,
             memoryModuleMode: recalled.diagnostics.mode,
@@ -1987,6 +2017,11 @@ export class AgentContextService {
         memoryCoverageFallbackApplied,
         memoryRetrievalMode: effectiveMemoryRetrievalMode,
         memoryRetrievalInvitation,
+        memoryInjectionMode: memoryPackageInjectionEnabled
+          ? 'package_v1'
+          : 'item_legacy',
+        memoryInjectionPackages: packageInjection?.packages,
+        memoryInjectionOversizedCount: packageInjection?.oversizedCount ?? 0,
         memoryRetrievalRequestCount: 0,
         memoryRetrievalConceptCount: memoryRetrieval.conceptCount,
         memoryRetrievedEvidenceCount: evidence.filter(item =>
