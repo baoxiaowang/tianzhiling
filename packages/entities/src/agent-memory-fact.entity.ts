@@ -49,6 +49,10 @@ export class AgentMemoryFactEntity extends BaseEntity {
   @Column()
   sourceMessageId?: MongoObjectId;
 
+  // 记忆来源模态：voice=用户语音转写，image=图片理解，text=普通文本
+  @Column()
+  sourceModality?: 'voice' | 'image' | 'text';
+
   @Column()
   isArchived?: boolean;
 

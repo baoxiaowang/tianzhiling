@@ -6,6 +6,7 @@ import {
   AgentMemoryFactPolarity,
   AgentMemoryFactType,
   MessageEntity,
+  MessageType,
   MongoObjectId,
 } from '@tzl/entities';
 import {
@@ -23,6 +24,8 @@ export interface AgentMemoryFactSummary {
   polarity: AgentMemoryFactPolarity;
   priority: number;
   sourceMessageId?: string;
+  /** 记忆来源模态：voice=用户语音转写，image=图片理解，text=普通文本 */
+  sourceModality?: 'voice' | 'image' | 'text';
 }
 
 interface ExtractMemoryFactsOptions {
@@ -144,6 +147,7 @@ export class AgentMemoryFactService {
         userId: options.message.userId,
         agentId: options.message.agentId,
         sourceMessageId: options.message.id,
+        sourceModality: this.resolveMemoryFactModality(options.message),
       });
     }
 
@@ -250,10 +254,24 @@ export class AgentMemoryFactService {
     fact.polarity = input.polarity;
     fact.priority = input.priority;
     fact.sourceMessageId = input.sourceMessageId;
+    fact.sourceModality = input.sourceModality;
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
     await this.factModel.save(fact);
+  }
+
+  // 记忆来源模态：按消息类型归一到 voice / image / text。
+  private resolveMemoryFactModality(
+    message: MessageEntity
+  ): 'voice' | 'image' | 'text' {
+    if (message.type === MessageType.voice) {
+      return 'voice';
+    }
+    if (message.type === MessageType.image) {
+      return 'image';
+    }
+    return 'text';
   }
 
   private extractFacts(text: string): AgentMemoryFactSummary[] {
@@ -1321,6 +1339,10 @@ export class AgentMemoryFactService {
 
     if (sourceMessageId) {
       summary.sourceMessageId = sourceMessageId;
+    }
+
+    if (fact.sourceModality) {
+      summary.sourceModality = fact.sourceModality;
     }
 
     return summary;

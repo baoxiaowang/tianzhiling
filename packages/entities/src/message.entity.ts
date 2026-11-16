@@ -379,6 +379,13 @@ export class MessageEntity extends BaseEntity {
   @Column()
   replyLowInfoStatus?: boolean;
 
+  // 低信息轮状态注入·影子模式（第 0 步）：只记录决策，不影响回复内容。
+  @Column()
+  replyStateShadowWouldInject?: boolean;
+
+  @Column()
+  replyStateShadowDetail?: string;
+
   @Column()
   replyBriefMaxSegments?: number;
 

@@ -1081,6 +1081,46 @@ export class RelationshipOpenLoopService {
     }
   }
 
+  /**
+   * 影子模式候选（低信息轮状态注入第 0 步）：只读返回未闭合的 open loop 任务。
+   * 不修改存储；loadUnifiedStore 内部已做过期清理。
+   */
+  async loadShadowCandidates(
+    conversationId: MongoObjectId,
+    now: Date = new Date()
+  ): Promise<
+    Array<{
+      kind: 'open_loop';
+      ref: string;
+      subject: string;
+      state?: string;
+      updatedAt?: string;
+    }>
+  > {
+    return this.withStorageQueue(conversationId, async () => {
+      const { store } = await this.loadUnifiedStore(conversationId, now);
+      const terminalStates = new Set([
+        'resolved',
+        'dismissed',
+        'superseded',
+        'dormant',
+      ]);
+      return store.tasks
+        .filter(task => !terminalStates.has(task.state))
+        .map(task => ({
+          kind: 'open_loop' as const,
+          ref: task.id,
+          subject: task.summary || task.subject || '',
+          state: task.state,
+          updatedAt: (
+            task.lastMentionedAt ??
+            task.latestSourceOccurredAt ??
+            task.sourceOccurredAt
+          )?.toISOString(),
+        }));
+    });
+  }
+
   private async loadUnifiedStore(
     conversationId: MongoObjectId,
     now: Date

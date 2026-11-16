@@ -75,6 +75,10 @@ import { AgentConversationSummaryService } from './agents/agent-conversation-sum
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { PresenceStateService } from './agents/presence-state.service';
 import { applyMomentFrameToSegments, resolveMomentFrame } from './agents/moment-frame';
+import {
+  isSameLocalDay,
+  resolveLowInfoStateShadowDecision,
+} from './agents/low-info-state-shadow';
 import { normalizePersonReferenceOutsideQuotes } from './agents/person-reference';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
@@ -598,6 +602,8 @@ interface ReplyRoutingAudit {
   momentFilterApplied?: boolean;
   personReferenceNormalized?: boolean;
   lowInfoStatus?: boolean;
+  stateShadowWouldInject?: boolean;
+  stateShadowDetail?: string;
   skipReply?: boolean;
   fallbackSource?: string;
   generationFailureStage?: 'context' | 'completion' | 'parse';
@@ -6278,6 +6284,21 @@ export class ConversationService {
       runtime.conversation.userId,
       referenceAdjustedSegments
     );
+    // 低信息轮状态注入·影子模式（第 0 步）：只计算并落审计字段，不改变回复内容。
+    const stateShadowDecision = await this.resolveLowInfoStateShadowDecision({
+      conversationId: runtime.conversation.id,
+      momentType: replyBrief.momentFrame?.momentType,
+      currentQuery: before.searchableText,
+      messages: context.messages,
+      currentTurnMessages,
+    }).catch(error => {
+      this.logger?.warn?.(
+        '[conversation] state shadow decision skipped, conversationId=%s reason=%s',
+        this.stringifyObjectId(runtime.conversation.id),
+        this.describeReplyError(error)
+      );
+      return undefined;
+    });
     return this.attachTurnStatePlans(
       {
         replySegments: addressGuardedSegments,
@@ -6301,6 +6322,8 @@ export class ConversationService {
           personReferenceNormalized,
           lowInfoStatus:
             replyBrief.momentFrame?.momentType === 'low_info_status',
+          stateShadowWouldInject: stateShadowDecision?.wouldInject,
+          stateShadowDetail: stateShadowDecision?.reason,
           guardrailRewritten: guarded.rewritten,
           guardrailReason: guarded.reason,
           guardrailInterventionLevel: guarded.interventionLevel,
@@ -9545,15 +9568,25 @@ export class ConversationService {
     if (message.type === MessageType.image) {
       return this.buildImageSearchableText(
         message.mediaAnalysis,
-        message.content
+        this.stripMediaPlaceholder(message.content)
       );
     }
 
     if (message.type === MessageType.voice) {
-      return message.mediaTranscript?.trim() || message.content?.trim() || '';
+      return (
+        message.mediaTranscript?.trim() ||
+        this.stripMediaPlaceholder(message.content) ||
+        ''
+      );
     }
 
     return message.content?.trim() || '';
+  }
+
+  // 转写/分析缺失时，占位符文本（如 "[语音]"/"[图片]"）不进入检索与记忆抽取输入。
+  private stripMediaPlaceholder(content?: string): string {
+    const value = content?.trim() || '';
+    return /^\[(?:语音|图片|视频|文件|动画)\]$/.test(value) ? '' : value;
   }
 
   private parseOptionalDate(value?: string): Date | undefined {
@@ -12515,6 +12548,48 @@ export class ConversationService {
       .trim();
   }
 
+  /**
+   * 低信息轮状态注入·影子决策（第 0 步）。
+   * 候选源：relationship open loop（未闭合任务）；时机/预算/情绪门见模块注释。
+   * 任何失败都静默降级为 undefined，不影响回复主链路。
+   */
+  private async resolveLowInfoStateShadowDecision(options: {
+    conversationId: MessageEntity['id'];
+    momentType?: string;
+    currentQuery: string;
+    messages: MessageEntity[];
+    currentTurnMessages: MessageEntity[];
+  }): Promise<{ wouldInject: boolean; reason: string } | undefined> {
+    if (!this.relationshipOpenLoopService) {
+      return undefined;
+    }
+    const candidates = await this.relationshipOpenLoopService.loadShadowCandidates(
+      options.conversationId
+    );
+    const now = new Date();
+    const historyUserToday = options.messages.filter(
+      message =>
+        message.role === MessageRole.user &&
+        message.createdAt &&
+        isSameLocalDay(message.createdAt, now)
+    );
+    const alreadyInjectedToday = options.messages.some(
+      message =>
+        message.role === MessageRole.assistant &&
+        message.replyStateShadowWouldInject &&
+        message.createdAt &&
+        isSameLocalDay(message.createdAt, now)
+    );
+    return resolveLowInfoStateShadowDecision({
+      momentType: options.momentType,
+      currentQuery: options.currentQuery,
+      isFirstUserTurnOfDay: historyUserToday.length === 0,
+      alreadyInjectedToday,
+      candidates,
+      now,
+    });
+  }
+
   private buildReplyRoutingMessageFields(routing?: ReplyRoutingAudit): {
     replyIntentTarget?: string;
     replyIntentTimeScope?: string;
@@ -12541,6 +12616,8 @@ export class ConversationService {
     replyMomentFilterApplied?: boolean;
     replyPersonReferenceNormalized?: boolean;
     replyLowInfoStatus?: boolean;
+    replyStateShadowWouldInject?: boolean;
+    replyStateShadowDetail?: string;
     replyBriefStrictGrounding?: boolean;
     replyBriefFactClaimMode?: string;
     replyBriefMaxSegments?: number;
@@ -12675,6 +12752,8 @@ export class ConversationService {
       replyMomentFilterApplied: routing?.momentFilterApplied,
       replyPersonReferenceNormalized: routing?.personReferenceNormalized,
       replyLowInfoStatus: routing?.lowInfoStatus,
+      replyStateShadowWouldInject: routing?.stateShadowWouldInject,
+      replyStateShadowDetail: routing?.stateShadowDetail?.trim() || undefined,
       replyBriefStrictGrounding: routing?.brief?.strictGrounding,
       replyBriefFactClaimMode: routing?.brief?.factClaimMode,
       replyBriefMaxSegments: routing?.brief?.bubblePlan?.maxSegments,
@@ -12926,6 +13005,8 @@ export class ConversationService {
     replyMomentFilterApplied?: boolean;
     replyPersonReferenceNormalized?: boolean;
     replyLowInfoStatus?: boolean;
+    replyStateShadowWouldInject?: boolean;
+    replyStateShadowDetail?: string;
     replyBriefStrictGrounding?: boolean;
     replyBriefFactClaimMode?: string;
     replyBriefMaxSegments?: number;
@@ -13110,6 +13191,9 @@ export class ConversationService {
     message.replyPersonReferenceNormalized =
       options.replyPersonReferenceNormalized;
     message.replyLowInfoStatus = options.replyLowInfoStatus;
+    message.replyStateShadowWouldInject = options.replyStateShadowWouldInject;
+    message.replyStateShadowDetail =
+      options.replyStateShadowDetail?.trim() || undefined;
     message.replyBriefStrictGrounding = options.replyBriefStrictGrounding;
     message.replyBriefFactClaimMode =
       options.replyBriefFactClaimMode?.trim() || undefined;
