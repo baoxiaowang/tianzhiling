@@ -21,7 +21,8 @@ describe('role core memory: hometown derived language setting', () => {
     });
 
     expect(result.active).toMatchObject({
-      value: '说山东话',
+      // 口音倾向级：产品派生只给口音倾向（2026-11-16 拍板）
+      value: '带山东话口音倾向的普通话',
       origin: 'product_derived',
       active: true,
     });
@@ -47,7 +48,7 @@ describe('role core memory: hometown derived language setting', () => {
     // 旧的山东默认不再注入，但作为解释保留
     expect(result.superseded).toHaveLength(1);
     expect(result.superseded[0]).toMatchObject({
-      value: '说山东话',
+      value: '带山东话口音倾向的普通话',
       active: false,
     });
     expect(result.superseded[0].reason).toContain('覆盖');

@@ -170,7 +170,14 @@ function buildHometownDerivedSetting(
   // 没有来源就不生成派生设定：产品派生也必须可追溯。
   if (!hometown?.source) return undefined;
   // 「普通话」这类标签同样由模型给出，不在这里用省份反推。
-  const value = DIALECT_VERB_PATTERN.test(label) ? label : `说${label}`;
+  // 口音倾向级（2026-11-16 拍板）：产品由籍贯派生的语言设定只给口音倾向，
+  // 不要求说方言——语气像，不演方言戏；用户明说（带说/讲动词）的保留原样。
+  // 「普通话」标签直接原样返回：套口音模板会生成病句"带普通话口音倾向的普通话"。
+  // 分寸句（不演方言戏）不写进事实值：它属于行为约束，随人格渲染时追加一次，
+  // 只对"产品派生"设定生效，避免 98% 无语言设定的用户每轮为它付费。
+  const value = DIALECT_VERB_PATTERN.test(label) || label === '普通话'
+    ? label
+    : `带${label}口音倾向的普通话`;
   return {
     value,
     origin: 'product_derived',

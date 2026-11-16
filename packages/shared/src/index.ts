@@ -3,6 +3,7 @@ export * from './admin-operations';
 export * from './auth';
 export * from './chat-import-language-profile';
 export * from './china-region';
+export * from './region-dialect';
 export {
   findDouyinPromotionExpense,
   getDouyinPromotionExpense,

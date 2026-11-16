@@ -23,7 +23,8 @@ describe('role core pathway: stated hometown -> adopted language -> final prompt
 
     const active = settings.find(item => item.active);
     expect(active).toMatchObject({
-      value: '说山东话',
+      // 口音倾向级（2026-11-16）：产品派生只给口音倾向，不要求说方言
+      value: '带山东话口音倾向的普通话',
       origin: 'product_derived',
     });
     // 派生设定必须指回籍贯事实的来源
@@ -39,7 +40,7 @@ describe('role core pathway: stated hometown -> adopted language -> final prompt
       coreLanguageSettings: settings,
     });
 
-    expect(prompt).toContain('说山东话');
+    expect(prompt).toContain('山东话口音倾向');
     expect(prompt).toContain('由籍贯生成');
   });
 
@@ -59,7 +60,7 @@ describe('role core pathway: stated hometown -> adopted language -> final prompt
     expect(active?.value).toBe('一直讲普通话');
     // 旧的山东默认保留但不再 active
     const superseded = settings.find(item => !item.active);
-    expect(superseded?.value).toBe('说山东话');
+    expect(superseded?.value).toContain('山东话口音倾向');
 
     const { prompt } = buildAgentPersonaPrompt({
       agent: { name: '爷爷', sex: AgentSex.man } as never,
@@ -102,6 +103,6 @@ describe('role core pathway: deriveLanguageSettings stays the single decision ru
         source: { kind: 'user_explicit' },
       },
     });
-    expect(viaRule.active?.value).toBe('说山东话');
+    expect(viaRule.active?.value).toContain('山东话口音倾向');
   });
 });

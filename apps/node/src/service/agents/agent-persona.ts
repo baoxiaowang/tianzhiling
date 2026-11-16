@@ -67,6 +67,10 @@ const LANGUAGE_BLOCK_BUDGET_CHARS = 420;
 /** 画像块总行数上限；语言维度逐项占用后才轮到其它画像项。 */
 const MAX_CHAT_DERIVED_LINES = 14;
 
+/** 产品派生口音设定的分寸句：只随该设定渲染一次，不常驻（无语言设定用户不付费）。 */
+export const PRODUCT_DERIVED_DIALECT_GUARD =
+  '语言分寸：口音倾向即可，语气像，不演方言戏；除非用户自己先用方言词，否则用普通话。';
+
 export function buildAgentPersonaPrompt(options: {
   agent: AgentEntity | null;
   identityContract?: AgentIdentityContract;
@@ -93,6 +97,16 @@ export function buildAgentPersonaPrompt(options: {
   // 当前采用的语言设定优先于样本提取的风格维度：它已经过冲突解决，
   // 且"称呼/口吻"这类条目最容易被后面的行数预算挤掉。
   const coreLanguageLines = buildCoreLanguageLines(options.coreLanguageSettings);
+  // 事实/指令分离：分寸句不写进语言设定事实，只在"产品派生"设定出现时追加一次。
+  const hasProductDerivedLanguage = (options.coreLanguageSettings || []).some(
+    setting =>
+      setting?.active &&
+      setting.origin === 'product_derived' &&
+      Boolean(setting.value?.trim())
+  );
+  if (hasProductDerivedLanguage) {
+    coreLanguageLines.push(PRODUCT_DERIVED_DIALECT_GUARD);
+  }
   const profileLines = profile ? buildChatDerivedProfileLines(profile) : [];
   const hasUsableProfile = profileLines.length > 0;
   const adoptionLines = [...coreLanguageLines, ...profileLines];
