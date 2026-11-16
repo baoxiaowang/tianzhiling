@@ -154,14 +154,24 @@ function addUserMessage(
 describe('事件分组纯逻辑', () => {
   const spanTo = new Date('2026-09-07T10:00:00.000Z');
 
-  it('同话题、同主体、时间连续 → 并入', () => {
+  it('同话题、同主体、场次内相邻（≤2h）→ 并入', () => {
+    expect(
+      resolveGroupAssignment({
+        topicKey: '抽烟',
+        occurredAt: new Date('2026-09-07T11:30:00.000Z'),
+        candidates: [{ groupId: 'g1', topicKey: '抽烟', spanTo }],
+      })
+    ).toEqual({ action: 'join', groupId: 'g1' });
+  });
+
+  it('同话题同主体但隔场（超 2h）→ 开新的一场（跨场靠链）', () => {
     expect(
       resolveGroupAssignment({
         topicKey: '抽烟',
         occurredAt: new Date('2026-09-13T10:00:00.000Z'),
         candidates: [{ groupId: 'g1', topicKey: '抽烟', spanTo }],
       })
-    ).toEqual({ action: 'join', groupId: 'g1' });
+    ).toEqual({ action: 'create' });
   });
 
   it('超过生命周期上限 → 开新的一件', () => {
@@ -194,7 +204,7 @@ describe('事件分组纯逻辑', () => {
     ).toEqual({ action: 'create' });
   });
 
-  it('多个候选时并入最近的一件', () => {
+  it('多个候选时并入场次内最近的一件', () => {
     expect(
       resolveGroupAssignment({
         topicKey: '抽烟',
@@ -208,7 +218,7 @@ describe('事件分组纯逻辑', () => {
           {
             groupId: 'new',
             topicKey: '抽烟',
-            spanTo: new Date('2026-09-15T00:00:00Z'),
+            spanTo: new Date('2026-09-20T09:00:00Z'),
           },
         ],
       })
@@ -290,7 +300,8 @@ describe('事件组合引擎', () => {
         {
           messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
           content: '爸爸，大儿今天没忍住又抽烟了',
-          occurredAt: new Date('2026-09-13T10:00:00.000Z'),
+          // 场次制：同一场内（≤2h 相邻）才并组；跨天属另一场。
+          occurredAt: new Date('2026-09-07T11:10:00.000Z'),
         },
         // 重复提交第一条：不能变成两个成员
         {
