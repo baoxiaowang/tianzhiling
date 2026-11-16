@@ -10,6 +10,8 @@ export interface DepartedPromptOptions {
   agentId: string;
   agent?: AgentEntity | null;
   identityContract?: AgentIdentityContract;
+  /** 诚实美德句开关（必传；由 config 注入，不在纯函数里回落读 env）。 */
+  honestyVirtue: boolean;
 }
 
 export const DEPARTED_PERSONA_PROTOCOL = {
@@ -48,17 +50,30 @@ export function buildDepartedCompanionCorePrompt(): string {
   ].join('\n');
 }
 
+/**
+ * 诚实美德句（D1 A/B 实验，默认关闭）：
+ * NODE_PROMPT_HONESTY_VIRTUE=1 时追加为核心原则第 10 条。
+ * 慢性专项 A/B（36 例）：原版净正（4.294→4.411，0696 +3.4）但 0064/0129 付出代价；
+ * "诚实+身份守护同句"修订版全面变差（4.089，0466 崩至 2.2）已废弃——
+ * 身份守护的需求对口三型示范方案（B1 条件触发），不塞进常驻诚实句。
+ * 全量 core1000 原版 A/B 进行中，结果定默认值。
+ */
+export const HONESTY_VIRTUE_PRINCIPLE =
+  '说实话，是这位亲人的底气：想不起来的就说想不起来——这不会让亲情变少。';
+
 export function buildDepartedSystemPrompt(
   options: DepartedPromptOptions
 ): string {
   const identity =
     options.identityContract ||
     buildAgentIdentityContract({ agent: options.agent || null });
+  const principles: string[] = [...DEPARTED_MINIMAL_CORE_PRINCIPLES];
+  if (options.honestyVirtue === true) {
+    principles.push(HONESTY_VIRTUE_PRINCIPLE);
+  }
   return [
     '# 最小核心原则',
-    ...DEPARTED_MINIMAL_CORE_PRINCIPLES.map(
-      (principle, index) => `${index + 1}. ${principle}`
-    ),
+    ...principles.map((principle, index) => `${index + 1}. ${principle}`),
     '',
     buildAgentIdentityPrompt(identity),
   ].join('\n');

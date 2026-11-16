@@ -27,6 +27,11 @@ import {
 } from '@tzl/shared';
 import { AuthenticatedUserPayload } from '../../interface';
 import {
+  MAX_CONDITIONAL_PROMPT_MAX_CHARS,
+  MIN_CONDITIONAL_PROMPT_MAX_CHARS,
+  resolveConditionalPromptMaxChars,
+} from '../../config/prompt-engineering';
+import {
   containsUnsafeAssistantHistoryContent,
   stripPromptLeakageContent,
 } from '../../common/message-content-safety';
@@ -981,6 +986,55 @@ export class AgentContextService {
   @Config('chatProgramReduction')
   chatProgramReductionConfig: ReplyPromptLayerConfig;
 
+  @Config('promptEngineering')
+  promptEngineeringConfig?: {
+    conditionalPromptMaxChars?: number;
+    conditionalPromptMaxCharsAdjusted?: boolean;
+    honestyVirtue?: boolean;
+  };
+
+  /** 条件段预算的进程内缓存：一次解析、一次告警，避免每轮构建 prompt 刷日志。 */
+  private conditionalPromptMaxCharsCache?: number;
+  private conditionalPromptMaxCharsWarned = false;
+  private promptEngineeringEffectiveLogged = false;
+
+  /**
+   * 条件段字符预算：config 层已钳制到 [300, 2000]；这里只做懒加载 + 越界告警一次。
+   * （曾用 `Number(env) || 800` 裸读：`"0"` 静默回落、负数被 clamp 成 0 全灭——复核修正。）
+   */
+  private resolveConditionalPromptMaxChars(): number {
+    if (this.conditionalPromptMaxCharsCache !== undefined) {
+      return this.conditionalPromptMaxCharsCache;
+    }
+    const config = this.promptEngineeringConfig ?? {};
+    const resolution = resolveConditionalPromptMaxChars(
+      config.conditionalPromptMaxChars
+    );
+    if (
+      (config.conditionalPromptMaxCharsAdjusted || resolution.adjusted) &&
+      !this.conditionalPromptMaxCharsWarned
+    ) {
+      this.conditionalPromptMaxCharsWarned = true;
+      this.logger?.warn?.(
+        '[conditional-prompt] 预算配置 %s 越界（%d–%d），已钳制为 %d；仅提示一次',
+        config.conditionalPromptMaxChars,
+        MIN_CONDITIONAL_PROMPT_MAX_CHARS,
+        MAX_CONDITIONAL_PROMPT_MAX_CHARS,
+        resolution.value
+      );
+    }
+    if (!this.promptEngineeringEffectiveLogged) {
+      this.promptEngineeringEffectiveLogged = true;
+      this.logger?.info?.(
+        '[prompt-engineering] conditionalPromptMaxChars=%d honestyVirtue=%s',
+        resolution.value,
+        config.honestyVirtue === true
+      );
+    }
+    this.conditionalPromptMaxCharsCache = resolution.value;
+    return resolution.value;
+  }
+
   async buildConversationContext(
     options: BuildConversationContextOptions
   ): Promise<AgentConversationContext> {
@@ -1147,10 +1201,11 @@ export class AgentContextService {
       identity,
       profileFacts,
     });
+    const coreLanguageSettings = buildCoreLanguageSettings({ profileFacts });
     const persona = buildAgentPersonaPrompt({
       agent: options.agent,
       identityContract: identity,
-      coreLanguageSettings: buildCoreLanguageSettings({ profileFacts }),
+      coreLanguageSettings,
       // 人格底色并入 `# 当前角色与关系`，避免同一段身份/关系信息分两个小节重复。
       embedInIdentitySection: true,
     });
@@ -2208,6 +2263,7 @@ export class AgentContextService {
       ),
       agent: options.agent,
       identityContract: identity,
+      honestyVirtue: this.promptEngineeringConfig?.honestyVirtue === true,
     });
     const continuitySummaryPrompt = options.sessionBoundary
       ? this.buildPastSessionSummaryPrompt(
@@ -2349,6 +2405,12 @@ export class AgentContextService {
           .filter(Boolean)
           .join('\n')
       : returnTurnMaterialPrompt;
+    // 层系统与条件编译器的分工：plan（reply-prompt-layer）是语义决策者，决定哪些层
+    // 参与本轮；其 includeTask 闸在下方 dynamicCompiled.compile({ includeTask }) 处生效
+    // ——includeTask=false 时 taskParts（含条件段）整层不进 prompt。条件编译器只在
+    // 任务层内部做物理裁剪（块数/字符预算）。注：当前 includeTask 恒为 true，
+    // 此闸为未来预留，不做事后断言（曾加过的 fired 断言因恒真分支为死代码已删）。
+    const conditionalPromptMaxChars = this.resolveConditionalPromptMaxChars();
     const conditionalCompiled = compileConditionalPrompts(
       [
         {
@@ -2358,17 +2420,6 @@ export class AgentContextService {
           // 考验模式压掉“直接回答/必须用旧事”，但不压安全、纠正和证据边界。
           suppresses: ['direct_answer', 'return_turn_proof'],
         },
-        ...(memoryPackageNarrativePrompt
-          ? [
-              {
-                id: 'memory_package_narrative',
-                priority: 40,
-                // 一件事的来龙去脉（背景结构+原话引用）：
-                // 结构由程序拼装；可断言内容只认带引号原话。
-                text: `# 一件有来龙去脉的事（背景说明+原话引用）\n${memoryPackageNarrativePrompt}`,
-              },
-            ]
-          : []),
         {
           id: 'main_model_conditional',
           priority: 65,
@@ -2408,7 +2459,13 @@ export class AgentContextService {
           text: deliberateLongReplyPrompt,
         },
       ],
-      { maxBlocks: 3, maxChars: 400 }
+      {
+        maxBlocks: 3,
+        // 预算走 config（NODE_CONDITIONAL_PROMPT_MAX_CHARS，默认 1000，钳制 300–2000）：
+        // 实测 local_memory_candidate 462-522 字在旧预算 400 下结构性无法注入（生产日志
+        // 5 次全灭）；1000 下 candidate+initiative（合计 792-902）可共存，极端第三块仍裁。
+        maxChars: conditionalPromptMaxChars,
+      }
     );
     if (
       conditionalCompiled.dropped.length > 0 ||
@@ -2442,6 +2499,13 @@ export class AgentContextService {
       // 回归轮上下文是时间事实，不是可选话术；它可能单独超过 300 字，
       // 因此作为硬块放在预算外，避免被整块裁掉。
       conversationReturnContextPrompt,
+      // 场次叙事块是检索材料的呈现，不是行为规则；与回归轮同列预算外硬块
+      // （S4 修复：原先挤占条件预算，462-522 字的材料块在旧 400 预算下必被丢弃）。
+      ...(memoryPackageNarrativePrompt
+        ? [
+            `# 一件有来龙去脉的事（背景说明+原话引用）\n${memoryPackageNarrativePrompt}`,
+          ]
+        : []),
       // 证据、输出合同和边界是硬块，不进预算；考验模式也不能压掉。
       replyBriefPrompt,
     ];
@@ -2470,6 +2534,14 @@ export class AgentContextService {
             totalChars: totalCharacters,
             evidenceCount: evidence.length,
             mode: plan.layerMode,
+            // S2 合账：条件段命中/丢弃摘要 + 层计划旗标，与体积同一条日志。
+            conditionalFired: conditionalCompiled.fired.join(','),
+            conditionalDropped: conditionalCompiled.dropped
+              .map(id => `${id}:${conditionalCompiled.droppedSizes[id] ?? 0}`)
+              .join(','),
+            conditionalMaxChars: this.resolveConditionalPromptMaxChars(),
+            includeTask: plan.includeTask,
+            includeEvidence: plan.includeEvidence,
           })
         )
       );

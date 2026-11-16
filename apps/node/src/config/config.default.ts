@@ -1,4 +1,8 @@
 import { MidwayConfig } from '@midwayjs/core';
+import {
+  DEFAULT_CONDITIONAL_PROMPT_MAX_CHARS,
+  resolveConditionalPromptMaxChars,
+} from './prompt-engineering';
 import { existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { isAbsolute, resolve } from 'path';
@@ -609,6 +613,23 @@ export default {
     ),
     l5TraceOnly: readBooleanFrom(['NODE_CHAT_L5_TRACE_ONLY'], true),
   },
+  // 提示词工程开关（复核修正：不再业务代码裸读 process.env）
+  // 预算在 config 层一次钳制到 [300, 2000]；服务层只消费结果，
+  // 越界仅首轮 warn 一次（见 AgentContextService#resolveConditionalPromptMaxChars）。
+  promptEngineering: (() => {
+    const budget = resolveConditionalPromptMaxChars(
+      readNumberFrom(
+        ['NODE_CONDITIONAL_PROMPT_MAX_CHARS'],
+        DEFAULT_CONDITIONAL_PROMPT_MAX_CHARS
+      )
+    );
+    return {
+      conditionalPromptMaxChars: budget.value,
+      conditionalPromptMaxCharsAdjusted: budget.adjusted,
+      // 诚实美德句（核心原则第 10 条；全量 core1000 A/B 否决默认开启，仅留复验开关）
+      honestyVirtue: readBooleanFrom(['NODE_PROMPT_HONESTY_VIRTUE'], false),
+    };
+  })(),
   chatTools: {
     mode: readStringFrom(['NODE_CHAT_TOOLS_MODE'], 'shadow'),
     shadowSampleRate: readNumberFrom(

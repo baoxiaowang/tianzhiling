@@ -15,6 +15,15 @@ export interface PromptSizeRecord {
   stableShare: number;
   evidenceCount: number;
   mode?: string;
+  /** S2 合账：本轮条件段命中的块 id（逗号分隔）。 */
+  conditionalFired?: string;
+  /** S2 合账：本轮被预算丢弃的块及尺寸（id:size 逗号分隔）。 */
+  conditionalDropped?: string;
+  /** 本轮实际生效的条件段字符预算（便于对照 400/800/1000 的命中率变化）。 */
+  conditionalMaxChars?: number;
+  /** S2 合账：层计划旗标（任务层/证据层是否参与本轮）。 */
+  includeTask?: boolean;
+  includeEvidence?: boolean;
   at: string;
 }
 
@@ -24,6 +33,11 @@ export function buildPromptSizeRecord(options: {
   totalChars: number;
   evidenceCount?: number;
   mode?: string;
+  conditionalFired?: string;
+  conditionalDropped?: string;
+  conditionalMaxChars?: number;
+  includeTask?: boolean;
+  includeEvidence?: boolean;
   now?: Date;
 }): PromptSizeRecord {
   const totalChars = Math.max(0, Math.round(options.totalChars || 0));
@@ -37,6 +51,19 @@ export function buildPromptSizeRecord(options: {
       : 0,
     evidenceCount: Math.max(0, Math.round(options.evidenceCount || 0)),
     ...(options.mode ? { mode: options.mode } : {}),
+    ...(options.conditionalFired
+      ? { conditionalFired: options.conditionalFired }
+      : {}),
+    ...(options.conditionalDropped
+      ? { conditionalDropped: options.conditionalDropped }
+      : {}),
+    ...(typeof options.conditionalMaxChars === 'number'
+      ? { conditionalMaxChars: options.conditionalMaxChars }
+      : {}),
+    ...(options.includeTask === undefined ? {} : { includeTask: options.includeTask }),
+    ...(options.includeEvidence === undefined
+      ? {}
+      : { includeEvidence: options.includeEvidence }),
     at: (options.now || new Date()).toISOString(),
   };
 }
