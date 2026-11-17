@@ -62,6 +62,9 @@ export async function downloadAdminFile(
     params: { objectKey, fileName },
     responseType: 'blob',
   });
+  if (!(data instanceof Blob) || !data.size || data.type.includes('json')) {
+    throw new Error('下载响应不是有效文件');
+  }
   return data;
 }
 
@@ -73,7 +76,8 @@ export function saveBlobAsFile(blob: Blob, fileName: string) {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Give the browser time to start reading the Blob before releasing its URL.
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 /** 从 COS 公网 URL 反推 objectKey（用于下载）。 */
