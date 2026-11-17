@@ -37,6 +37,8 @@ export class AdminStorageController {
     const { buffer, contentType, contentLength } =
       await this.adminStorageService.downloadCosObject(objectKey);
 
+    // 注意：不能 return buffer，controller 的返回值会被 Midway 当成 JSON
+    // 序列化（会把 Buffer 变成 {type:'Buffer',data:[...]}）；只赋值 ctx.body。
     this.ctx.set('Content-Type', contentType || 'application/octet-stream');
     this.ctx.set(
       'Content-Disposition',
@@ -46,7 +48,7 @@ export class AdminStorageController {
     );
     this.ctx.set('Content-Length', String(contentLength));
     this.ctx.body = buffer;
-    return buffer;
+    return;
   }
 
   @Post('/cos/upload', {
