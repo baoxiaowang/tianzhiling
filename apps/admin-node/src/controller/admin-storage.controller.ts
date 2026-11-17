@@ -34,8 +34,8 @@ export class AdminStorageController {
     const objectKey = query.objectKey.trim();
     const fallbackName = objectKey.split('/').pop() || 'download';
     const fileName = (query.fileName || fallbackName).trim();
-    const { stream, contentType, contentLength } =
-      await this.adminStorageService.getCosObjectStream(objectKey);
+    const { buffer, contentType, contentLength } =
+      await this.adminStorageService.downloadCosObject(objectKey);
 
     this.ctx.set('Content-Type', contentType || 'application/octet-stream');
     this.ctx.set(
@@ -44,10 +44,9 @@ export class AdminStorageController {
         fileName
       )}`
     );
-    if (contentLength) {
-      this.ctx.set('Content-Length', String(contentLength));
-    }
-    return stream;
+    this.ctx.set('Content-Length', String(contentLength));
+    this.ctx.body = buffer;
+    return buffer;
   }
 
   @Post('/cos/upload', {

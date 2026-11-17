@@ -158,11 +158,11 @@ export class AdminStorageService {
     };
   }
 
-  /** 以流的形式读取 COS 对象（用于后台「下载」按钮，避免前端跨域问题）。 */
-  async getCosObjectStream(objectKey: string): Promise<{
-    stream: NodeJS.ReadableStream;
+  /** 读取 COS 对象内容（用于后台「下载」按钮，避免前端跨域问题）。 */
+  async downloadCosObject(objectKey: string): Promise<{
+    buffer: Buffer;
     contentType?: string;
-    contentLength?: number;
+    contentLength: number;
   }> {
     this.ensureCosEnabled();
 
@@ -173,43 +173,46 @@ export class AdminStorageService {
 
     const bucket = this.getRequiredConfig('bucket');
     const region = this.getRequiredConfig('region');
-    const cos = this.createCosClient() as unknown as {
-      getObjectStream(
-        params: { Bucket: string; Region: string; Key: string },
-        callback: (
-          error: Error | null,
-          data: {
-            Body?: NodeJS.ReadableStream;
-            headers?: Record<string, string>;
-          }
-        ) => void
-      ): void;
-    };
+    const cos = this.createCosClient();
 
-    return await new Promise((resolve, reject) => {
-      cos.getObjectStream(
+    const data = await new Promise<{
+      Body?: Buffer | string;
+      headers?: Record<string, string>;
+    }>((resolve, reject) => {
+      cos.getObject(
         { Bucket: bucket, Region: region, Key: normalizedObjectKey },
-        (error, data) => {
-          if (error || !data?.Body) {
+        (error, result) => {
+          if (error) {
             reject(
               new AppError(
                 'COS_OBJECT_DOWNLOAD_FAILED',
-                error?.message || 'cos object download failed',
+                error.message || 'cos object download failed',
                 502
               )
             );
             return;
           }
-          resolve({
-            stream: data.Body,
-            contentType: data.headers?.['content-type'],
-            contentLength: data.headers?.['content-length']
-              ? Number(data.headers['content-length']) || undefined
-              : undefined,
-          });
+          resolve(result as never);
         }
       );
     });
+
+    const buffer = Buffer.isBuffer(data.Body)
+      ? data.Body
+      : Buffer.from(data.Body || '');
+    if (!buffer.length) {
+      throw new AppError(
+        'COS_OBJECT_EMPTY',
+        'cos object is empty or missing',
+        502
+      );
+    }
+
+    return {
+      buffer,
+      contentType: data.headers?.['content-type'],
+      contentLength: buffer.length,
+    };
   }
 
   async deleteCosObject(objectKey: string): Promise<void> {
