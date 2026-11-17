@@ -1,0 +1,26 @@
+FAIL test/service/memory-package-context.test.ts
+  memory package context integration
+    ✕ preserves a real group through recall mapping, selection and narrative rendering (56 ms)
+
+  ● memory package context integration › preserves a real group through recall mapping, selection and narrative rendering
+
+    expect(received).toEqual(expected) // deep equality
+
+    Expected: ArrayContaining [ObjectContaining {"groupId": "665000000000000000000077", "injectedMembers": 2, "originalMembers": 2}]
+    Received: [{"groupId": "singleton", "injectedChars": 13, "injectedMembers": 1, "originalChars": 13, "originalMembers": 1, "truncated": false}]
+
+      31 |     const result = await service.buildConversationContext(options);
+      32 |     expect(service.memoryModuleService!.recall).toHaveBeenCalled();
+    > 33 |     expect(result.diagnostics.memoryInjectionPackages).toEqual(expect.arrayContaining([
+         |                                                        ^
+      34 |       expect.objectContaining({ groupId, originalMembers: 2, injectedMembers: 2 }),
+      35 |     ]));
+      36 |     expect(JSON.stringify(result.messages)).toContain('一件有来龙去脉的事');
+
+      at Object.<anonymous> (test/service/memory-package-context.test.ts:33:56)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        4.041 s
+Ran all test suites matching /test\/service\/memory-package-context.test.ts/i.

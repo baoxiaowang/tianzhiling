@@ -1,0 +1,9 @@
+PASS test/service/memory-package-context.test.ts
+  memory package context integration
+    ✓ preserves a real group through recall mapping, selection and narrative rendering (49 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       1 passed, 1 total
+Snapshots:   0 total
+Time:        2.688 s, estimated 4 s
+Ran all test suites matching /test\/service\/memory-package-context.test.ts/i.

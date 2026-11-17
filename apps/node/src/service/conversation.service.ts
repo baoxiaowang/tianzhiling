@@ -1,3 +1,5 @@
+import { ReplyMemoryObservation } from '@tzl/entities';
+import { beginMemoryObservation } from './agents/memory-package-observation';
 import { openLoopObserver } from './agents/open-loop-observation';
 import { Inject, Logger } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
@@ -488,6 +490,7 @@ interface SynthesizedAssistantVoiceReply {
 }
 
 interface ReplyRuntime {
+  memoryObservation?: ReplyMemoryObservation;
   auth: AuthenticatedUserPayload;
   conversation: ConversationEntity;
   agent: AgentEntity | null;
@@ -593,6 +596,7 @@ interface AssistantBubbleReflowResult {
 }
 
 interface ReplyRoutingAudit {
+  memoryObservation?: ReplyMemoryObservation;
   intent?: StructuredReplyIntent;
   route?: ReplySceneRoute;
   brief?: ReplyBrief;
@@ -5372,6 +5376,8 @@ export class ConversationService {
     before: BeforeReplyResult,
     timing?: ReplyTiming
   ): Promise<ProcessReplyResult> {
+    runtime.memoryObservation = beginMemoryObservation(this.memoryModuleService?.describeSelection(
+      this.stringifyObjectId(runtime.conversation.userId)), 'path_not_run');
     let context;
     markReplyTiming(timing, 'reply_start');
     const currentTurnMessages = this.resolveCurrentTurnMessages(before);
@@ -8760,6 +8766,7 @@ export class ConversationService {
     before: BeforeReplyResult,
     processed: ProcessReplyResult
   ): Promise<AfterReplyResult> {
+    processed.routing = { memoryObservation: runtime.memoryObservation, ...processed.routing };
     const replyTime = new Date();
     const filteredSegments = await this.filterMutedTopicSegments(
       runtime.conversation.id,
@@ -10850,6 +10857,7 @@ export class ConversationService {
             ? this.buildReplyRoutingMessageFields(options.routing)
             : {}),
           traceId: this.chatTraceService?.getCurrentTraceId(),
+          memoryObservation: options.routing?.memoryObservation,
           deliberateReplyTaskId: options.deliberateReplyTaskId,
           createdAt: segmentTime,
           updatedAt: segmentTime,
@@ -12743,6 +12751,7 @@ export class ConversationService {
     replyMemoryCandidateCount?: number;
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
+    memoryObservation?: ReplyMemoryObservation;
     replyMemoryRetrievalInvitation?: string;
     replyMemoryInjectionMode?: string;
     replyMemoryInjectionOversizedCount?: number;
@@ -12977,6 +12986,7 @@ export class ConversationService {
         routing?.memorySelectedCandidateKeys?.filter(Boolean),
       replyMemoryRetrievalMode:
         routing?.memoryRetrievalMode?.trim() || undefined,
+      memoryObservation: routing?.memoryObservation,
       replyMemoryRetrievalInvitation:
         routing?.memoryRetrievalInvitation?.trim() || undefined,
       replyMemoryInjectionMode:
@@ -13139,6 +13149,7 @@ export class ConversationService {
     replyMemoryCandidateCount?: number;
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
+    memoryObservation?: ReplyMemoryObservation;
     replyMemoryRetrievalInvitation?: string;
     replyMemoryInjectionMode?: string;
     replyMemoryInjectionOversizedCount?: number;
@@ -13441,6 +13452,7 @@ export class ConversationService {
       options.replyMemorySelectedCandidateKeys?.filter(Boolean);
     message.replyMemoryRetrievalMode =
       options.replyMemoryRetrievalMode?.trim() || undefined;
+    if (options.memoryObservation) Object.assign(message, options.memoryObservation);
     message.replyMemoryRetrievalInvitation =
       options.replyMemoryRetrievalInvitation?.trim() || undefined;
     message.replyMemoryInjectionMode =

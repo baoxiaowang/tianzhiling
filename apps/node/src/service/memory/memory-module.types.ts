@@ -37,6 +37,7 @@ export interface MemoryEvidence {
 }
 
 export interface MemoryRecallDiagnostics {
+  legacyFallback?: boolean;
   engine: string;
   mode: MemorySwitchMode;
   candidateCount: number;
@@ -68,6 +69,7 @@ export interface MemoryRecallRequest {
 }
 
 export interface MemoryShadowDiagnostics {
+  packages?: Array<Pick<MemoryPackageView, 'groupId' | 'originalMemberCount' | 'heat'> & { recalledMemberCount: number }>;
   engine: string;
   status: MemoryRecallResult['status'];
   candidateCount: number;
@@ -89,6 +91,9 @@ export interface MemoryPackageChainView {
 
 /** 一场（episode）的包视图：注入侧据此渲染叙事块。 */
 export interface MemoryPackageView {
+  /** Observed during recall; not recalculated by message persistence. */
+  originalMemberCount?: number;
+  heat?: number;
   groupId: string;
   title: string;
   subjectRef?: string;

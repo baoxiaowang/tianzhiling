@@ -1,3 +1,5 @@
+import { ReplyMemoryObservation } from '@tzl/entities';
+import { beginMemoryObservation, boundMemoryObservation } from './memory-package-observation';
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -303,6 +305,7 @@ export interface AgentConversationContext {
 }
 
 export interface AgentContextDiagnostics {
+  memoryObservation?: ReplyMemoryObservation;
   promptVersion: 'agent_chat_v11';
   generationArchitectureVersion: 'unified_main_v1';
   semanticPlannerActive: false;
@@ -457,6 +460,8 @@ export interface AgentContextDiagnostics {
 }
 
 export interface RetrievedContextSnippet {
+  groupId?: string;
+  groupTitle?: string;
   id?: string;
   sourceMessageId?: string;
   content: string;
@@ -1364,6 +1369,7 @@ export class AgentContextService {
     const memorySelection = this.memoryModuleService?.describeSelection(
       this.stringifyObjectId(options.conversation.userId)
     );
+    const memoryObservation = beginMemoryObservation(memorySelection);
     const useMemoryModule =
       Boolean(this.memoryModuleService) && memorySelection?.mode !== 'off';
     // 候选：查询用完整表达；是否检索由"规划器要求 / 有关键词 / 非纯应答"决定。
@@ -1522,6 +1528,19 @@ export class AgentContextService {
             })),
             limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
           });
+          memoryObservation.replyMemoryLegacyFallback = recalled.diagnostics.legacyFallback === true;
+          memoryObservation.replyMemoryShadowStatus = recalled.shadow?.status;
+          memoryObservation.replyMemoryExecutionStatus = recalled.status === 'ok' ? 'succeeded'
+            : recalled.status === 'failed' ? 'failed' : recalled.status === 'empty' ? 'empty' : 'not_run';
+          memoryObservation.replyMemorySkipReason = recalled.status === 'failed' ? 'recall_failed'
+            : !recalled.packages?.length && !recalled.shadow?.packages?.length ? 'no_package_match' : undefined;
+          memoryObservation.replyMemoryPackageDetails = [
+            ...(recalled.packages || []).map(view => ({ source: 'primary' as const, engine: recalled.diagnostics.engine,
+              groupId: view.groupId, members: view.originalMemberCount, heat: view.heat, stage: 'recalled' as const })),
+            ...(recalled.shadow?.packages || []).map(view => ({ source: 'shadow' as const, engine: recalled.shadow!.engine,
+              groupId: view.groupId, members: view.originalMemberCount, retained: view.recalledMemberCount,
+              heat: view.heat, stage: 'recalled' as const, reason: 'shadow_only' as const })),
+          ];
           // 只有"可按原话引用"的证据才进上下文：组合摘要只能当背景，不能当用户说过的话。
           const snippets: RetrievedContextSnippet[] = recalled.evidence
             .filter(
@@ -1635,6 +1654,10 @@ export class AgentContextService {
         }
       } catch (error) {
         retrievalFailureCount = 1;
+        if (useMemoryModule) {
+          memoryObservation.replyMemoryExecutionStatus = 'failed';
+          memoryObservation.replyMemorySkipReason = 'recall_failed';
+        }
         this.logger?.warn?.(
           '[context] long-term memory retrieval failed, conversationId=%s reason=%s',
           this.stringifyObjectId(options.conversation.id),
@@ -1954,6 +1977,29 @@ export class AgentContextService {
       });
     }
     const systemPromptContent = systemLayer.messages[0]?.content;
+    const finalSystemText = [systemLayer.messages.map(message => typeof message.content === 'string' ? message.content : '').join('\n'), dynamicContext].join('\n');
+    for (const detail of memoryObservation.replyMemoryPackageDetails) {
+      if (detail.source !== 'primary') continue;
+      const stat = packageInjection?.packages.find(p => p.groupId === detail.groupId);
+      const groupItems = retrievedMemories.filter(item => item.groupId === detail.groupId);
+      // Confirm selected package material survived the final system prompt assembly.
+      const quoted = groupItems.filter(item => evidence.some(e =>
+        e.source === 'retrieved_user' && e.sourceMessageId === item.id &&
+        Boolean(e.text) && finalSystemText.includes(e.text)));
+      const view = memoryPackageViews.find(p => p.groupId === detail.groupId);
+      const narrativeIncluded = Boolean(view && memoryNarrativePrompt && finalSystemText.includes(memoryNarrativePrompt)
+        && stat && memoryNarrativePrompt.includes(view.title));
+      detail.retained = narrativeIncluded ? stat?.injectedMembers : quoted.length;
+      detail.score = stat?.selectionScore;
+      detail.stage = quoted.length || narrativeIncluded ? 'injected' : stat ? 'selected' : 'recalled';
+      detail.reason = stat?.truncated ? 'capacity_trimmed' : detail.stage === 'injected' ? undefined
+        : stat ? 'context_filtered' : 'not_selected';
+    }
+    memoryObservation.replyMemoryPackageInjected = memoryObservation.replyMemoryPackageDetails.some(p => p.source === 'primary' && p.stage === 'injected');
+    if (!memoryObservation.replyMemorySkipReason && !memoryObservation.replyMemoryPackageInjected &&
+        memoryObservation.replyMemoryPackageDetails.some(p => p.source === 'primary')) {
+      memoryObservation.replyMemorySkipReason = packageInjection?.packages.length ? 'context_not_injected' : 'package_not_selected';
+    }
     const resolvedTurnPlan = resolveConversationTurnPlan({
       engagement: replyBrief.conversationPlan?.engagement,
       turnPlan: replyBrief.conversationPlan?.turnPlan,
@@ -2005,6 +2051,7 @@ export class AgentContextService {
       evidence,
       evidencePack,
       diagnostics: {
+        memoryObservation: boundMemoryObservation(memoryObservation),
         promptVersion: 'agent_chat_v11',
         generationArchitectureVersion: 'unified_main_v1',
         semanticPlannerActive: false,

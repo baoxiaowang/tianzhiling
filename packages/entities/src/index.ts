@@ -60,3 +60,5 @@ export * from "./user-known-person-face.entity";
 export * from "./face-recognition-log.entity";
 export * from "./client-pay-failure-log.entity";
 export * from "./user-interview.entity";
+
+export * from "./memory-observation";

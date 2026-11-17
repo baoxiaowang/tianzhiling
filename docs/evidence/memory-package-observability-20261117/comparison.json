@@ -1,0 +1,41 @@
+{
+  "baseline": "fb51231f",
+  "promptParity": {
+    "active": {
+      "baseline": "3bc59684b265268e46e036004878acbfb076b69a04b6cc2aa35818a01196a054",
+      "candidate": "3bc59684b265268e46e036004878acbfb076b69a04b6cc2aa35818a01196a054",
+      "equal": true
+    },
+    "off": {
+      "baseline": "1673fd13d3abae8166be5ac6eb620633a59847d65095b65341e17991491ecabd",
+      "candidate": "1673fd13d3abae8166be5ac6eb620633a59847d65095b65341e17991491ecabd",
+      "equal": true
+    },
+    "shadow": {
+      "baseline": "1673fd13d3abae8166be5ac6eb620633a59847d65095b65341e17991491ecabd",
+      "candidate": "1673fd13d3abae8166be5ac6eb620633a59847d65095b65341e17991491ecabd",
+      "equal": true
+    },
+    "deliberate": {
+      "baseline": "6c234260752c09dd13bc559d0a2ed5756caf2a22017eb1b845c96b6670c916bb",
+      "candidate": "6c234260752c09dd13bc559d0a2ed5756caf2a22017eb1b845c96b6670c916bb",
+      "equal": true
+    }
+  },
+  "existingFailuresIdenticalIncludingMessages": true,
+  "existingFailures": [
+    {
+      "name": "AgentContextService prompt prefix stability puts the per-turn time block after the byte-stable prefix",
+      "status": "failed"
+    },
+    {
+      "name": "AgentContextService prompt prefix stability keeps the necessary constraints after removing duplicates",
+      "status": "failed"
+    },
+    {
+      "name": "AgentContextService prompt prefix stability keeps the prefix byte-identical across turns that differ only per-turn",
+      "status": "failed"
+    }
+  ],
+  "externalModelCalls": 0
+}

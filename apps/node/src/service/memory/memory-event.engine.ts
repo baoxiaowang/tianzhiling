@@ -554,6 +554,8 @@ export class MemoryEventEngine implements MemoryModule {
           }))
       );
       packageViews.push({
+        originalMemberCount: group.members.length,
+        heat,
         groupId,
         title: group.title,
         ...(group.subjectRef ? { subjectRef: group.subjectRef } : {}),

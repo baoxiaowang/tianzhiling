@@ -24,6 +24,8 @@ import type {
 } from './memory-module.types';
 
 export interface MemoryModuleSelection {
+  configuredMode?: MemorySwitchMode;
+  scopeMatched?: boolean;
   mode: MemorySwitchMode;
   /** 生效引擎：未了结清单、写入、维护走它。 */
   primary: string;
@@ -63,6 +65,8 @@ export class MemoryModuleService {
     const config = this.resolveConfig();
     const scoped = this.inScope(config, userId);
     return {
+      configuredMode: config.mode,
+      scopeMatched: config.mode === 'off' ? undefined : scoped,
       mode: scoped ? config.mode : 'off',
       primary: config.primary,
       recallEngine: config.recallEngine,
@@ -124,8 +128,8 @@ export class MemoryModuleService {
     }
 
     // 检索单独走 recallEngine：默认旧引擎，开启新模块不会顺带把召回换成窄得多的事件引擎。
-    const primary =
-      this.resolveEngine(selection.recallEngine) || this.legacyEngine;
+    const resolvedPrimary = this.resolveEngine(selection.recallEngine);
+    const primary = resolvedPrimary || this.legacyEngine;
     const shadow =
       selection.mode === 'shadow'
         ? this.resolveEngine(selection.shadow)
@@ -140,7 +144,7 @@ export class MemoryModuleService {
 
     return {
       ...primaryResult,
-      diagnostics: { ...primaryResult.diagnostics, mode: selection.mode },
+      diagnostics: { ...primaryResult.diagnostics, mode: selection.mode, legacyFallback: !resolvedPrimary },
       ...(shadowResult ? { shadow: toShadowDiagnostics(shadowResult) } : {}),
     };
   }
@@ -327,6 +331,7 @@ function toShadowDiagnostics(
     candidateCount: result.diagnostics.candidateCount,
     selectedCount: result.diagnostics.selectedCount,
     evidenceIds: result.evidence.map(item => item.id),
+    packages: result.packages?.map(p => ({ groupId: p.groupId, originalMemberCount: p.originalMemberCount, heat: p.heat, recalledMemberCount: p.memberEvidenceIds.length })),
     evidencePreviews: result.evidence
       .slice(0, 3)
       .map(item => item.text.slice(0, 40)),

@@ -1,0 +1,12 @@
+PASS test/service/memory-package-observation.test.ts
+PASS test/service/memory-module.test.ts
+PASS test/service/memory-return-turn.test.ts
+PASS test/service/memory-package-context.test.ts
+PASS test/service/memory-injection-package.test.ts
+PASS test/service/memory-grouping.episode.test.ts
+
+Test Suites: 6 passed, 6 total
+Tests:       106 passed, 106 total
+Snapshots:   0 total
+Time:        5.834 s, estimated 7 s
+Ran all test suites matching /test\/service\/memory-grouping.episode.test.ts|test\/service\/memory-module.test.ts|test\/service\/memory-injection-package.test.ts|test\/service\/memory-return-turn.test.ts|test\/service\/memory-package-context.test.ts|test\/service\/memory-package-observation.test.ts/i.

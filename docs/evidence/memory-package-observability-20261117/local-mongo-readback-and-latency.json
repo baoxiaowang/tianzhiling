@@ -1,0 +1,98 @@
+{
+  "syntheticOnly": true,
+  "stateDocuments": [
+    {
+      "mode": "off",
+      "status": "not_run",
+      "reason": "module_off"
+    },
+    {
+      "mode": "shadow",
+      "status": "not_run",
+      "reason": "path_not_run"
+    }
+  ],
+  "snapshotBytes": 437,
+  "before": {
+    "n": 100,
+    "p50": 0.3145419999996193,
+    "p95": 0.4247499999996762
+  },
+  "after": {
+    "n": 100,
+    "p50": 0.34445800000003146,
+    "p95": 0.4583339999999225
+  },
+  "documents": [
+    {
+      "replyMemoryPlan": null,
+      "replyMemoryCandidateCount": 0,
+      "replyMemorySelectedCandidateKeys": [],
+      "replyMemoryRetrievalMode": "active",
+      "replyMemoryModuleConfiguredMode": "active",
+      "replyMemoryModuleMode": "active",
+      "replyMemoryScopeMatched": true,
+      "replyMemoryExecutionStatus": "succeeded",
+      "replyMemoryShadowStatus": null,
+      "replyMemorySkipReason": null,
+      "replyMemoryPackageInjected": true,
+      "replyMemoryLegacyFallback": false,
+      "replyMemoryPackageDetails": [
+        {
+          "source": "primary",
+          "engine": "event",
+          "groupId": "665000000000000000000077",
+          "members": 2,
+          "heat": 0.9,
+          "stage": "injected",
+          "retained": 2,
+          "score": 0.9,
+          "reason": null
+        }
+      ],
+      "replyMemoryPackageDetailsTruncated": false,
+      "replyMemoryRetrievalRequestCount": 0,
+      "replyMemoryRetrievalConceptCount": 0,
+      "replyMemoryRetrievedEvidenceCount": 2,
+      "replyMemoryUsedEvidenceIds": null,
+      "replyMemoryUsedClaimCount": null
+    },
+    {
+      "replyMemoryPlan": null,
+      "replyMemoryCandidateCount": null,
+      "replyMemorySelectedCandidateKeys": null,
+      "replyMemoryRetrievalMode": null,
+      "replyMemoryModuleConfiguredMode": "active",
+      "replyMemoryModuleMode": "active",
+      "replyMemoryScopeMatched": true,
+      "replyMemoryExecutionStatus": "succeeded",
+      "replyMemoryShadowStatus": null,
+      "replyMemorySkipReason": null,
+      "replyMemoryPackageInjected": true,
+      "replyMemoryLegacyFallback": false,
+      "replyMemoryPackageDetails": [
+        {
+          "source": "primary",
+          "engine": "event",
+          "groupId": "665000000000000000000077",
+          "members": 2,
+          "heat": 0.9,
+          "stage": "injected",
+          "retained": 2,
+          "score": 0.9,
+          "reason": null
+        }
+      ],
+      "replyMemoryPackageDetailsTruncated": false,
+      "replyMemoryRetrievalRequestCount": null,
+      "replyMemoryRetrievalConceptCount": null,
+      "replyMemoryRetrievedEvidenceCount": null,
+      "replyMemoryUsedEvidenceIds": null,
+      "replyMemoryUsedClaimCount": null
+    }
+  ],
+  "ids": [
+    "6afc0efd9651bcbd39b00e7c",
+    "6afc0efd9651bcbd39b00e7d"
+  ]
+}

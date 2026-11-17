@@ -1,3 +1,4 @@
+import { ReplyMemoryMode, ReplyMemorySkipReason, ReplyMemoryPackageDetail } from './memory-observation';
 import { Column, Entity, Index } from "typeorm";
 import { BaseEntity, MongoObjectId, TableName } from "./base";
 
@@ -646,6 +647,27 @@ export class MessageEntity extends BaseEntity {
 
   // 触发检索的请柬类型：entity_name / defer_return / ritual_anchor；空=键/信号/规划器
   replyMemoryRetrievalInvitation?: string;
+
+  @Column()
+  replyMemoryModuleConfiguredMode?: ReplyMemoryMode;
+  @Column()
+  replyMemoryModuleMode?: ReplyMemoryMode;
+  @Column()
+  replyMemoryScopeMatched?: boolean;
+  @Column()
+  replyMemoryExecutionStatus?: 'not_run' | 'succeeded' | 'empty' | 'failed';
+  @Column()
+  replyMemoryShadowStatus?: 'ok' | 'empty' | 'skipped' | 'failed';
+  @Column()
+  replyMemorySkipReason?: ReplyMemorySkipReason;
+  @Column()
+  replyMemoryPackageInjected?: boolean;
+  @Column()
+  replyMemoryLegacyFallback?: boolean;
+  @Column()
+  replyMemoryPackageDetails?: ReplyMemoryPackageDetail[];
+  @Column()
+  replyMemoryPackageDetailsTruncated?: boolean;
 
   // 记忆注入选择模式：package_v1（按包）/ item_legacy（逐条）
   replyMemoryInjectionMode?: string;

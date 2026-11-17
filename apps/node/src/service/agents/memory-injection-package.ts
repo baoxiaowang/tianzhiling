@@ -39,6 +39,7 @@ export interface PackageInjectionCapacity {
 }
 
 export interface MemoryInjectionPackageStat {
+  selectionScore?: number;
   /** 引擎组 id；单件包为 'singleton'。 */
   groupId: string;
   injectedMembers: number;
@@ -267,6 +268,7 @@ export function selectInjectableMemoryPackages(
     const truncated =
       trimmed.kept.length < originalMembers || injectedChars < originalChars;
     stats.push({
+      selectionScore: pack.score,
       groupId: pack.groupId,
       injectedMembers: trimmed.kept.length,
       originalMembers,
