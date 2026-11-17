@@ -1,3 +1,4 @@
+import { openLoopObserver } from './agents/open-loop-observation';
 import { Inject, Logger } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -5693,6 +5694,21 @@ export class ConversationService {
       resultItemCount: 0,
     };
     const generationAttemptTraces: AssistantGenerationAttemptTrace[] = [];
+    const finishOpenLoopObservation = openLoopObserver.begin(
+      currentTurnMessages.map(message => this.stringifyObjectId(message.id)).join(','),
+      relationshipOpenLoopTurn?.status === 'selected',
+      {
+        conversationId: this.stringifyObjectId(runtime.conversation.id),
+        triggerMessageIds: currentTurnMessages.map(message => this.stringifyObjectId(message.id)),
+        messages: context.messages,
+        openLoop: relationshipOpenLoopTurn,
+        recognitionPrompt: recognitionJourneyPlan?.prompt,
+        toolPlan: context.chatToolPlan,
+        temperature: ASSISTANT_REPLY_TEMPERATURE,
+        topP: ASSISTANT_REPLY_TOP_P,
+        effectiveChatModel,
+      }
+    );
 
     try {
       markReplyTiming(timing, 'generation_start');
@@ -6304,6 +6320,16 @@ export class ConversationService {
         this.describeReplyError(error)
       );
       return undefined;
+    });
+    finishOpenLoopObservation?.({
+      attempts: generationAttemptTraces,
+      acceptedSegments: replySegments,
+      processedSegments: addressGuardedSegments,
+      guardrailRewritten: guarded.rewritten,
+      chatToolAudit,
+      generationRecoveryAttempted,
+      generationRecoverySucceeded,
+      stateShadowDecision,
     });
     return this.attachTurnStatePlans(
       {
