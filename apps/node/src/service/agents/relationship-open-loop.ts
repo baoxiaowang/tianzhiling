@@ -657,7 +657,7 @@ export function buildRelationshipOpenLoopPrompt(
   const lines = [
     isContextEvidence
       ? '# 当前关联信息（上下文证据，不是任务）'
-      : '# 到期或回归跟进（本轮待跟进事项）',
+      : '# 可参考的既有事项（是否提及由当前对话决定）',
     `用户${describeRelativeTime(task.latestSourceOccurredAt, now)}说过：${
       task.summary
     }`,
@@ -671,7 +671,7 @@ export function buildRelationshipOpenLoopPrompt(
   lines.push(
     isContextEvidence
       ? '当前消息与这件事存在明确关联。它只帮助你理解上下文，不要求主动提问，不计算任务落实，也不要把旧状态说成现在仍然如此；如何回应由你结合完整对话决定。'
-      : '这是本轮明确需要完成的一次关系连续性关心。先正面回应用户当前消息，再自然关心这件事现在的近况或结果；不规定具体问法、建议、展开或收尾，也不要把旧状态说成现在仍然如此。只有当前消息明显更紧急，或用户明确不愿提起时，才可以暂不使用。'
+      : '这是一条可供参考的既有事项，不是本轮必须完成的任务。是否提及、是否询问近况，由你结合用户当前输入和完整对话判断。先回应用户此刻真正需要的内容；不必为使用这条记录追加第二个话题，也不要把旧状态说成现在仍然如此。'
   );
   return lines.join('\n');
 }
