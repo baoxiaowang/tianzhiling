@@ -1537,6 +1537,8 @@ export class AgentContextService {
               role: MessageRole.user,
               createdAt: item.occurredAt,
               score: item.score,
+              groupId: item.groupId,
+              groupTitle: item.groupTitle,
               personId: item.personRef,
               memoryKind: item.kind,
             }));
