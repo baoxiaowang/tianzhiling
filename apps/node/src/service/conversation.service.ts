@@ -77,7 +77,7 @@ import {
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { PresenceStateService } from './agents/presence-state.service';
-import { applyMomentFrameToSegments, resolveMomentFrame } from './agents/moment-frame';
+import { evaluateMomentFrameSegments, resolveMomentFrame } from './agents/moment-frame';
 import {
   isSameLocalDay,
   resolveLowInfoStateShadowDecision,
@@ -6288,10 +6288,11 @@ export class ConversationService {
       }
     }
     markReplyTiming(timing, 'review_done');
-    const momentAdjustedSegments = applyMomentFrameToSegments(
+    const momentDiagnostic = evaluateMomentFrameSegments(
       participationResult.segments,
       replyBrief.momentFrame
     );
+    const momentAdjustedSegments = momentDiagnostic.segments;
     const budgetAdjustedSegments =
       replyBrief.momentFrame?.bubbleBudget === 1
         ? mergeReplySegmentsForSingleBubble(momentAdjustedSegments)
@@ -6330,7 +6331,15 @@ export class ConversationService {
     finishOpenLoopObservation?.({
       attempts: generationAttemptTraces,
       acceptedSegments: replySegments,
-      processedSegments: addressGuardedSegments,
+      processedSegments: [...addressGuardedSegments],
+      stages: {
+        governedCandidates: guarded.candidateVersions?.map(segments => [...segments]),
+        beforeMoment: [...participationResult.segments],
+        momentDiagnostic: { mode: momentDiagnostic.mode, wouldFilter: momentDiagnostic.wouldFilter, reasons: momentDiagnostic.reasons },
+        afterMoment: [...momentAdjustedSegments],
+        afterMerge: [...budgetAdjustedSegments],
+        pendingDelivery: [...addressGuardedSegments],
+      },
       guardrailRewritten: guarded.rewritten,
       chatToolAudit,
       generationRecoveryAttempted,
@@ -6568,10 +6577,11 @@ export class ConversationService {
       recentMessages: options.currentTurnMessages,
       isDeceased: Boolean(options.runtime.agent?.deathDate),
     });
-    const microMomentAdjustedSegments = applyMomentFrameToSegments(
+    const microMomentDiagnostic = evaluateMomentFrameSegments(
       generatedSegments,
       microMomentFrame
     );
+    const microMomentAdjustedSegments = microMomentDiagnostic.segments;
     const microBudgetAdjustedSegments =
       microMomentFrame.bubbleBudget === 1
         ? mergeReplySegmentsForSingleBubble(microMomentAdjustedSegments)

@@ -43,6 +43,7 @@ import {
 } from './presence-state';
 import {
   buildMomentFramePrompt,
+  resolveMomentFilterMode,
   resolveMomentFrame,
   shouldApplyMomentPrompt,
   type MomentFrame,
@@ -2297,7 +2298,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     : [];
   const correctionLines = [
     '## 理解与纠正',
-    '结合最近对话理解当前表达，包括反问和省略。用户否定或纠正你时，更新被否定的前提，采用用户明确给出的信息；未说明的部分不要另猜一个版本。可以引用旧话说明修正，但不要继续坚持旧结论。不要求固定道歉、复述、追问或收尾。',
+    resolveMomentFilterMode() === 'diagnostic'
+      ? '结合整句话和最近对话理解用户，区分已发生的事、当前状态、未来打算和仍存在的感受。最新明确事实应更新此前理解，回应和建议不能违背它。理解反问和省略；用户纠正时自然更新前提，未说明的部分不要另猜。不强制附和、道歉、复述、安慰、追问或收尾。'
+      : '结合最近对话理解当前表达，包括反问和省略。用户否定或纠正你时，更新被否定的前提，采用用户明确给出的信息；未说明的部分不要另猜一个版本。可以引用旧话说明修正，但不要继续坚持旧结论。不要求固定道歉、复述、追问或收尾。',
     '',
   ];
   const boundaryContract = buildReplyBoundaryContract({
