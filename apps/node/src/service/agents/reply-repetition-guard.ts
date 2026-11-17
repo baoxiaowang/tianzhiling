@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
-const QUESTION_PATTERN = /[?？]|(?:你|您).{0,16}(?:吗|呢|没|没有|好不好|行不行)[。！!…\s]*$/u;
+const QUESTION_PATTERN =
+  /[?？]|(?:你|您).{0,16}(?:吗|呢|没|没有|好不好|行不行)[。！!…\s]*$/u;
 const LITERAL_SPLIT_PATTERN = /[\n。！？!?；;]/u;
 
 export interface ReplyRepetitionResult {
@@ -39,67 +40,33 @@ export function deriveRecentReplyMoves(texts: string[]): string[] {
     : [];
 }
 
-export function removeRepeatedReplySegments(
+/** Whole replies only: quoting an old clause is not evidence of repetition. */
+export function isExactRepeatedReply(
   segments: string[],
-  recentAssistantTexts: string[],
-  fallback = '我在，慢慢说。'
-): ReplyRepetitionResult {
-  const recent = recentAssistantTexts
-    .map(normalizeRepeatText)
-    .filter(text => text.length >= 8);
-  const clauses = extractLiteralClauses(recentAssistantTexts).filter(
-    clause => normalizeRepeatText(clause).length >= 6
-  );
-  const removed: string[] = [];
-  const kept = segments.filter(segment => {
-    const normalized = normalizeRepeatText(segment);
-    if (!normalized) return false;
-    const repeated =
-      recent.some(
-        text =>
-          normalized === text ||
-          bigramSimilarity(normalized, text) >= 0.82 ||
-          normalized.includes(text)
-      ) ||
-      clauses.some(clause => normalized.includes(normalizeRepeatText(clause)));
-    if (repeated) removed.push(segment);
-    return !repeated;
-  });
-  if (!kept.length && segments.length > 0) {
-    return {
-      segments: [fallback],
-      removed,
-      fallbackApplied: true,
-    };
+  messages: ChatCompletionMessageParam[]
+): boolean {
+  const replies: string[] = [];
+  let current: string[] = [];
+  for (const message of messages || []) {
+    if (message.role === 'assistant') {
+      current.push(contentText(message.content));
+    } else if (current.length) {
+      replies.push(current.join('\n'));
+      current = [];
+    }
   }
-  return { segments: kept, removed, fallbackApplied: false };
+  if (current.length) replies.push(current.join('\n'));
+  const candidate = normalizeRepeatText(segments.join('\n'));
+  return (
+    candidate.length >= 8 &&
+    replies.slice(-3).some(reply => normalizeRepeatText(reply) === candidate)
+  );
 }
 
 export function normalizeRepeatText(value: string): string {
   return String(value || '')
     .replace(/[\s，,。.!！?？、；;：:]+/gu, '')
     .trim();
-}
-
-function bigramSimilarity(left: string, right: string): number {
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-  const leftBigrams = bigrams(left);
-  const rightBigrams = bigrams(right);
-  if (!leftBigrams.size || !rightBigrams.size) return 0;
-  let overlap = 0;
-  for (const gram of leftBigrams) {
-    if (rightBigrams.has(gram)) overlap += 1;
-  }
-  return (2 * overlap) / (leftBigrams.size + rightBigrams.size);
-}
-
-function bigrams(value: string): Set<string> {
-  const set = new Set<string>();
-  for (let index = 0; index < value.length - 1; index += 1) {
-    set.add(value.slice(index, index + 2));
-  }
-  return set;
 }
 
 function contentText(content: ChatCompletionMessageParam['content']): string {

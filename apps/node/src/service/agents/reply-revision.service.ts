@@ -30,6 +30,63 @@ export class ReplyRevisionService {
   @Inject()
   openAIService: OpenAIService;
 
+  /** One bounded repair; the caller must validate the result before delivery. */
+  async reviseRepeatedReply(options: {
+    messages: ChatCompletionMessageParam[];
+    userQuery: string;
+    segments: string[];
+  }): Promise<{ segments: string[]; usage: ReplyRevisionUsage } | undefined> {
+    if (!this.openAIService) return undefined;
+    try {
+      const response = await this.openAIService.createChatCompletion(
+        {
+          temperature: 0.3,
+          topP: 0.8,
+          reasoningSplit: false,
+          thinking: { type: 'disabled' },
+          max_tokens: FINAL_PATCH_MAX_TOKENS,
+          response_format: { type: 'json_object' },
+          trace: {
+            stage: ChatTraceStage.revise,
+            operation: 'revise.exact_repeated_reply',
+          },
+          messages: [
+            ...options.messages,
+            {
+              role: 'user',
+              content: JSON.stringify({
+                instruction:
+                  '候选整条回复与之前的回复完全重复。结合完整对话和用户最新表达重新回应一次；理解可能的纠正并更新前提，不强制道歉、提问、建议或安慰，不编造事实。保持原角色及事实、安全边界。只输出 JSON：{"segments":["自然回复"]}。',
+                currentUserMessage: options.userQuery,
+                repeatedReply: options.segments,
+              }),
+            },
+          ],
+        },
+        { timeout: FINAL_PATCH_TIMEOUT_MS, maxRetries: 0 }
+      );
+      const content = response.choices?.[0]?.message?.content;
+      let parsed: { segments?: unknown } | undefined;
+      try {
+        parsed = typeof content === 'string' ? JSON.parse(content) : undefined;
+      } catch {
+        /* usage still belongs to this attempt */
+      }
+      const segments = parsed?.segments;
+      return {
+        segments:
+          Array.isArray(segments) &&
+          segments.length <= 4 &&
+          segments.every(value => typeof value === 'string' && value.trim())
+            ? segments.map(value => value.trim())
+            : [],
+        usage: extractUsage(response),
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
   async revise(options: {
     messages: ChatCompletionMessageParam[];
     userQuery: string;

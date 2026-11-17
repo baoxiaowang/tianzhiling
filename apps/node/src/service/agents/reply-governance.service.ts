@@ -77,6 +77,7 @@ export class ReplyGovernanceService {
     evidence?: AgentEvidenceItem[];
     diagnosticConstraints?: FinalReplyOutputConstraints;
     outputConstraints?: FinalReplyOutputConstraints;
+    maxRevisionRounds?: number;
   }): Promise<ReplyGovernanceResult> {
     const validationConstraints = mergeValidationConstraints(
       options.diagnosticConstraints,
@@ -177,7 +178,11 @@ export class ReplyGovernanceService {
     const candidateVersions: string[][] = [options.segments];
     const patches: AppliedReplyPatch[] = [];
 
-    for (let round = 0; round < MAX_EXACT_PATCH_ROUNDS; round += 1) {
+    const maxRounds = Math.min(
+      MAX_EXACT_PATCH_ROUNDS,
+      options.maxRevisionRounds ?? MAX_EXACT_PATCH_ROUNDS
+    );
+    for (let round = 0; round < maxRounds; round += 1) {
       const issue = selectHighestPriorityPatchIssue(currentValidation.issues);
       if (!issue?.blockingKind || !issue.evidence) {
         break;

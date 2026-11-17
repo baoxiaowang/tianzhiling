@@ -9,12 +9,11 @@ import {
   ReplyGovernanceService,
 } from './reply-governance.service';
 import { ReplyPostprocessorService } from './reply-postprocessor.service';
+import { isExactRepeatedReply } from './reply-repetition-guard';
 import {
-  deriveRecentReplyMoves,
-  extractLiteralClauses,
-  extractRecentAssistantTexts,
-  removeRepeatedReplySegments,
-} from './reply-repetition-guard';
+  ReplyRevisionService,
+  ReplyRevisionUsage,
+} from './reply-revision.service';
 import type {
   ReplyQualityAudit,
   ReplyTurnContract,
@@ -38,6 +37,9 @@ export class ConversationReplyFinalizationService {
   @Inject()
   replyPostprocessorService: ReplyPostprocessorService;
 
+  @Inject()
+  replyRevisionService: ReplyRevisionService;
+
   async finalize(options: {
     messages: ChatCompletionMessageParam[];
     userQuery: string;
@@ -51,23 +53,8 @@ export class ConversationReplyFinalizationService {
       segments: options.segments,
       brief: options.brief,
     });
-    // 默认仍只允许世界、证据、能力和持续风险约束进入 online governance；
-    // 对话计划、问题策略、长度/气泡偏好保持 diagnostics。
-    // H1 政策变更：最近助手原话复读是用户可见的质量问题，不是普通偏好；
-    // avoidRecentMoves / avoidLiteralClauses 可以进入 outputConstraints，
-    // 并在 finalize 尾部做确定性删除/单句回退。这不是复活 turn contract。
-    const recentAssistantTexts = extractRecentAssistantTexts(options.messages);
-    const recentLiteralClauses = extractLiteralClauses(recentAssistantTexts);
-    const recentReplyMoves = deriveRecentReplyMoves(recentAssistantTexts);
+    // Ordinary wording preferences must not delete or replace a semantic reply.
     const outputConstraints: FinalReplyOutputConstraints = {
-      avoidRecentMoves: [
-        ...(options.brief.strategyQuality?.repeatedMoves || []),
-        ...recentReplyMoves,
-      ],
-      avoidLiteralClauses: [
-        ...(options.brief.strategyQuality?.literalClauses || []),
-        ...recentLiteralClauses,
-      ],
       realityDependencies: options.brief.realityDependencies,
       boundaryLocks: options.brief.understanding.boundaryLocks.map(
         lock => lock.kind
@@ -79,7 +66,7 @@ export class ConversationReplyFinalizationService {
       evidenceContract: options.brief.evidenceContract,
       conversationProtection: options.brief.conversationProtection,
     };
-    const governance = await this.replyGovernanceService.finalize({
+    let governance = await this.replyGovernanceService.finalize({
       messages: options.messages,
       userQuery: options.userQuery,
       segments: prepared,
@@ -88,24 +75,68 @@ export class ConversationReplyFinalizationService {
       diagnosticConstraints: buildSemanticDiagnosticConstraints(options.brief),
       outputConstraints,
     });
-    // 最终验证之后只做不改变语义的确定性结构整理。
-    // H1：字面复读是确定性可识别问题；命中的段直接删除，全部删除时回退到
-    // 不引入旧记忆的单句陪伴。展示层拆泡仍由后面 renderForDelivery 负责。
-    const repetition = removeRepeatedReplySegments(
-      governance.segments,
-      recentAssistantTexts
-    );
-    if (repetition.removed.length) {
-      governance.segments = repetition.segments;
-      governance.rewritten = true;
+    // Keep the already reviewed candidate if the one-shot repair is unavailable.
+    // Safety repair has priority; never start a second quality-repair loop.
+    if (
+      isExactRepeatedReply(governance.segments, options.messages) &&
+      !governance.revisionAttempted &&
+      governance.finalReviewResult !== 'technical_fallback'
+    ) {
+      const previous = governance;
+      const repair = await this.replyRevisionService
+        ?.reviseRepeatedReply({
+          messages: options.messages,
+          userQuery: options.userQuery,
+          segments: previous.segments,
+        })
+        .catch(() => undefined);
+      const usable =
+        repair?.segments.length &&
+        !isExactRepeatedReply(repair.segments, options.messages);
+      if (usable) {
+        governance = await this.replyGovernanceService.finalize({
+          messages: options.messages,
+          userQuery: options.userQuery,
+          segments: this.replyPostprocessorService.prepareForValidation({
+            segments: repair.segments,
+            brief: options.brief,
+          }),
+          claims: [],
+          evidence: options.evidence,
+          diagnosticConstraints: buildSemanticDiagnosticConstraints(
+            options.brief
+          ),
+          outputConstraints,
+          maxRevisionRounds: 1,
+        });
+        governance.hardFactAuditUsage = sumUsage(
+          previous.hardFactAuditUsage,
+          governance.hardFactAuditUsage
+        );
+      }
+      governance.revisionAttempted = true;
+      governance.revisionRoundCount = Math.min(
+        2,
+        governance.revisionRoundCount + 1
+      ) as 1 | 2;
+      governance.revisionUsage = sumUsage(
+        repair?.usage,
+        governance.revisionUsage
+      );
+      governance.rewritten =
+        previous.rewritten ||
+        JSON.stringify(previous.segments) !==
+          JSON.stringify(governance.segments);
       governance.reason = [
         governance.reason,
-        repetition.fallbackApplied
-          ? 'repeated_generic_move_fallback'
-          : 'repeated_generic_move',
+        usable ? 'exact_repeat_repair' : 'exact_repeat_repair_unresolved',
       ]
         .filter(Boolean)
         .join(',');
+      governance.candidateVersions = [
+        ...previous.candidateVersions,
+        ...(usable ? governance.candidateVersions : []),
+      ];
     }
     const rendered = this.replyPostprocessorService.renderForDelivery(
       governance.segments
@@ -146,5 +177,19 @@ function buildSemanticDiagnosticConstraints(
       ...(careReceptionRequired ? (['receive_care'] as const) : []),
     ],
     questionPolicy: activeSpeechRequest ? 'none' : 'helpful',
+  };
+}
+
+function sumUsage(
+  left?: ReplyRevisionUsage,
+  right?: ReplyRevisionUsage
+): ReplyRevisionUsage | undefined {
+  if (!left && !right) return undefined;
+  return {
+    model: right?.model || left?.model,
+    promptTokens: (left?.promptTokens || 0) + (right?.promptTokens || 0),
+    completionTokens:
+      (left?.completionTokens || 0) + (right?.completionTokens || 0),
+    totalTokens: (left?.totalTokens || 0) + (right?.totalTokens || 0),
   };
 }
