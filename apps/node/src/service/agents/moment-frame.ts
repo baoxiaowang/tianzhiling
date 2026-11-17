@@ -78,8 +78,7 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
   const recentTrip = TRIP_PATTERN.test(recentForHigh);
   const recentDistress = DISTRESS_PATTERN.test(recentForHigh);
   const currentDistress = DISTRESS_PATTERN.test(current);
-  const arrival =
-    USER_ARRIVAL_PATTERN.test(current) && current.length <= 24;
+  const arrival = USER_ARRIVAL_PATTERN.test(current) && current.length <= 24;
   const memoryInvite = MEMORY_INVITE_PATTERN.test(current);
   const ritual = RITUAL_PATTERN.test(current);
 
@@ -129,7 +128,6 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
       reason: '用户刚洗完澡/躺下/准备休息，先接住身体状态',
     };
   }
-
 
   if (PLAN_STATUS_PATTERN.test(current) && current.length <= 40) {
     return {
@@ -192,19 +190,48 @@ export function resolveMomentFrame(input: MomentFrameInput): MomentFrame {
 }
 
 export function shouldApplyMomentPrompt(frame: MomentFrame): boolean {
-  return (
-    frame.momentType !== 'ordinary' &&
-    frame.momentType !== 'practical'
-  );
+  return frame.momentType !== 'ordinary' && frame.momentType !== 'practical';
+}
+
+export type MomentFilterMode = 'enforce' | 'diagnostic';
+export function resolveMomentFilterMode(): MomentFilterMode {
+  return process.env.MOMENT_FILTER_MODE === 'diagnostic'
+    ? 'diagnostic'
+    : 'enforce';
+}
+
+/** Compute the old decision without allowing it to alter diagnostic-mode output. */
+export function evaluateMomentFrameSegments(
+  segments: string[],
+  frame?: MomentFrame | null
+) {
+  const mode = resolveMomentFilterMode();
+  const enforced = enforceMomentFrameSegments(segments, frame);
+  return {
+    mode,
+    wouldFilter: JSON.stringify(segments) !== JSON.stringify(enforced),
+    reasons: segments
+      .map(segment => detectMomentFrameViolation(segment, frame))
+      .filter(Boolean),
+    segments: mode === 'diagnostic' ? [...segments] : enforced,
+  };
 }
 
 export function buildMomentFramePrompt(frame: MomentFrame): string {
+  if (resolveMomentFilterMode() === 'diagnostic') {
+    return [
+      '## 当前时刻参考',
+      `场景线索：${frame.momentType}。这是粗粒度分类，不替代对用户整句话的理解。`,
+      '以用户最新明确事实和完整语境为准；不按标签强制安慰、叮嘱、提问、收尾或凑句数。',
+    ].join('\n');
+  }
+
   const memory =
     frame.memoryPermission === 'none'
       ? '本轮不主动提旧食物、旧物件、共同回忆；只有用户本轮明确提到才可接。'
       : frame.memoryPermission === 'invited'
-        ? '用户本轮主动打开了过去，可以回忆，但要贴用户提到的对象。'
-        : '只在当前物件/地点/仪式与记忆直接相关时接。';
+      ? '用户本轮主动打开了过去，可以回忆，但要贴用户提到的对象。'
+      : '只在当前物件/地点/仪式与记忆直接相关时接。';
   const bubble =
     frame.bubbleBudget === 1
       ? '最多一个气泡；不要为了凑第二个气泡引入旧话题。'
@@ -217,19 +244,19 @@ export function buildMomentFramePrompt(frame: MomentFrame): string {
     frame.momentType === 'plan_status'
       ? '先回应这个安排本身；不要用旧食物、旧偏好、旧地点填充第二句。'
       : frame.momentType === 'low_info_status'
-        ? '先回应用户刚报告的状态；不要用旧事、旧偏好、第二个关系动作填充。'
+      ? '先回应用户刚报告的状态；不要用旧事、旧偏好、第二个关系动作填充。'
       : frame.momentType === 'daily_rest'
-        ? '先接住“洗完澡/躺下/要休息”这一刻；不要用旧事填充。'
-        : frame.primaryNeed === 'land'
-          ? '先接住“到家/进屋/落地”这一刻；不要急着讲道理、提问或回忆。'
-          : frame.primaryNeed === 'accompany'
-        ? '先陪着当前情绪，不急着用旧事填满。'
-        : '按当前需要回应，不主动扩大话题。',
+      ? '先接住“洗完澡/躺下/要休息”这一刻；不要用旧事填充。'
+      : frame.primaryNeed === 'land'
+      ? '先接住“到家/进屋/落地”这一刻；不要急着讲道理、提问或回忆。'
+      : frame.primaryNeed === 'accompany'
+      ? '先陪着当前情绪，不急着用旧事填满。'
+      : '按当前需要回应，不主动扩大话题。',
     '这是本轮的时刻约束，不是角色设定；不要向用户说出这些字段名。',
   ].join('\n');
 }
 
-export function applyMomentFrameToSegments(
+function enforceMomentFrameSegments(
   segments: string[],
   frame?: MomentFrame | null
 ): string[] {
@@ -239,8 +266,7 @@ export function applyMomentFrameToSegments(
     const filtered = next.filter(segment => {
       const value = String(segment || '');
       return !(
-        FOOD_SMELL_PATTERN.test(value) ||
-        UNINVITED_MEMORY_PATTERN.test(value)
+        FOOD_SMELL_PATTERN.test(value) || UNINVITED_MEMORY_PATTERN.test(value)
       );
     });
     if (!filtered.length) {
@@ -259,9 +285,14 @@ export function shouldBlockMemoryRetrieval(frame: MomentFrame): boolean {
 function shouldGateMomentMemory(frame: MomentFrame): boolean {
   return (
     frame.memoryPermission === 'none' &&
-    ['arrival_home', 'after_trip', 'daily_rest', 'plan_status', 'low_info_status', 'distress'].includes(
-      frame.momentType
-    )
+    [
+      'arrival_home',
+      'after_trip',
+      'daily_rest',
+      'plan_status',
+      'low_info_status',
+      'distress',
+    ].includes(frame.momentType)
   );
 }
 
@@ -278,7 +309,10 @@ function buildMomentSafeFallback(frame: MomentFrame): string {
   if (frame.momentType === 'daily_rest') return '先歇着，别着凉。';
   if (frame.momentType === 'plan_status') return '路上慢点，注意安全。';
   if (frame.momentType === 'low_info_status') return '嗯，我听着。';
-  if (frame.momentType === 'arrival_home' || frame.momentType === 'after_trip') {
+  if (
+    frame.momentType === 'arrival_home' ||
+    frame.momentType === 'after_trip'
+  ) {
     return '到家就好，先缓一缓。';
   }
   if (frame.momentType === 'distress') return '我在，慢慢说。';
@@ -297,4 +331,11 @@ export function detectMomentFrameViolation(
     return '当前时刻不允许主动引入旧记忆，回复仍用旧事填充';
   }
   return undefined;
+}
+
+export function applyMomentFrameToSegments(
+  segments: string[],
+  frame?: MomentFrame | null
+): string[] {
+  return evaluateMomentFrameSegments(segments, frame).segments;
 }

@@ -74,7 +74,7 @@ import {
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { PresenceStateService } from './agents/presence-state.service';
-import { applyMomentFrameToSegments, resolveMomentFrame } from './agents/moment-frame';
+import { evaluateMomentFrameSegments, resolveMomentFrame } from './agents/moment-frame';
 import { normalizePersonReferenceOutsideQuotes } from './agents/person-reference';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
@@ -6255,10 +6255,11 @@ export class ConversationService {
       }
     }
     markReplyTiming(timing, 'review_done');
-    const momentAdjustedSegments = applyMomentFrameToSegments(
+    const momentDiagnostic = evaluateMomentFrameSegments(
       participationResult.segments,
       replyBrief.momentFrame
     );
+    const momentAdjustedSegments = momentDiagnostic.segments;
     const referenceAdjustedSegments = momentAdjustedSegments.map(segment =>
       normalizePersonReferenceOutsideQuotes(
         before.searchableText,
@@ -6275,6 +6276,9 @@ export class ConversationService {
       runtime.conversation.userId,
       referenceAdjustedSegments
     );
+    if (momentDiagnostic.wouldFilter) {
+      this.logger?.info?.('[moment-diagnostic] mode=%s reasons=%j', momentDiagnostic.mode, momentDiagnostic.reasons);
+    }
     return this.attachTurnStatePlans(
       {
         replySegments: addressGuardedSegments,
@@ -6504,10 +6508,11 @@ export class ConversationService {
       recentMessages: options.currentTurnMessages,
       isDeceased: Boolean(options.runtime.agent?.deathDate),
     });
-    const microMomentAdjustedSegments = applyMomentFrameToSegments(
+    const microMomentDiagnostic = evaluateMomentFrameSegments(
       generatedSegments,
       microMomentFrame
     );
+    const microMomentAdjustedSegments = microMomentDiagnostic.segments;
     const microReferenceAdjustedSegments = microMomentAdjustedSegments.map(
       segment =>
         normalizePersonReferenceOutsideQuotes(
