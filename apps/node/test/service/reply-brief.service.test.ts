@@ -221,7 +221,7 @@ describe('buildReplyBrief', () => {
       suppressPriorFacts: true,
     });
     expect(brief.guardrailFocuses).toContain('correction_reset');
-    expect(brief.prompt).toContain('替代事实归零');
+    expect(brief.prompt).toContain('未说明的部分不要另猜一个版本');
   });
 
   it('uses only the explicit minimum replacement on a correction turn', () => {
@@ -231,7 +231,8 @@ describe('buildReplyBrief', () => {
 
     expect(brief.correctionPolicy?.mode).toBe('replace');
     expect(brief.prompt).toContain('最小替代事实');
-    expect(brief.prompt).toContain('不增加时间、地点、动作或另一种解释');
+    expect(brief.prompt).toContain('采用用户明确给出的信息');
+    expect(brief.prompt).toContain('未说明的部分不要另猜一个版本');
   });
 
   it('grounds active contribution while preferring role-present content', () => {
@@ -992,7 +993,7 @@ describe('buildReplyBrief', () => {
       targetCharacters: 28,
       reviewCharacters: 38,
     });
-    expect(brief.prompt).toContain('替代事实归零');
+    expect(brief.prompt).toContain('未说明的部分不要另猜一个版本');
   });
 
   it('uses the relationship continuity contract as the reply planning source', () => {

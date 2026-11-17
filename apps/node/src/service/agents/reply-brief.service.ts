@@ -2295,16 +2295,11 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const correctionLines = brief.correctionPolicy
-    ? [
-        '## 本轮纠正',
-        brief.correctionPolicy.mode === 'replace'
-          ? '旧事实立即失效；只采用用户本轮明确给出的最小替代事实，关系归属用“是”、称呼要求才用“叫”，用户的“我”转成“你”；不增加时间、地点、动作或另一种解释，随后收住。'
-          : '旧事实立即失效；替代事实归零，不猜另一个版本，不补原因、时间、地点或动作，随后收住。',
-        '不要逐字重复上一轮被用户否定的原句，也不要换词重述同一个旧结论。',
-        '',
-      ]
-    : [];
+  const correctionLines = [
+    '## 理解与纠正',
+    '结合最近对话理解当前表达，包括反问和省略。用户否定或纠正你时，更新被否定的前提，采用用户明确给出的信息；未说明的部分不要另猜一个版本。可以引用旧话说明修正，但不要继续坚持旧结论。不要求固定道歉、复述、追问或收尾。',
+    '',
+  ];
   const boundaryContract = buildReplyBoundaryContract({
     capabilityConstraints: brief.capabilityConstraints,
     forbiddenAssumptions: brief.forbiddenAssumptions,
