@@ -75,6 +75,7 @@ import {
   AgentProfileFactService,
   AgentProfileFactSummary,
 } from './agent-profile-fact.service';
+import { shouldInjectProfileFact } from './profile-fact-injection';
 import { UserIdentityMemoryService } from './user-identity-memory.service';
 import { UserRelativeProfileService } from './user-relative-profile.service';
 import { UserSelfMemoryService } from './user-self-memory.service';
@@ -1180,7 +1181,11 @@ export class AgentContextService {
     for (const log of familyFilter.logs) {
       this.logger?.warn?.('[family-consistency] %s', log);
     }
-    const profileFacts = familyFilter.facts;
+    // 先门控再派生身份、偏好、规划候选及证据，避免其他注入分支绕过检查。
+    const profileFactQuery = options.currentUserText ?? options.currentQuery ?? '';
+    const profileFacts = familyFilter.facts.filter(fact =>
+      shouldInjectProfileFact(fact, profileFactQuery)
+    );
     const temporalProfiles =
       (await this.personTemporalMemoryService?.listProfilesForPrompt({
         userId: options.conversation.userId,
@@ -1807,6 +1812,7 @@ export class AgentContextService {
       .slice(0, modePolicy.retrievedMemoryLimit);
     const evidenceCandidates = this.buildEvidencePack({
       currentQuery: options.currentQuery || '',
+      currentUserText: profileFactQuery,
       recentMessages: replyBrief.correctionPolicy ? [] : recentHistoryMessages,
       agent: options.agent,
       memoryControlResult: options.memoryControlResult,
@@ -4350,6 +4356,7 @@ export class AgentContextService {
 
   private buildEvidencePack(options: {
     currentQuery: string;
+    currentUserText?: string;
     recentMessages: MessageEntity[];
     agent: AgentEntity | null;
     memoryControlResult?: AgentMemoryControlResult;
@@ -4412,7 +4419,14 @@ export class AgentContextService {
     let factIndex = 0;
     const profileFactKeys = new Set<string>();
 
-    for (const fact of options.profileFacts.slice(0, 5)) {
+    for (const fact of options.profileFacts
+      .filter(fact =>
+        shouldInjectProfileFact(
+          fact,
+          options.currentUserText ?? options.currentQuery
+        )
+      )
+      .slice(0, 5)) {
       // 偏好由读侧编译器单独注入，避免在证据层重复。
       if (fact.preferenceScope) {
         continue;
