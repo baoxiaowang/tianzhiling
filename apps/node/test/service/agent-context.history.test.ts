@@ -91,6 +91,7 @@ describe('AgentContextService history selection', () => {
     expect(context.diagnostics.historyLoadBoundaryTruncated).toBe(false);
     expect(context.diagnostics.historyLoadBoundaryTurnUnconfirmed).toBe(false);
 
+    expect(context.messages.map(message => String(message.content)).join('\n')).toContain('不编造“我其实是想说”的解释');
     const contents = context.messages.map(message => message.content);
     expect(contents).toContain('历史消息8');
     expect(contents).not.toContain('历史消息0');
