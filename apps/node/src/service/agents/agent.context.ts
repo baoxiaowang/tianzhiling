@@ -194,10 +194,7 @@ import {
   DeliberateLongReplyCandidateAssessment,
 } from './deliberate-long-reply';
 import {
-  CONVERSATION_TIME_MATERIAL_MIN_GAP_MS,
-  describeElapsedTime,
-  formatBeijingDateTime,
-  isTimeQuestionQuery,
+  buildConversationReturnContextPrompt,
   type ConversationReturnContext,
 } from './conversation-return-context';
 import {
@@ -271,6 +268,8 @@ export interface BuildConversationContextOptions {
   conversationReturnContext?: ConversationReturnContext;
   /** 本次上下文是否刚跨过 6 小时间隔；跨段时不把上一段连续性摘要当当前状态。 */
   sessionBoundary?: boolean;
+  /** 上一段末尾已通过预算检查并进入本轮历史。 */
+  previousTurnIncluded?: boolean;
   /**
    * 本地记忆候选（隔离工作副本）：由入口传入材料，上下文构造负责去重、渲染与来源/时间标注。
    * 这些是“候选”而不是已确认事实：assertionPolicy=context_only、useMode=hypothesis。
@@ -728,7 +727,6 @@ import {
 import { compileConditionalPrompts } from './conditional-prompt';
 import { buildMemoryRetrievalQuery } from '../memory/memory-retrieval-keys';
 import {
-  buildElapsedFeelingInstruction,
   buildReturnTurnMaterialPrompt,
   resolveReturnTurnHistoryLimit,
   resolveReturnTurnPlan,
@@ -1755,6 +1753,17 @@ export class AgentContextService {
       loadBoundaryTruncated: historyLoadBoundaryTruncated,
     });
     const recentHistoryMessages = historySelection.messages;
+    const previousTurn = this.buildPreviousSessionTurn(
+      session.previousTurn,
+      [...recentHistoryMessages, ...currentTurnMessages],
+      effectiveHistoryLimit - recentHistoryMessages.length,
+      identity
+    );
+    const contextOptions = {
+      ...options,
+      sessionBoundary: session.boundary || options.sessionBoundary,
+      previousTurnIncluded: Boolean(previousTurn.prompt),
+    };
     const historyCoverageNote = this.buildHistoryCoverageNote(historySelection);
     const returnTurnMaterial = await this.buildReturnTurnMaterial({
       options,
@@ -1902,7 +1911,7 @@ export class AgentContextService {
       'prompt.build_layers',
       () =>
         this.buildSystemLayer(
-          session.boundary ? { ...options, sessionBoundary: true } : options,
+          contextOptions,
           evidence,
           replyBrief,
           persona,
@@ -1971,6 +1980,12 @@ export class AgentContextService {
       recentHistoryMessages,
       identity
     );
+    if (previousTurn.prompt) {
+      historyLayer.messages.unshift({
+        role: 'user',
+        content: previousTurn.prompt,
+      });
+    }
     this.appendCurrentTurnToHistory(historyLayer, options, currentTurnMessages);
     const layers = [systemLayer, historyLayer];
     const messages = layers.reduce<ChatCompletionMessageParam[]>(
@@ -2024,6 +2039,17 @@ export class AgentContextService {
       operation: 'artifact.actual_model_context',
       payload: {
         messages,
+        history_message_ids: [
+          ...previousTurn.messageIds,
+          ...recentHistoryMessages.map(message =>
+            this.stringifyObjectId(message.id)
+          ),
+          ...(options.currentQuery?.trim() && options.currentTurnMessageIds?.length
+            ? options.currentTurnMessageIds
+            : []),
+        ],
+        previous_turn_included: Boolean(previousTurn.prompt),
+        return_context_hint: systemLayer.returnContextHint,
         nonDecisionSemanticDiagnostics: {
           conversationPlan: replyBrief.conversationPlan,
           commAct: replyBrief.commAct,
@@ -2342,7 +2368,7 @@ export class AgentContextService {
     testModePromptLines: string[] = [],
     entityLedgerPrompt = '',
     memoryPackageNarrativePrompt = ''
-  ): AgentContextLayer & { dynamicContext?: string } {
+  ): AgentContextLayer & { dynamicContext?: string; returnContextHint?: string } {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
       planningMode: planningMode || 'direct',
@@ -2379,7 +2405,8 @@ export class AgentContextService {
     const conversationReturnContextPrompt =
       this.buildConversationReturnContextPrompt(
         options.conversationReturnContext,
-        options.currentQuery
+        options.currentQuery,
+        options.previousTurnIncluded
       );
     const doubaoAdaptation = options.effectiveChatModel?.includes('doubao')
       ? '\n不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。'
@@ -2655,6 +2682,7 @@ export class AgentContextService {
       // 稳定 system 只放逐字不变的内容；本轮动态上下文由调用方追加到历史之后，
       // 这样 system + 历史构成的前缀不会被每轮事实/摘要/证据打断。
       dynamicContext: dynamicCompiled.content,
+      returnContextHint: conversationReturnContextPrompt,
       promptLayer: {
         plan,
         compilerVersion: stableCompiled.version,
@@ -2772,57 +2800,14 @@ export class AgentContextService {
 
   private buildConversationReturnContextPrompt(
     context?: ConversationReturnContext,
-    currentQuery = ''
+    currentQuery = '',
+    previousTurnIncluded = false
   ): string {
-    // 时间是常态参考材料：每一轮都告诉模型"现在是什么时候"；有上一次联系时，
-    // 再给出上一次双方说话的时间和中间隔了多久。上一次聊了什么本来就在最近的
-    // 历史消息里，这里只补时间，不替模型判断"这算不算重逢、要不要提"。
-    const nowAt = context ? new Date(context.currentTurnAt) : new Date();
-    const lines = [
-      '# 当前时间与联系间隔',
-      `现在：${formatBeijingDateTime(nowAt)}`,
-    ];
-    if (isTimeQuestionQuery(currentQuery)) {
-      // 只在用户真的问时间时支付这段指令；平时只保留一行时间。
-      lines.push(
-        '时间问题：先按上面的时间直接回答，不要说自己没有时间概念；不能声称看过钟表。'
-      );
-    }
-
-    if (context) {
-      const previousAt = new Date(context.previousContactAt);
-      const previousUserAt = new Date(context.previousUserContactAt);
-      const elapsedMs = nowAt.getTime() - previousAt.getTime();
-      // 超过 6 小时才提"上一次"；连着聊的时间材料是噪声。
-      if (
-        Number.isFinite(elapsedMs) &&
-        elapsedMs >= CONVERSATION_TIME_MATERIAL_MIN_GAP_MS
-      ) {
-        lines.push(`用户上一次说话：${formatBeijingDateTime(previousUserAt)}`);
-        if (context.previousAssistantContactAt) {
-          lines.push(
-            `你上一次说话：${formatBeijingDateTime(
-              new Date(context.previousAssistantContactAt)
-            )}`
-          );
-        }
-
-        const elapsed = describeElapsedTime(previousAt, nowAt);
-        if (elapsed) {
-          lines.push(`距上一次联系：${elapsed}`);
-        }
-
-        lines.push('上一次联系的对话结尾在最近的历史消息里。');
-      }
-    }
-
-    // 隔了一段时间才回来：把时间跨度告诉模型，让它用自己的话说一句感受（不给固定句式）。
-    const elapsedFeeling = buildElapsedFeelingInstruction({
-      elapsedHours: context?.elapsedHours,
-    });
-    if (elapsedFeeling) lines.push('', elapsedFeeling);
-
-    return lines.join('\n');
+    return buildConversationReturnContextPrompt(
+      context,
+      currentQuery,
+      previousTurnIncluded
+    );
   }
 
   private buildConversationReadingPrompt(
@@ -3013,6 +2998,7 @@ export class AgentContextService {
     return [
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
+      replyBrief.modelAddendum?.trim().replace(/\s*\n\s*/g, ' '),
       evidenceBoundaryPrompt,
       ...(conversationProtectionPrompt
         ? ['# 会话级硬边界', conversationProtectionPrompt]
@@ -5109,6 +5095,59 @@ export class AgentContextService {
     }
 
     return message.content?.trim() || '';
+  }
+
+  /** 当前段先占消息预算；上一段仅使用余量，用户原话不截断。 */
+  private buildPreviousSessionTurn(
+    turn: [MessageEntity, MessageEntity] | undefined,
+    retainedMessages: MessageEntity[],
+    remainingMessages: number,
+    identity?: AgentIdentityContract
+  ): { prompt: string; messageIds: string[] } {
+    const omitted = { prompt: '', messageIds: [] };
+    if (!turn || remainingMessages < 1) return omitted;
+    const retainedIds = new Set(
+      retainedMessages.map(message => this.stringifyObjectId(message.id))
+    );
+    const ids = turn.map(message => this.stringifyObjectId(message.id));
+    if (ids.some(id => !id || retainedIds.has(id)) || ids[0] === ids[1]) {
+      return omitted;
+    }
+    const user = this.buildUserEvidenceText(turn[0]);
+    const assistant = this.buildAssistantHistoryContent(
+      turn[1],
+      identity?.agent?.displayName
+    );
+    // 两条原始消息均须可渲染，不能把无有效回复的输入作为完整轮次。
+    if (!user || !assistant) return omitted;
+    const at = new Date(turn[0].createdAt);
+    if (!Number.isFinite(at.getTime())) return omitted;
+    const timestamp = at.toLocaleString('sv-SE', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    // 跨段材料单独限长，不挤掉任何当前段消息；不足时先截助手，再省略片段。
+    const maxCharacters = 2000;
+    const userPrompt = `[${timestamp}]\n用户：${user}`;
+    if (userPrompt.length > maxCharacters) return omitted;
+    const assistantBudget = maxCharacters - userPrompt.length - '\n助手：'.length;
+    if (remainingMessages < 2 || assistantBudget < 1) {
+      return { prompt: userPrompt, messageIds: [ids[0]] };
+    }
+    const assistantText =
+      assistant.length <= assistantBudget
+        ? assistant
+        : assistantBudget > 1
+        ? assistant.slice(0, assistantBudget - 1) + '…'
+        : '';
+    return {
+      prompt: assistantText ? `${userPrompt}\n助手：${assistantText}` : userPrompt,
+      messageIds: assistantText ? ids : [ids[0]],
+    };
   }
 
   private buildHistoryLayer(

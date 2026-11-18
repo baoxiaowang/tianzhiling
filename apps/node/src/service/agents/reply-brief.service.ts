@@ -43,7 +43,6 @@ import {
 } from './presence-state';
 import {
   buildMomentFramePrompt,
-  resolveMomentFilterMode,
   resolveMomentFrame,
   shouldApplyMomentPrompt,
   type MomentFrame,
@@ -251,6 +250,8 @@ export interface ReplyBrief {
   conversationProtection: ConversationProtectionState;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
+  /** 给模型的简短理解指导；buildModelReplyBriefPrompt 渲染此字段。 */
+  modelAddendum?: string;
   prompt: string;
 }
 
@@ -710,6 +711,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
     version: 'reply_brief_v17',
+    modelAddendum: '根据最近对话理解当前表达。用户否定或纠正你时，更新之前的理解并自然回应；不要继续沿被否定的前提猜测。不必固定道歉、复述或追问。',
     currentQuery,
     mode,
     primaryScene,
@@ -2296,13 +2298,6 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const correctionLines = [
-    '## 理解与纠正',
-    resolveMomentFilterMode() === 'diagnostic'
-      ? '结合整句话和最近对话理解用户，区分已发生的事、当前状态、未来打算和仍存在的感受。最新明确事实应更新此前理解，回应和建议不能违背它。理解反问和省略；用户纠正时自然更新前提，未说明的部分不要另猜。不强制附和、道歉、复述、安慰、追问或收尾。'
-      : '结合最近对话理解当前表达，包括反问和省略。用户否定或纠正你时，更新被否定的前提，采用用户明确给出的信息；未说明的部分不要另猜一个版本。可以引用旧话说明修正，但不要继续坚持旧结论。不要求固定道歉、复述、追问或收尾。',
-    '',
-  ];
   const boundaryContract = buildReplyBoundaryContract({
     capabilityConstraints: brief.capabilityConstraints,
     forbiddenAssumptions: brief.forbiddenAssumptions,
@@ -2365,7 +2360,6 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...realityDependencyLines,
     ...activeContributionLines,
     ...strategyQualityLines,
-    ...correctionLines,
     '## 可信证据',
     ...evidenceLines,
     '离世生活只在用户主动提起或贴题时按本轮框架回答；没有激活框架时不编环境或小场景填充。共同往事沿用户已说片段回应感受和意义，具体细节仍须证据，不延伸成现实到场、触碰或代办。',

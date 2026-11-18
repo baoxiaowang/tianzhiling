@@ -10,6 +10,7 @@ export const CONVERSATION_SESSION_GAP_MS = 6 * 60 * 60 * 1000;
 
 export interface SessionMessageLike {
   createdAt?: Date | string | null;
+  role?: string;
 }
 
 export interface CurrentSessionResult<T> {
@@ -18,6 +19,8 @@ export interface CurrentSessionResult<T> {
   boundary: boolean;
   /** 最近一次边界之前最后一条消息的时间。 */
   boundaryAt?: Date;
+  /** 最近一次边界前，最后一组相邻的 user + assistant；不含未回复输入。 */
+  previousTurn?: [T, T];
 }
 
 function toDate(value: Date | string | null | undefined): Date | undefined {
@@ -31,8 +34,22 @@ function toDate(value: Date | string | null | undefined): Date | undefined {
   return undefined;
 }
 
+function lastCompleteTurn<T extends SessionMessageLike>(
+  messages: T[]
+): [T, T] | undefined {
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    if (
+      messages[index].role === 'user' &&
+      messages[index + 1].role === 'assistant'
+    ) {
+      return [messages[index], messages[index + 1]];
+    }
+  }
+  return undefined;
+}
+
 /**
- * 只保留“当前会话段”的历史消息。
+ * 当前段历史与上一段最后一个完整轮次分开返回，由调用方按预算插入。
  *
  * - 连续聊天（间隔 < 6 小时）：全部保留；
  * - 历史里出现长间隔：只保留最后一次长间隔之后的消息；
@@ -60,7 +77,23 @@ export function selectCurrentSessionHistory<T extends SessionMessageLike>(
   // 先看当前轮与上一段最后一条消息的间隔。
   const last = ordered[ordered.length - 1];
   if (currentAt.getTime() - last.at.getTime() >= gapMs) {
-    return { messages: [], boundary: true, boundaryAt: last.at };
+    // 只在紧邻的上一段中找，不能越过更早的边界捞旧轮次。
+    let previousStart = ordered.length - 1;
+    while (
+      previousStart > 0 &&
+      ordered[previousStart].at.getTime() -
+        ordered[previousStart - 1].at.getTime() < gapMs
+    ) {
+      previousStart -= 1;
+    }
+    return {
+      messages: [],
+      boundary: true,
+      boundaryAt: last.at,
+      previousTurn: lastCompleteTurn(
+        ordered.slice(previousStart).map(item => item.message)
+      ),
+    };
   }
 
   // 再看历史内部最后一次长间隔，只保留其后的消息。
@@ -73,7 +106,23 @@ export function selectCurrentSessionHistory<T extends SessionMessageLike>(
     }
   }
 
+  let previousStart = start - 1;
+  while (
+    previousStart > 0 &&
+    ordered[previousStart].at.getTime() -
+      ordered[previousStart - 1].at.getTime() < gapMs
+  ) {
+    previousStart -= 1;
+  }
+
   return {
+    ...(start > 0
+      ? {
+          previousTurn: lastCompleteTurn(
+            ordered.slice(previousStart, start).map(item => item.message)
+          ),
+        }
+      : {}),
     messages: ordered.slice(start).map(item => item.message),
     boundary: Boolean(boundaryAt),
     ...(boundaryAt ? { boundaryAt } : {}),

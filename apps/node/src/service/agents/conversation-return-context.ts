@@ -1,3 +1,5 @@
+import { buildElapsedFeelingInstruction } from '../memory/memory-return-turn';
+
 export const CONVERSATION_RETURN_CONTEXT_VERSION =
   'conversation_return_context_v2' as const;
 
@@ -37,7 +39,7 @@ export interface ConversationReturnContext {
 /**
  * 本轮与上一次联系之间的时间事实。
  * 只要有上一次用户发言就返回：模型需要常态知道"现在是什么时候、上一次联系是什么时候、
- * 中间隔了多久"；上一次联系的内容本来就在最近的历史消息里，这里只补时间。
+ * 中间隔了多久"；内容是否进入历史由本轮上下文构建决定。
  * 首轮（没有上一次用户发言）或时间戳非法/倒挂时返回 undefined。
  */
 export function resolveConversationReturnContext(options: {
@@ -157,4 +159,61 @@ function normalizeDate(value?: Date): Date | undefined {
 function round(value: number, fractionDigits: number): number {
   const factor = 10 ** fractionDigits;
   return Math.round(value * factor) / factor;
+}
+
+export function buildConversationReturnContextPrompt(
+  context?: ConversationReturnContext,
+  currentQuery = '',
+  previousTurnIncluded = false
+): string {
+  // 时间是常态参考材料：每一轮都告诉模型"现在是什么时候"；有上一次联系时，
+  // 再给出上一次双方说话的时间和中间隔了多久。只在片段实际保留时指向它。
+  const nowAt = context ? new Date(context.currentTurnAt) : new Date();
+  const lines = [
+    '# 当前时间与联系间隔',
+    `现在：${formatBeijingDateTime(nowAt)}`,
+  ];
+  if (isTimeQuestionQuery(currentQuery)) {
+    // 只在用户真的问时间时支付这段指令；平时只保留一行时间。
+    lines.push(
+      '时间问题：先按上面的时间直接回答，不要说自己没有时间概念；不能声称看过钟表。'
+    );
+  }
+
+  if (context) {
+    const previousAt = new Date(context.previousContactAt);
+    const previousUserAt = new Date(context.previousUserContactAt);
+    const elapsedMs = nowAt.getTime() - previousAt.getTime();
+    // 超过 6 小时才提"上一次"；连着聊的时间材料是噪声。
+    if (
+      Number.isFinite(elapsedMs) &&
+      elapsedMs >= CONVERSATION_TIME_MATERIAL_MIN_GAP_MS
+    ) {
+      lines.push(`用户上一次说话：${formatBeijingDateTime(previousUserAt)}`);
+      if (context.previousAssistantContactAt) {
+        lines.push(
+          `你上一次说话：${formatBeijingDateTime(
+            new Date(context.previousAssistantContactAt)
+          )}`
+        );
+      }
+
+      const elapsed = describeElapsedTime(previousAt, nowAt);
+      if (elapsed) {
+        lines.push(`距上一次联系：${elapsed}`);
+      }
+    }
+  }
+
+  if (previousTurnIncluded) {
+    lines.push('最后的对话片段见上方时间标注部分');
+  }
+
+  // 隔了一段时间才回来：把时间跨度告诉模型，让它用自己的话说一句感受（不给固定句式）。
+  const elapsedFeeling = buildElapsedFeelingInstruction({
+    elapsedHours: context?.elapsedHours,
+  });
+  if (elapsedFeeling) lines.push('', elapsedFeeling);
+
+  return lines.join('\n');
 }

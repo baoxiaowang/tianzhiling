@@ -96,6 +96,26 @@ describe('AgentContextService history selection', () => {
     expect(contents).not.toContain('历史消息0');
   });
 
+  it('renders the last complete 20:52 turn after a 04:12 session boundary', async () => {
+    const user = createMessage(0, MessageRole.user);
+    Object.assign(user, { content: '到家了', createdAt: new Date('2026-11-17T20:52:00+08:00') });
+    const assistant = createMessage(1, MessageRole.assistant);
+    Object.assign(assistant, { content: '到了就歇会儿', createdAt: new Date('2026-11-17T20:52:10+08:00') });
+    const current = createMessage(2, MessageRole.user);
+    Object.assign(current, { content: '醒了', createdAt: new Date('2026-11-18T04:12:00+08:00') });
+    const service = buildService([user, assistant, current]);
+    const options = {
+      ...buildOptions(createConversation(), '醒了') as object,
+      currentTurnMessageIds: [String(current.id)],
+    };
+    const context = await service.buildConversationContext(options as never);
+    expect(context.messages.map(message => String(message.content)).join('\n'))
+      .toContain('到家了');
+    expect(context.messages.map(message => String(message.content)).join('\n'))
+      .toContain('到了就歇会儿');
+    expect(context.persistedMessages).toEqual([user, assistant, current]);
+  });
+
   it('marks the load boundary incomplete when the oldest loaded message is an assistant', async () => {
     // 70 条超过 50+16 的有界加载量，且最早一条是助手消息。
     const messages = Array.from({ length: 70 }, (_, index) =>
