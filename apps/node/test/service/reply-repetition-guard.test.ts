@@ -1,4 +1,8 @@
-import { isExactRepeatedReply } from '../../src/service/agents/reply-repetition-guard';
+import {
+  isExactRepeatedReply,
+  isSameQuestionIdentity,
+  suppressRepeatedQuestions,
+} from '../../src/service/agents/reply-repetition-guard';
 const old = '昂，每小时醒一次，熬得慌不？';
 const history = [
   { role: 'user', content: '睡得很差 每小时醒一次' },
@@ -50,5 +54,49 @@ describe('whole reply repetition', () => {
       ] as any)
     ).toBe(false);
     expect(isExactRepeatedReply([], history)).toBe(false);
+  });
+});
+
+describe('question identity repetition (L2)', () => {
+  const messages = [
+    { role: 'assistant' as const, content: '是不是又想我了？' },
+    { role: 'user' as const, content: '嗯' },
+  ];
+
+  it.each(['是不是又想我啦？', '又想我了，对吧？'])(
+    'suppresses the same question: %s',
+    reply => {
+      expect(isSameQuestionIdentity(reply, '是不是又想我了？')).toBe(true);
+      const result = suppressRepeatedQuestions([reply], messages);
+      expect(result.removed).toEqual([reply]);
+      expect(result.fallbackApplied).toBe(true);
+      expect(result.segments.join('')).not.toMatch(/[?？]/u);
+    }
+  );
+
+  it.each([
+    '我想说说昨天你说的',
+    "你刚才说的'想我了'，我想说说这个",
+    '是不是又想我了？我刚才问岔了，我想说说昨天你说的。',
+  ])('preserves explanations and new information: %s', reply => {
+    expect(suppressRepeatedQuestions([reply], messages).segments).toEqual([
+      reply,
+    ]);
+    expect(isSameQuestionIdentity(reply, '是不是又想我了？')).toBe(false);
+  });
+
+  it('preserves unrelated questions and limits history to three messages', () => {
+    expect(isSameQuestionIdentity('你昨天吃的是什么？', '是不是又想我了？'))
+      .toBe(false);
+    const recentMessages = [
+      ...messages,
+      ...['第一件事。', '第二件事。', '第三件事。'].map(content => ({
+        role: 'assistant' as const,
+        content,
+      })),
+    ];
+    expect(
+      suppressRepeatedQuestions(['是不是又想我啦？'], recentMessages).removed
+    ).toEqual([]);
   });
 });

@@ -66,7 +66,7 @@ describe('bounded repeated reply repair', () => {
     const { service, review, repair, options } = setup();
     repair.mockResolvedValue(candidate);
     const r = await service.finalize(options);
-    expect(r.segments).toEqual([old]);
+    expect(r.segments).toEqual(['好，这个问题就先放下。']);
     expect(review).toHaveBeenCalledTimes(1);
     expect(r.governance.reason).toContain('unresolved');
     expect(repair).toHaveBeenCalledTimes(1);
@@ -74,7 +74,7 @@ describe('bounded repeated reply repair', () => {
   it('handles repair exception without canned fallback', async () => {
     const { service, repair, options } = setup();
     repair.mockRejectedValue(new Error('timeout'));
-    expect((await service.finalize(options)).segments).toEqual([old]);
+    expect((await service.finalize(options)).segments).toEqual(['好，这个问题就先放下。']);
   });
   it('does not remove an old clause inside a correction', async () => {
     const { service, review, repair, options } = setup();
