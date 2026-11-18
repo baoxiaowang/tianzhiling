@@ -68,6 +68,9 @@ function createService() {
   };
   const wechatPayService = {
     getOpenidByJsCode: jest.fn().mockResolvedValue(WEAPP_OPENID),
+    getWeappLoginSessionByJsCode: jest
+      .fn()
+      .mockResolvedValue({ openid: WEAPP_OPENID }),
     getPhoneNumberByCode: jest.fn().mockResolvedValue('13800138000'),
   };
 

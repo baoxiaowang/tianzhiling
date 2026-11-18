@@ -512,7 +512,7 @@ export class UserService {
     }
 
     const user = new UserEntity();
-    user.name = this.buildDefaultWechatUserName(openid);
+    user.name = this.buildDefaultWeappUserName(openid);
     user.avatar = '';
     user.phone = '';
     user.phoneVerified = false;
@@ -591,7 +591,7 @@ export class UserService {
     }
 
     const user = new UserEntity();
-    user.name = this.buildDefaultWechatUserName(openid);
+    user.name = this.buildDefaultWeappUserName(openid);
     user.avatar = '';
     user.phone = '';
     user.phoneVerified = false;
@@ -1594,7 +1594,7 @@ export class UserService {
     return `${brandName()}用户${phone.slice(-4)}`;
   }
 
-  private buildDefaultWechatUserName(openid: string): string {
+  private buildDefaultWeappUserName(openid: string): string {
     return `${brandName()}用户${this.hashWeappOpenid(openid).slice(-4)}`;
   }
 
