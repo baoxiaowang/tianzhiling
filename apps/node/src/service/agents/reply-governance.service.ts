@@ -22,7 +22,7 @@ import {
 } from './reply-revision.service';
 
 export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v3' as const;
-const MAX_EXACT_PATCH_ROUNDS = 2;
+const MAX_EXACT_PATCH_ROUNDS = 1;
 
 export interface AppliedReplyPatch extends ReplyRevisionPatch {
   issueCode: FinalReplyIssue['code'];
@@ -198,27 +198,16 @@ export class ReplyGovernanceService {
       });
       revisionUsage = mergeRevisionUsage(revisionUsage, modelPatch?.usage);
 
-      const preferredPatch = modelPatch || buildNarrowFallbackPatch(issue);
-      let applied = preferredPatch
-        ? applyExactReplyPatch(currentSegments, preferredPatch)
+      // Never splice a generic disclaimer into an arbitrary semantic span.
+      // Failed hard repair goes to the existing reviewed hard-recovery path.
+      const selectedPatch = modelPatch;
+      const applied = selectedPatch
+        ? applyExactReplyPatch(currentSegments, selectedPatch)
         : undefined;
-      let selectedPatch = preferredPatch;
-      let patchSource: AppliedReplyPatch['source'] = modelPatch
-        ? 'model_patch'
-        : 'narrow_fallback';
+      const patchSource: AppliedReplyPatch['source'] = 'model_patch';
+      if (!applied || !selectedPatch) break;
 
-      if (!applied && modelPatch) {
-        selectedPatch = buildNarrowFallbackPatch(issue);
-        applied = selectedPatch
-          ? applyExactReplyPatch(currentSegments, selectedPatch)
-          : undefined;
-        patchSource = 'narrow_fallback';
-      }
-      if (!applied || !selectedPatch) {
-        break;
-      }
-
-      let reviewed = await this.review(
+      const reviewed = await this.review(
         options,
         applied,
         currentClaims,
@@ -230,43 +219,6 @@ export class ReplyGovernanceService {
         reviewed.audit.usage
       );
       hardFactAuditStatus = reviewed.audit.status;
-
-      if (
-        reviewed.validation.issues.some(
-          candidate =>
-            isExactPatchIssue(candidate) &&
-            candidate.blockingKind === issue.blockingKind
-        ) &&
-        modelPatch
-      ) {
-        const fallbackPatch = buildNarrowFallbackPatch(issue);
-        const fallbackApplied = fallbackPatch
-          ? applyExactReplyPatch(currentSegments, fallbackPatch)
-          : undefined;
-        if (fallbackApplied) {
-          const fallbackReview = await this.review(
-            options,
-            fallbackApplied,
-            currentClaims,
-            validationConstraints,
-            true
-          );
-          hardFactAuditUsage = mergeAuditUsage(
-            hardFactAuditUsage,
-            fallbackReview.audit.usage
-          );
-          hardFactAuditStatus = fallbackReview.audit.status;
-          if (
-            countExactPatchIssues(fallbackReview.validation.issues) <
-            countExactPatchIssues(reviewed.validation.issues)
-          ) {
-            selectedPatch = fallbackPatch;
-            applied = fallbackApplied;
-            reviewed = fallbackReview;
-            patchSource = 'narrow_fallback';
-          }
-        }
-      }
 
       candidateVersions.push(applied);
       patches.push({
@@ -471,10 +423,6 @@ function selectHighestPriorityPatchIssue(
     )[0];
 }
 
-function countExactPatchIssues(issues: FinalReplyIssue[]): number {
-  return issues.filter(isExactPatchIssue).length;
-}
-
 function recoverTechnicalSegments(segments: string[]): string[] {
   const nonProtocolSegments = segments.filter(
     segment => !looksLikeProtocolSegment(segment)
@@ -496,29 +444,6 @@ function looksLikeProtocolSegment(segment: string): boolean {
 
 function buildTechnicalFallback(): string[] {
   return ['刚才这句话没说出来，你再跟我说一遍。'];
-}
-
-function buildNarrowFallbackPatch(
-  issue: FinalReplyIssue
-): ReplyRevisionPatch | undefined {
-  if (!issue.evidence || !issue.blockingKind) {
-    return undefined;
-  }
-  const replacementByKind: Record<
-    NonNullable<FinalReplyIssue['blockingKind']>,
-    string
-  > = {
-    real_world_actionable_fabrication:
-      '这件事我不能凭空认下来，也不能随口指地方让你去找',
-    major_decision_overreach: '这件现实里的事不能由我替你拍板',
-    real_world_capability_claim: '这件事我不能说成是我在现实里做的',
-    unsupported_memory_assertion: '这件事我不乱猜',
-  };
-  return {
-    originalSpan: issue.evidence,
-    replacementSpan: replacementByKind[issue.blockingKind],
-    resolvedIssueCode: issue.code,
-  };
 }
 
 function buildHardRecovery(issue?: FinalReplyIssue): string[] {

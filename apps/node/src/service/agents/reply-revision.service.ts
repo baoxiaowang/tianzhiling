@@ -94,13 +94,14 @@ export class ReplyRevisionService {
     evidence?: AgentEvidenceItem[];
     issue: FinalReplyIssue;
   }): Promise<ReplyRevisionResult | undefined> {
-    const originalSpan = options.issue.evidence?.trim() || '';
+    const issueSpan = options.issue.evidence?.trim() || '';
+    const originalSpan = options.segments.join('\n');
     const originalText = options.segments.join('\n');
     if (
       !this.openAIService ||
       options.issue.onlineAction !== 'exact_patch' ||
       !options.issue.blockingKind ||
-      !isUniqueExactSpan(originalText, originalSpan)
+      !isUniqueExactSpan(originalText, issueSpan)
     ) {
       return undefined;
     }
@@ -112,23 +113,23 @@ export class ReplyRevisionService {
           topP: 0.2,
           reasoningSplit: false,
           thinking: { type: 'disabled' },
-          max_tokens: FINAL_PATCH_MAX_TOKENS,
+          max_tokens: 600,
           response_format: { type: 'json_object' },
           trace: {
             stage: ChatTraceStage.revise,
-            operation: 'revise.exact_span_patch',
+            operation: 'revise.coherent_reply_patch',
           },
           messages: [
             {
               role: 'system',
               content: [
-                '# 最终正文精确补丁',
-                '你不是第二个回复作者，也不重新规划这轮聊天。只替换指定的一个高后果片段；原回复其他字符由程序原样保留。',
-                'replacementSpan 要像当前亲人角色自然说话，只撤回不可信现实事实、现实能力或替用户拍板的部分。',
-                '不得新增事实、地点、物品、共同经历、现实能力、决定、建议、问题、承诺或安全话术。',
-                '不得改写长度、泡数、温度、主动贡献、提问、收尾、梦境、供品或普通离世世界内容。',
-                'originalSpan 必须逐字复制 requiredOriginalSpan，不得扩大、缩小或改写。',
-                '只输出 JSON，不解释。格式：{"originalSpan":"逐字原片段","replacementSpan":"替换文字，可为空","resolvedIssueCode":"问题码"}',
+                '# 最终回复组一致性修复',
+                '只修复已指出的事实或权限问题，但以完整回复组为单位组织自然表达，避免局部替换后前后矛盾、指代断裂或残留错误前提。',
+                '保留原角色、当前问题的有效回答及有依据的内容；不要用叮嘱、认错姿态或审查说明代替回答。',
+                '普通喜好、思念与亲密表达可以自然保留；不能编造具体共同经历、现实能力、物品位置或新的行动建议。',
+                '撤回错误前提即可，不编造“我其实想说”的理由。不要输出“不能凭空认下来”等内部审核话术。',
+                'originalSpan 必须逐字复制 requiredOriginalSpan（完整回复组），replacementSpan 是修复后的完整回复，不能只返回命中片段。',
+                '只输出 JSON，不解释。格式：{"originalSpan":"逐字原片段","replacementSpan":"完整自然回复","resolvedIssueCode":"问题码"}',
               ].join('\n'),
             },
             ...selectCompactRevisionContext(options.messages),
@@ -137,6 +138,7 @@ export class ReplyRevisionService {
               content: JSON.stringify({
                 currentUserMessage: options.userQuery,
                 originalReply: originalText,
+                problematicSpan: issueSpan,
                 requiredOriginalSpan: originalSpan,
                 issue: {
                   code: options.issue.code,
@@ -250,31 +252,13 @@ export function applyExactReplyPatch(
   segments: string[],
   patch: ReplyRevisionPatch
 ): string[] | undefined {
-  const indexes = segments
-    .map((segment, index) =>
-      segment.includes(patch.originalSpan) ? index : -1
-    )
-    .filter(index => index >= 0);
-  if (indexes.length !== 1) {
-    return undefined;
-  }
-  const segmentIndex = indexes[0];
-  if (
-    segments[segmentIndex].indexOf(patch.originalSpan) !==
-    segments[segmentIndex].lastIndexOf(patch.originalSpan)
-  ) {
-    return undefined;
-  }
-
-  const next = [...segments];
-  next[segmentIndex] = next[segmentIndex].replace(
-    patch.originalSpan,
-    patch.replacementSpan
-  );
-  const compacted = next.filter(segment => segment.trim().length > 0);
-  return patchPreservesOutsideSpan(segments, compacted, patch)
-    ? compacted
-    : undefined;
+  const original = segments.join('\n');
+  if (!isUniqueExactSpan(original, patch.originalSpan)) return undefined;
+  const replaced = original.replace(patch.originalSpan, () => patch.replacementSpan);
+  if (!replaced.trim()) return undefined;
+  // Group-level repair precedes the delivery renderer; no per-bubble patching.
+  const next = [replaced];
+  return patchPreservesOutsideSpan(segments, next, patch) ? next : undefined;
 }
 
 export function patchPreservesOutsideSpan(
