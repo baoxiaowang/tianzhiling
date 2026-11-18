@@ -642,6 +642,22 @@ export class MessageEntity extends BaseEntity {
   @Column()
   replyMemorySelectedCandidateKeys?: string[];
 
+  // 旧事来源路径计数器（T5）；无索引，仅观测。
+  @Column()
+  legacyRetrievalInjected?: boolean;
+
+  @Column()
+  invitationTriggered?: boolean;
+
+  @Column()
+  historyOldFactPresent?: boolean;
+
+  @Column()
+  summaryOldFactPresent?: boolean;
+
+  @Column()
+  profileFactInjected?: boolean;
+
   @Column()
   replyMemoryRetrievalMode?: string;
 

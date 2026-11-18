@@ -596,6 +596,12 @@ interface AssistantBubbleReflowResult {
 }
 
 interface ReplyRoutingAudit {
+  legacyRetrievalInjected?: boolean;
+  invitationTriggered?: boolean;
+  historyOldFactPresent?: boolean;
+  summaryOldFactPresent?: boolean;
+  profileFactInjected?: boolean;
+
   memoryObservation?: ReplyMemoryObservation;
   intent?: StructuredReplyIntent;
   route?: ReplySceneRoute;
@@ -12768,6 +12774,11 @@ export class ConversationService {
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
     memoryObservation?: ReplyMemoryObservation;
+    legacyRetrievalInjected?: boolean;
+    invitationTriggered?: boolean;
+    historyOldFactPresent?: boolean;
+    summaryOldFactPresent?: boolean;
+    profileFactInjected?: boolean;
     replyMemoryRetrievalInvitation?: string;
     replyMemoryInjectionMode?: string;
     replyMemoryInjectionOversizedCount?: number;
@@ -13003,6 +13014,11 @@ export class ConversationService {
       replyMemoryRetrievalMode:
         routing?.memoryRetrievalMode?.trim() || undefined,
       memoryObservation: routing?.memoryObservation,
+      legacyRetrievalInjected: routing?.legacyRetrievalInjected,
+      invitationTriggered: routing?.invitationTriggered,
+      historyOldFactPresent: routing?.historyOldFactPresent,
+      summaryOldFactPresent: routing?.summaryOldFactPresent,
+      profileFactInjected: routing?.profileFactInjected,
       replyMemoryRetrievalInvitation:
         routing?.memoryRetrievalInvitation?.trim() || undefined,
       replyMemoryInjectionMode:
@@ -13166,6 +13182,11 @@ export class ConversationService {
     replyMemorySelectedCandidateKeys?: string[];
     replyMemoryRetrievalMode?: string;
     memoryObservation?: ReplyMemoryObservation;
+    legacyRetrievalInjected?: boolean;
+    invitationTriggered?: boolean;
+    historyOldFactPresent?: boolean;
+    summaryOldFactPresent?: boolean;
+    profileFactInjected?: boolean;
     replyMemoryRetrievalInvitation?: string;
     replyMemoryInjectionMode?: string;
     replyMemoryInjectionOversizedCount?: number;
@@ -13469,6 +13490,11 @@ export class ConversationService {
     message.replyMemoryRetrievalMode =
       options.replyMemoryRetrievalMode?.trim() || undefined;
     if (options.memoryObservation) Object.assign(message, options.memoryObservation);
+    message.legacyRetrievalInjected = options.legacyRetrievalInjected;
+    message.invitationTriggered = options.invitationTriggered;
+    message.historyOldFactPresent = options.historyOldFactPresent;
+    message.summaryOldFactPresent = options.summaryOldFactPresent;
+    message.profileFactInjected = options.profileFactInjected;
     message.replyMemoryRetrievalInvitation =
       options.replyMemoryRetrievalInvitation?.trim() || undefined;
     message.replyMemoryInjectionMode =
