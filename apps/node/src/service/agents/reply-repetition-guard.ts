@@ -69,6 +69,69 @@ export function normalizeRepeatText(value: string): string {
     .trim();
 }
 
+// ICU word segmentation avoids a hand-maintained vocabulary or stop-word list.
+const questionSegmenter = new (
+  Intl as unknown as {
+    Segmenter: new (
+      locale: string,
+      options: { granularity: string }
+    ) => {
+      segment(value: string): Iterable<{
+        segment: string;
+        isWordLike: boolean;
+      }>;
+    };
+  }
+).Segmenter('zh', { granularity: 'word' });
+
+export function isSameQuestionIdentity(a: string, b: string): boolean {
+  if (!/[?？]/u.test(a) || !/[?？]/u.test(b)) return false;
+  // Compare complete question clauses; a quote followed by an explanation is
+  // not itself another occurrence of the quoted question.
+  if (!isQuestionOnly(a) || !isQuestionOnly(b)) return false;
+  const words = (value: string) =>
+    new Set(
+      Array.from(questionSegmenter.segment(value.toLowerCase()))
+        .filter(part => part.isWordLike)
+        .map(part => part.segment)
+    );
+  const left = words(a);
+  const right = words(b);
+  const shorter = Math.min(left.size, right.size);
+  if (!shorter) return false;
+  return [...left].filter(word => right.has(word)).length / shorter >= 0.6;
+}
+
+function isQuestionOnly(value: string): boolean {
+  const clauses = value.trim().match(/[^。！？!?；;\n]+[。！？!?；;\n]*/gu);
+  return Boolean(
+    clauses?.length === 1 && /[?？]\s*$/u.test(clauses[0])
+  );
+}
+
+export function suppressRepeatedQuestions(
+  segments: string[],
+  messages: ChatCompletionMessageParam[]
+): ReplyRepetitionResult {
+  const recent = extractRecentAssistantTexts(messages);
+  const removed: string[] = [];
+  const kept = segments.filter(segment => {
+    const repeated = recent.some(text =>
+      (text.match(/[^。！？!?；;\n]+[?？]/gu) || []).some(question =>
+        isSameQuestionIdentity(segment, question)
+      )
+    );
+    if (repeated) removed.push(segment);
+    return !repeated;
+  });
+  const fallbackApplied = removed.length > 0 && kept.length === 0;
+  return {
+    segments: fallbackApplied ? ['好，这个问题就先放下。'] : kept,
+    removed,
+    fallbackApplied,
+  };
+}
+
 function contentText(content: ChatCompletionMessageParam['content']): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {

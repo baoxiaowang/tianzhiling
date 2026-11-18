@@ -9,7 +9,10 @@ import {
   ReplyGovernanceService,
 } from './reply-governance.service';
 import { ReplyPostprocessorService } from './reply-postprocessor.service';
-import { isExactRepeatedReply } from './reply-repetition-guard';
+import {
+  isExactRepeatedReply,
+  suppressRepeatedQuestions,
+} from './reply-repetition-guard';
 import {
   ReplyRevisionService,
   ReplyRevisionUsage,
@@ -75,7 +78,6 @@ export class ConversationReplyFinalizationService {
       diagnosticConstraints: buildSemanticDiagnosticConstraints(options.brief),
       outputConstraints,
     });
-    // Keep the already reviewed candidate if the one-shot repair is unavailable.
     // Safety repair has priority; never start a second quality-repair loop.
     if (
       isExactRepeatedReply(governance.segments, options.messages) &&
@@ -129,6 +131,7 @@ export class ConversationReplyFinalizationService {
           JSON.stringify(governance.segments);
       governance.reason = [
         governance.reason,
+        'repeated_generic_move[L1]',
         usable ? 'exact_repeat_repair' : 'exact_repeat_repair_unresolved',
       ]
         .filter(Boolean)
@@ -136,6 +139,36 @@ export class ConversationReplyFinalizationService {
       governance.candidateVersions = [
         ...previous.candidateVersions,
         ...(usable ? governance.candidateVersions : []),
+      ];
+    }
+    if (isExactRepeatedReply(governance.segments, options.messages)) {
+      governance.segments = ['好，这个问题就先放下。'];
+      governance.claims = [];
+      governance.rewritten = true;
+      governance.candidateVersions = [
+        ...governance.candidateVersions,
+        governance.segments,
+      ];
+      if (!governance.reason?.includes('repeated_generic_move[L1]')) {
+        governance.reason = [governance.reason, 'repeated_generic_move[L1]']
+          .filter(Boolean)
+          .join(',');
+      }
+    }
+    const questionGuard = suppressRepeatedQuestions(
+      governance.segments,
+      options.messages
+    );
+    if (questionGuard.removed.length) {
+      governance.segments = questionGuard.segments;
+      governance.claims = [];
+      governance.rewritten = true;
+      governance.reason = [governance.reason, 'repeated_generic_move[L2]']
+        .filter(Boolean)
+        .join(',');
+      governance.candidateVersions = [
+        ...governance.candidateVersions,
+        governance.segments,
       ];
     }
     const rendered = this.replyPostprocessorService.renderForDelivery(
