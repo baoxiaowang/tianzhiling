@@ -305,6 +305,12 @@ export interface AgentConversationContext {
 }
 
 export interface AgentContextDiagnostics {
+  legacyRetrievalInjected?: boolean;
+  invitationTriggered?: boolean;
+  historyOldFactPresent?: boolean;
+  summaryOldFactPresent?: boolean;
+  profileFactInjected?: boolean;
+
   memoryObservation?: ReplyMemoryObservation;
   promptVersion: 'agent_chat_v11';
   generationArchitectureVersion: 'unified_main_v1';
@@ -2051,6 +2057,39 @@ export class AgentContextService {
       evidence,
       evidencePack,
       diagnostics: {
+        // T5：只扫描最终选入的材料，不参与任何选择或回复决策。
+        legacyRetrievalInjected:
+          effectiveMemoryRetrievalMode === 'active' &&
+          evidence.some(item =>
+            item.source === 'retrieved_user' &&
+            !currentTurnMessages.some(message =>
+              this.stringifyObjectId(message.id) === item.sourceMessageId
+            ) && Boolean(item.text) && finalSystemText.includes(item.text)
+          ),
+        invitationTriggered: Boolean(memoryRetrievalInvitation?.trim()),
+        historyOldFactPresent: recentHistoryMessages.some(message => {
+          const at = new Date(message.createdAt).getTime();
+          return message.role === MessageRole.user &&
+            Number.isFinite(at) &&
+            (currentTurnAt?.getTime() ?? Date.now()) - at > 24 * 60 * 60 * 1000 &&
+            // 无检索键时不能视为本轮 cue；有键时复用现有话题匹配。
+            (!buildMemoryRetrievalQuery(memoryGateText) ||
+              !isKeyLinkedEvidence(message.content || '', memoryGateText));
+        }),
+        summaryOldFactPresent: Boolean(
+          systemLayer.promptLayer?.plan.includeContinuity &&
+          /以前|曾经|上次|过去|当年|那时候/u.test(
+            options.conversation.continuitySummary || ''
+          ) && options.conversation.continuitySummary?.trim() &&
+          finalSystemText.includes(options.conversation.continuitySummary.trim())
+        ),
+        // 当前类型中这些属于具体往事；以最终证据及提示词确认已通过注入筛选。
+        profileFactInjected: relevantProfileFacts.some(fact =>
+          ['memory', 'promise', 'keepsake', 'grief_trigger'].includes(fact.type) &&
+          evidence.some(item => item.source === 'confirmed_fact' &&
+            item.factKey === fact.key && Boolean(item.text) &&
+            finalSystemText.includes(item.text))
+        ),
         memoryObservation: boundMemoryObservation(memoryObservation),
         promptVersion: 'agent_chat_v11',
         generationArchitectureVersion: 'unified_main_v1',
