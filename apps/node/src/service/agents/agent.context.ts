@@ -291,6 +291,8 @@ export interface AgentContextLayer {
 }
 
 export interface AgentConversationContext {
+  /** 有界加载的落库消息，仅供影子审计；不进入模型消息。 */
+  persistedMessages?: MessageEntity[];
   layers: AgentContextLayer[];
   messages: ChatCompletionMessageParam[];
   evidence: AgentEvidenceItem[];
@@ -2048,6 +2050,7 @@ export class AgentContextService {
     return {
       layers,
       messages,
+      persistedMessages: conversationMessages,
       evidence,
       evidencePack,
       diagnostics: {

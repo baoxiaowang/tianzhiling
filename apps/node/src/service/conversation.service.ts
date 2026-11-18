@@ -6318,7 +6318,7 @@ export class ConversationService {
       conversationId: runtime.conversation.id,
       momentType: replyBrief.momentFrame?.momentType,
       currentQuery: before.searchableText,
-      messages: context.messages,
+      messages: context.persistedMessages || [],
       currentTurnMessages,
     }).catch(error => {
       this.logger?.warn?.(
@@ -12617,9 +12617,15 @@ export class ConversationService {
       options.conversationId
     );
     const now = new Date();
+    const currentTurnIds = new Set(
+      options.currentTurnMessages.map(message =>
+        this.stringifyObjectId(message.id)
+      )
+    );
     const historyUserToday = options.messages.filter(
       message =>
         message.role === MessageRole.user &&
+        !currentTurnIds.has(this.stringifyObjectId(message.id)) &&
         message.createdAt &&
         isSameLocalDay(message.createdAt, now)
     );
