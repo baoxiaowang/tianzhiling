@@ -98,6 +98,15 @@ axios.interceptors.request.use(
 // add response interceptors
 axios.interceptors.response.use(
   (response: AxiosResponse<HttpResponse>) => {
+    // 下载返回原始 Blob/ArrayBuffer，而不是 { success, data } 信封。
+    // 保留 AxiosResponse，供下载调用方读取 response.data。
+    if (
+      response.config.responseType === 'blob' ||
+      response.config.responseType === 'arraybuffer'
+    ) {
+      return response;
+    }
+
     const res = response.data;
     const config = response.config as TzlAxiosRequestConfig;
     const isSuccess =

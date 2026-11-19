@@ -56,14 +56,29 @@
           </a-table-column>
           <a-table-column title="试听" :width="200">
             <template #cell="{ record }">
-              <audio
+              <div
                 v-if="previewUrlOf(record)"
-                :src="previewUrlOf(record)"
-                controls
-                preload="metadata"
-                class="voice-model-panel__audio"
-                @play="pauseOtherAudio"
-              />
+                class="voice-model-panel__audio-cell"
+              >
+                <audio
+                  :src="previewUrlOf(record)"
+                  controls
+                  preload="metadata"
+                  class="voice-model-panel__audio"
+                  @play="pauseOtherAudio"
+                />
+                <a-link
+                  class="voice-model-panel__audio-download"
+                  @click="
+                    downloadAudio(
+                      previewUrlOf(record),
+                      `${record.name || '音色'}-试听`
+                    )
+                  "
+                >
+                  下载
+                </a-link>
+              </div>
               <span v-else class="voice-model-panel__muted">暂无试听</span>
             </template>
           </a-table-column>
@@ -1002,7 +1017,11 @@
   import { computed, reactive, ref, toRef, watch } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import uploadAdminFile from '@/api/storage';
+  import uploadAdminFile, {
+    downloadAdminFile,
+    objectKeyFromUrl,
+    saveBlobAsFile,
+  } from '@/api/storage';
   import useTencentVrsWizard from '@/hooks/use-tencent-vrs-wizard';
   import {
     mergeCreateVoiceTimbre,
@@ -2169,6 +2188,22 @@
     }
   };
 
+  const downloadAudio = async (url: string, baseName: string) => {
+    const objectKey = objectKeyFromUrl(url);
+    if (!objectKey) {
+      Message.warning('无法识别音频地址');
+      return;
+    }
+    const ext = objectKey.split('.').pop()?.toLowerCase() || 'mp3';
+    const fileName = `${baseName}.${ext}`;
+    try {
+      const blob = await downloadAdminFile(objectKey, fileName);
+      saveBlobAsFile(blob, fileName);
+    } catch {
+      Message.error('下载失败，请稍后重试');
+    }
+  };
+
   const handleUnbindAgent = async (agent: AppUserAgentRecord) => {
     try {
       bindingSavingAgentId.value = agent.id;
@@ -2548,6 +2583,17 @@
     &__audio {
       width: 180px;
       height: 32px;
+    }
+
+    &__audio-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    &__audio-download {
+      flex: 0 0 auto;
+      font-size: 12px;
     }
 
     &__muted {
