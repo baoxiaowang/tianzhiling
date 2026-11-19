@@ -159,23 +159,50 @@
           </a-table-column>
           <a-table-column title="原始文件" :width="260">
             <template #cell="{ record }">
-              <audio
-                v-if="record.audioUrl"
-                controls
-                :src="record.audioUrl"
-                class="voice-timbre-page__audio"
-              />
+              <div v-if="record.audioUrl" class="voice-timbre-page__audio-cell">
+                <audio
+                  controls
+                  :src="record.audioUrl"
+                  class="voice-timbre-page__audio"
+                />
+                <a-link
+                  class="voice-timbre-page__audio-download"
+                  @click="
+                    downloadAudio(
+                      record.audioUrl,
+                      `${record.name || '音色'}-原始文件`
+                    )
+                  "
+                >
+                  下载
+                </a-link>
+              </div>
               <span v-else>-</span>
             </template>
           </a-table-column>
           <a-table-column title="试听" :width="260">
             <template #cell="{ record }">
-              <audio
+              <div
                 v-if="record.previewAudioUrl"
-                controls
-                :src="record.previewAudioUrl"
-                class="voice-timbre-page__audio"
-              />
+                class="voice-timbre-page__audio-cell"
+              >
+                <audio
+                  controls
+                  :src="record.previewAudioUrl"
+                  class="voice-timbre-page__audio"
+                />
+                <a-link
+                  class="voice-timbre-page__audio-download"
+                  @click="
+                    downloadAudio(
+                      record.previewAudioUrl,
+                      `${record.name || '音色'}-试听`
+                    )
+                  "
+                >
+                  下载
+                </a-link>
+              </div>
               <span v-else>-</span>
             </template>
           </a-table-column>
@@ -345,12 +372,27 @@
             </a-table-column>
             <a-table-column title="试听" :width="230">
               <template #cell="{ record }">
-                <audio
+                <div
                   v-if="record.boundTimbre?.previewAudioUrl"
-                  controls
-                  :src="record.boundTimbre.previewAudioUrl"
-                  class="voice-timbre-page__audio"
-                />
+                  class="voice-timbre-page__audio-cell"
+                >
+                  <audio
+                    controls
+                    :src="record.boundTimbre.previewAudioUrl"
+                    class="voice-timbre-page__audio"
+                  />
+                  <a-link
+                    class="voice-timbre-page__audio-download"
+                    @click="
+                      downloadAudio(
+                        record.boundTimbre.previewAudioUrl,
+                        `${record.boundTimbre.name || '音色'}-试听`
+                      )
+                    "
+                  >
+                    下载
+                  </a-link>
+                </div>
                 <a-tooltip
                   v-else-if="
                     record.boundTimbre && record.boundTimbre.status === 'failed'
@@ -1061,7 +1103,11 @@
     VoiceTimbreStatusDTO,
   } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
-  import uploadAdminFile from '@/api/storage';
+  import uploadAdminFile, {
+    downloadAdminFile,
+    objectKeyFromUrl,
+    saveBlobAsFile,
+  } from '@/api/storage';
   import {
     createVoiceTimbre,
     deleteVoiceTimbre,
@@ -2081,6 +2127,22 @@
     return requestsMandarin ? 'mandarin' : 'auto';
   };
 
+  const downloadAudio = async (url: string, baseName: string) => {
+    const objectKey = objectKeyFromUrl(url);
+    if (!objectKey) {
+      Message.warning('无法识别音频地址');
+      return;
+    }
+    const ext = objectKey.split('.').pop()?.toLowerCase() || 'mp3';
+    const fileName = `${baseName}.${ext}`;
+    try {
+      const blob = await downloadAdminFile(objectKey, fileName);
+      saveBlobAsFile(blob, fileName);
+    } catch {
+      Message.error('下载失败，请稍后重试');
+    }
+  };
+
   const formatStatus = (status: VoiceTimbreStatusDTO) => {
     const map: Record<VoiceTimbreStatusDTO, string> = {
       creating: '创建中',
@@ -2252,6 +2314,17 @@
     &__audio {
       width: 220px;
       height: 32px;
+    }
+
+    &__audio-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    &__audio-download {
+      flex: 0 0 auto;
+      font-size: 12px;
     }
 
     &__speech-params {
