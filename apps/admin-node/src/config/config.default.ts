@@ -153,7 +153,8 @@ export default {
     ],
     match: /\/admin_api\/(storage\/cos\/upload|agent_vt\/api\/[^/]+\/upload)$/,
     limits: {
-      fileSize: 200 * 1024 * 1024,
+      // Busboy 1.6 到达阈值即触发 limit，因此加 1 以允许 200 MiB（含边界）。
+      fileSize: 200 * 1024 * 1024 + 1,
       files: 1,
     },
   },
