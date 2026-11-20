@@ -1,3 +1,4 @@
+import { buildDepartureDateContext } from '../../common/departure-date-context';
 import { ReplyMemoryObservation } from '@tzl/entities';
 import { beginMemoryObservation, boundMemoryObservation } from './memory-package-observation';
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
@@ -1830,6 +1831,7 @@ export class AgentContextService {
     const evidenceCandidates = this.buildEvidencePack({
       currentQuery: options.currentQuery || '',
       currentUserText: profileFactQuery,
+      referenceTime: currentTurnAt ?? new Date(),
       recentMessages: replyBrief.correctionPolicy ? [] : recentHistoryMessages,
       agent: options.agent,
       memoryControlResult: options.memoryControlResult,
@@ -4202,7 +4204,8 @@ export class AgentContextService {
 
   private buildAgentProfileEvidence(
     agent: AgentEntity | null,
-    currentQuery: string
+    currentQuery: string,
+    referenceTime = new Date()
   ): AgentEvidenceItem[] {
     if (!agent) {
       return [];
@@ -4241,15 +4244,22 @@ export class AgentContextService {
       subjectRef: 'agent',
     });
 
-    // 离世时长常驻注入：预计算好的字符串，每轮直接用，不需要实时计算
-    const departureDuration = agent.departureDuration?.trim();
-    if (departureDuration) {
+    // 已填写的角色日期是身份材料，不依赖问法、摘要或召回。
+    // 时长在同一个北京时间自然日基准下派生，避免使用过期的预计算值。
+    const departure = buildDepartureDateContext(agent.deathDate, referenceTime);
+    if (departure) {
       addProfileAtom({
-        factKey: 'identity.departure_duration',
-        text: `当前角色已离世${departureDuration}`,
+        factKey: 'identity.death_date',
+        text: departure.dateText,
         subjectRef: 'agent',
-        confidence: 0.9,
       });
+      if (departure.elapsedText) {
+        addProfileAtom({
+          factKey: 'identity.departure_duration',
+          text: departure.elapsedText,
+          subjectRef: 'agent',
+        });
+      }
     }
 
     // 节点提醒：未来7天内有重要节点（头七/百日/周年）时注入
@@ -4290,19 +4300,11 @@ export class AgentContextService {
       /生日|出生|几岁|多大|什么时候走|什么时候去世|离开日期/.test(currentQuery)
     ) {
       const birthday = this.formatAgentDate('生日', agent.birthday);
-      const deathDate = this.formatAgentDate('离开日期', agent.deathDate);
 
       if (birthday) {
         addProfileAtom({
           factKey: 'identity.birth_date',
           text: birthday,
-          subjectRef: 'agent',
-        });
-      }
-      if (deathDate) {
-        addProfileAtom({
-          factKey: 'identity.death_date',
-          text: deathDate,
           subjectRef: 'agent',
         });
       }
@@ -4385,6 +4387,7 @@ export class AgentContextService {
   private buildEvidencePack(options: {
     currentQuery: string;
     currentUserText?: string;
+    referenceTime?: Date;
     recentMessages: MessageEntity[];
     agent: AgentEntity | null;
     memoryControlResult?: AgentMemoryControlResult;
@@ -4435,11 +4438,17 @@ export class AgentContextService {
       addEvidence(this.buildMemoryControlEvidence(options.memoryControlResult));
     }
 
-    if (!options.suppressPriorFacts) {
-      for (const item of this.buildAgentProfileEvidence(
-        options.agent,
-        currentQuery
-      )) {
+    for (const item of this.buildAgentProfileEvidence(
+      options.agent,
+      currentQuery,
+      options.referenceTime
+    )) {
+      // 纠正轮清掉旧聊天事实，不能顺带清掉当前角色档案的日期依据。
+      if (
+        !options.suppressPriorFacts ||
+        item.factKey === 'identity.death_date' ||
+        item.factKey === 'identity.departure_duration'
+      ) {
         addEvidence(item);
       }
     }
